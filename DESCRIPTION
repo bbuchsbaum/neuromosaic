@@ -1,0 +1,43 @@
+Package: cluster.explorer
+Title: Interactive Cluster Explorer for Neuroimaging Data
+Version: 0.1.0
+Authors@R:
+    person("Bradley", "Buchsbaum", , "brad.buchsbaum@gmail.com", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-1108-4866"))
+Description: Provides an interactive Shiny application for exploring
+    statistical clusters in neuroimaging data. Supports volumetric and
+    surface-based visualisation, atlas-annotated cluster tables, design
+    variable plots, and extensible analysis plugins. The computation
+    engine has zero Shiny dependencies and can be used programmatically.
+License: MIT + file LICENSE
+URL: https://github.com/bbuchsbaum/cluster_explorer
+BugReports: https://github.com/bbuchsbaum/cluster_explorer/issues
+Depends:
+    R (>= 4.1.0)
+Imports:
+    assertthat,
+    dplyr,
+    ggplot2,
+    ggiraph,
+    methods,
+    neuroatlas,
+    neuroim2,
+    neurosurf,
+    scales,
+    scico,
+    stats,
+    tibble,
+    tools,
+    utils
+Suggests:
+    DT,
+    htmltools,
+    shiny,
+    testthat (>= 3.0.0)
+Remotes:
+    bbuchsbaum/neuroatlas,
+    bbuchsbaum/neuroim2,
+    bbuchsbaum/neurosurf
+Config/testthat/edition: 3
+Encoding: UTF-8
+RoxygenNote: 7.3.3

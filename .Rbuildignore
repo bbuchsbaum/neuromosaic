@@ -1,0 +1,8 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^LICENSE\.md$
+^\.claude$
+^\.omc$
+^tmp$
+^\.rcmdcheck_result\.rds$
+^\.git$
