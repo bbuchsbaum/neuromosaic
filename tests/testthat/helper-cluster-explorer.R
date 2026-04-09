@@ -60,6 +60,59 @@ make_toy_surfatlas <- function() {
   surfatlas
 }
 
+make_toy_cluster_report_inputs <- function() {
+  dims <- c(5, 5, 5)
+  sp3 <- neuroim2::NeuroSpace(dim = dims, spacing = c(2, 2, 2),
+                              origin = c(-5, -5, -5))
+
+  atlas_arr <- array(0L, dim = dims)
+  atlas_arr[1:2, 1:2, 1:2] <- 1L
+  atlas_arr[4:5, 4:5, 4:5] <- 2L
+  atlas_vol <- neuroim2::NeuroVol(atlas_arr, space = sp3)
+
+  atlas <- list(
+    name = "toy_atlas",
+    atlas = atlas_vol,
+    ids = c(1L, 2L),
+    labels = c("RegionA", "RegionB"),
+    orig_labels = c("RegionA", "RegionB"),
+    hemi = c("left", "right"),
+    roi_metadata = tibble::tibble(
+      id = c(1L, 2L),
+      label = c("RegionA", "RegionB"),
+      hemi = c("left", "right")
+    )
+  )
+  class(atlas) <- c("toy", "atlas")
+
+  stat_arr <- array(0, dim = dims)
+  stat_arr[1:2, 1:2, 1:2] <- 4.5
+  stat_arr[4:5, 4:5, 4:5] <- -5.5
+  stat_map <- neuroim2::NeuroVol(stat_arr, space = sp3)
+
+  n_time <- 12L
+  design <- data.frame(
+    condition = rep(c("A", "B"), each = 6),
+    time = rep(1:6, times = 2)
+  )
+
+  sp4 <- neuroim2::NeuroSpace(dim = c(dims, n_time), spacing = c(2, 2, 2))
+  data_arr <- array(stats::rnorm(prod(dims) * n_time, sd = 0.3),
+                    dim = c(dims, n_time))
+  for (t in seq_len(n_time)) {
+    cond_effect <- ifelse(design$condition[t] == "A", 1.5, 0.5)
+    data_arr[1:2, 1:2, 1:2, t] <- cond_effect + design$time[t] * 0.3
+  }
+  data_vec <- neuroim2::NeuroVec(data_arr, sp4)
+
+  list(
+    atlas = atlas,
+    stat_map = stat_map,
+    data_vec = data_vec,
+    design = design
+  )
+}
+
 make_toy_mismatch_cluster_explorer_inputs <- function(n_time = 4) {
   atlas_dims <- c(5, 5, 5)
   stat_dims <- c(6, 6, 6)

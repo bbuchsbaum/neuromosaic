@@ -238,8 +238,8 @@
     return(character(0))
   }
 
-  rad <- suppressWarnings(as.numeric(radius))
-  if (!is.finite(rad) || rad < 0) rad <- 0
+  rad <- .safe_numeric(radius, 0)
+  if (rad < 0) rad <- 0
   rad2 <- rad^2
 
   ids <- names(cluster_voxels)

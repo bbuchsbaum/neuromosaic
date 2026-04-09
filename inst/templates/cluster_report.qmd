@@ -1,0 +1,129 @@
+---
+title: "Cluster Report"
+date: last-modified
+format:
+  html:
+    toc: true
+    theme: flatly
+    fig-width: 8
+    fig-height: 5
+  pdf:
+    toc: true
+    number-sections: true
+    fig-width: 7
+    fig-height: 4.5
+    pdf-engine: xelatex
+execute:
+  echo: false
+  warning: false
+  message: false
+  fig-align: center
+---
+
+```{r}
+rd <- readRDS("__REPORT_DATA_FILE__")
+is_pdf <- knitr::is_latex_output()
+
+cp_split <- if (!is.null(rd$cluster_parcels) && nrow(rd$cluster_parcels) > 0) {
+  split(rd$cluster_parcels, rd$cluster_parcels$cluster_id)
+} else {
+  list()
+}
+```
+
+# Summary
+
+**Threshold**: `r rd$params$threshold` | **Tail**: `r rd$params$tail` | **Min cluster size**: `r rd$params$min_cluster_size`
+
+**Clusters found**: `r nrow(rd$cluster_table)` | **Atlas**: `r rd$params$atlas_name`
+
+```{r}
+if (identical(rd$params$report_mode, "table_only")) {
+  cat("*Sample-level signal plots are omitted because no backing data source was supplied.*\n")
+}
+```
+
+## MNI Coordinate Table
+
+```{r}
+if (!is.null(rd$mni_table)) {
+  print(rd$mni_table)
+} else {
+  cat("*No clusters survived thresholding.*\n")
+}
+```
+
+`r if (is_pdf) "\\newpage"`
+
+# Cluster Details
+
+```{r}
+ct <- rd$cluster_table
+if (nrow(ct) == 0) {
+  cat("*No clusters to display.*\n")
+} else {
+  for (i in seq_len(nrow(ct))) {
+    cid <- ct$cluster_id[i]
+    row <- ct[i, , drop = FALSE]
+    label <- neuromosaic::cluster_display_label(row)
+
+    cat("\n\n## ", label, "\n\n", sep = "")
+    cat("- **Peak MNI**: (",
+        ct$peak_mni_x[i], ", ", ct$peak_mni_y[i], ", ", ct$peak_mni_z[i],
+        ")\n", sep = "")
+    cat("- **Peak stat**: ", round(ct$max_stat[i], 2), "\n", sep = "")
+    cat("- **Voxels**: ", ct$n_voxels[i], "\n", sep = "")
+    if (!is.na(ct$network[i])) {
+      cat("- **Network**: ", ct$network[i], "\n", sep = "")
+    }
+
+    cp <- cp_split[[cid]]
+    if (!is.null(cp) && nrow(cp) > 0) {
+      cp_display <- data.frame(
+        Parcel = cp$parcel_label,
+        Voxels = cp$n_voxels,
+        `Overlap %` = round(cp$frac * 100, 1),
+        check.names = FALSE
+      )
+      cat("\n### Parcel Overlaps\n\n")
+      print(knitr::kable(cp_display, format = "pipe"))
+      cat("\n")
+    }
+
+    if (!is.null(rd$brain_slices) && cid %in% names(rd$brain_slices) &&
+        !is.null(rd$brain_slices[[cid]])) {
+      cat("\n### Brain View\n\n")
+      slice_set <- rd$brain_slices[[cid]]
+      if (is.list(slice_set)) {
+        for (view_name in names(slice_set)) {
+          cat("\n#### ", tools::toTitleCase(view_name), "\n\n", sep = "")
+          print(slice_set[[view_name]])
+          cat("\n")
+        }
+      } else {
+        print(slice_set)
+        cat("\n")
+      }
+    }
+
+    if (!is.null(rd$plots) && length(rd$plots) > 0) {
+      for (fname in names(rd$plots)) {
+        formula_plots <- rd$plots[[fname]]
+        if (cid %in% names(formula_plots)) {
+          cat("\n### ", fname, "\n\n", sep = "")
+          print(formula_plots[[cid]])
+          cat("\n")
+        }
+      }
+    }
+
+    if (is_pdf) cat("\n\\newpage\n")
+  }
+}
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```

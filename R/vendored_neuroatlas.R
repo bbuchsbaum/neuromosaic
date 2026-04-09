@@ -1,6 +1,6 @@
 # Vendored utilities from neuroatlas
 #
-# Small, self-contained helpers that cluster.explorer needs but that are
+# Small, self-contained helpers that neuromosaic needs but that are
 # internal implementation details of neuroatlas.  Vendored here to avoid
 # promoting them to public API in the parent package.
 

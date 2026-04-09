@@ -200,6 +200,7 @@
     data_source = data_source,
     atlas = atlas,
     stat_map = stat_map,
+    stat_arr = stat_arr,
     sample_table = sample_table,
     cluster_voxels = cluster_voxels,
     cluster_sign = cluster_sign,
@@ -331,6 +332,7 @@
     data_source = data_source,
     atlas = atlas,
     stat_map = stat_map,
+    stat_arr = stat_arr,
     sample_table = sample_table,
     cluster_voxels = cluster_voxels,
     cluster_sign = cluster_sign,
@@ -347,6 +349,7 @@
 .build_selection_data_from_voxels <- function(data_source,
                                               atlas,
                                               stat_map,
+                                              stat_arr = NULL,
                                               sample_table = NULL,
                                               cluster_voxels,
                                               cluster_sign = character(0),
@@ -373,7 +376,7 @@
   sample_tbl <- .normalize_sample_table(sample_table = sample_table,
                                         n_samples = n_samples)
 
-  stat_arr <- as.array(stat_map)
+  if (is.null(stat_arr)) stat_arr <- as.array(stat_map)
   dims3 <- dim(stat_arr)[1:3]
   index_arr <- array(0L, dim = dims3)
 
@@ -429,17 +432,7 @@
   }
 
   cluster_tbl <- if (length(rows) == 0) {
-    tibble::tibble(
-      cluster_id = character(0),
-      sign = character(0),
-      component_id = integer(0),
-      n_voxels = integer(0),
-      peak_x = integer(0),
-      peak_y = integer(0),
-      peak_z = integer(0),
-      max_stat = numeric(0),
-      peak_coord = character(0)
-    )
+    .empty_cluster_table()
   } else {
     dplyr::bind_rows(rows)
   }

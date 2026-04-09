@@ -1,4 +1,4 @@
 library(testthat)
-library(cluster.explorer)
+library(neuromosaic)
 
-test_check("cluster.explorer")
+test_check("neuromosaic")

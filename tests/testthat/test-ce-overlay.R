@@ -11,7 +11,7 @@ test_that(".build_cluster_overlay_volume copies stat values at cluster voxels", 
                    5, 5, 5), ncol = 3, byrow = TRUE)
   )
 
-  vol <- cluster.explorer:::.build_cluster_overlay_volume(
+  vol <- neuromosaic:::.build_cluster_overlay_volume(
     stat_map = x$stat_map,
     cluster_voxels = cluster_voxels
   )
@@ -38,7 +38,7 @@ test_that(".build_cluster_overlay_volume respects selected_cluster_ids", {
     N2 = matrix(c(4, 4, 4, 5, 5, 5), ncol = 3, byrow = TRUE)
   )
 
-  vol <- cluster.explorer:::.build_cluster_overlay_volume(
+  vol <- neuromosaic:::.build_cluster_overlay_volume(
     stat_map = x$stat_map,
     cluster_voxels = cluster_voxels,
     selected_cluster_ids = "P1"
@@ -59,7 +59,7 @@ test_that(".build_cluster_overlay_volume returns zeros for empty selection", {
     P1 = matrix(c(1, 1, 1), ncol = 3)
   )
 
-  vol <- cluster.explorer:::.build_cluster_overlay_volume(
+  vol <- neuromosaic:::.build_cluster_overlay_volume(
     stat_map = x$stat_map,
     cluster_voxels = cluster_voxels,
     selected_cluster_ids = "NONEXISTENT"
@@ -70,41 +70,41 @@ test_that(".build_cluster_overlay_volume returns zeros for empty selection", {
 })
 
 test_that(".surface_values_to_numeric handles NULL and numeric inputs", {
-  expect_null(cluster.explorer:::.surface_values_to_numeric(NULL))
+  expect_null(neuromosaic:::.surface_values_to_numeric(NULL))
 
   # Plain numeric vector wrapped in a list-like object with @data slot
   mock <- structure(list(), class = "mock_surf")
-  expect_null(cluster.explorer:::.surface_values_to_numeric(mock))
+  expect_null(neuromosaic:::.surface_values_to_numeric(mock))
 })
 
 test_that(".surface_template_defaults returns valid defaults for known spaces", {
-  d6 <- cluster.explorer:::.surface_template_defaults("fsaverage6")
+  d6 <- neuromosaic:::.surface_template_defaults("fsaverage6")
   expect_equal(d6$template_id, "fsaverage")
   expect_equal(d6$density, "41k")
   expect_equal(d6$resolution, "06")
 
-  d5 <- cluster.explorer:::.surface_template_defaults("fsaverage5")
+  d5 <- neuromosaic:::.surface_template_defaults("fsaverage5")
   expect_equal(d5$template_id, "fsaverage")
   expect_equal(d5$density, "10k")
   expect_equal(d5$resolution, "05")
 
-  d_full <- cluster.explorer:::.surface_template_defaults("fsaverage")
+  d_full <- neuromosaic:::.surface_template_defaults("fsaverage")
   expect_equal(d_full$template_id, "fsaverage")
   expect_equal(d_full$density, "164k")
   expect_null(d_full$resolution)
 
-  d_unknown <- cluster.explorer:::.surface_template_defaults("MNI152NLin2009cAsym")
+  d_unknown <- neuromosaic:::.surface_template_defaults("MNI152NLin2009cAsym")
   expect_equal(d_unknown$template_id, "MNI152NLin2009cAsym")
   expect_null(d_unknown$density)
 
-  d_null <- cluster.explorer:::.surface_template_defaults(NULL)
+  d_null <- neuromosaic:::.surface_template_defaults(NULL)
   expect_equal(d_null$template_id, "fsaverage")
 })
 
 test_that(".overlay_projection_diagnostics returns structured output", {
   x <- make_toy_cluster_explorer_inputs(n_time = 3)
 
-  cluster_vol <- cluster.explorer:::.build_cluster_overlay_volume(
+  cluster_vol <- neuromosaic:::.build_cluster_overlay_volume(
     stat_map = x$stat_map,
     cluster_voxels = list(P1 = matrix(c(2, 2, 2), ncol = 3))
   )
@@ -120,7 +120,7 @@ test_that(".overlay_projection_diagnostics returns structured output", {
     )
   )
 
-  diag <- cluster.explorer:::.overlay_projection_diagnostics(
+  diag <- neuromosaic:::.overlay_projection_diagnostics(
     cluster_vol = cluster_vol,
     projection = projection,
     threshold = 0.5,

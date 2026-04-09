@@ -41,9 +41,10 @@ That workflow is:
 
 1. Build an ad hoc `nftab` with `neurotabs::nf_from_table()`.
 2. Pass that dataset to `nf_cluster_explorer()`.
-3. In the app, set `Plot Variable = measure` and `Color / Group = group`.
+3. In the app, set `Plot Variable = measure`, choose the `Grouped Overlay`
+   plot plugin, and set its grouping variable to `group`.
 
-`clusterreport::nf_cluster_explorer()` uses `neurotabs::nf_design(ds)`
+`neuromosaic::nf_cluster_explorer()` uses `neurotabs::nf_design(ds)`
 automatically, so the columns in your TSV become explorer controls without a
 separate `design` argument.
 
@@ -55,7 +56,7 @@ you would have on disk. The group-level `stat_map` and atlas come from
 separate NIfTI files.
 
 ```{r make-observation-table}
-inputs <- clusterreport::example_cluster_inputs()
+inputs <- neuromosaic::example_cluster_inputs()
 n_subjects <- 30L
 
 obs <- tibble::tibble(
@@ -69,7 +70,7 @@ head(obs, 4)
 ```
 
 ```{r write-auc-volumes, eval = has_neurotabs, include = FALSE}
-study_dir <- file.path(tempdir(), "clusterreport-auc-study")
+study_dir <- file.path(tempdir(), "neuromosaic-auc-study")
 dir.create(study_dir, recursive = TRUE, showWarnings = FALSE)
 
 space_3d <- neuroim2::space(inputs$stat_map)
@@ -125,8 +126,8 @@ design_tbl <- neurotabs::nf_design(ds)
 design_tbl[1:4, c("subject", "group", "measure")]
 ```
 
-Those design columns are the bridge into `clusterreport`:
-`clusterreport::nf_cluster_explorer()` reads `nf_design(ds)` and merges it into
+Those design columns are the bridge into `neuromosaic`:
+`neuromosaic::nf_cluster_explorer()` reads `nf_design(ds)` and merges it into
 the extracted cluster signal table.
 
 ## Launch the interactive explorer
@@ -147,7 +148,7 @@ surfatlas <- structure(
 ```
 
 ```{r build-app, eval = has_explorer_deps}
-app <- clusterreport::nf_cluster_explorer(
+app <- neuromosaic::nf_cluster_explorer(
   ds = ds,
   stat_map = inputs$stat_map,
   data_feature = "AUC",
@@ -166,13 +167,105 @@ Once the app is open:
 
 1. Click a parcel in the brain view or select a cluster from the table.
 2. Set `Plot Variable` to `measure`.
-3. Set `Color / Group` to `group`.
-4. Leave `Collapse By` empty unless you want to average repeated rows first.
+3. Open `Signal Controls`.
+4. Leave `Analysis Plugin` as `None (raw signal)` unless you want to transform
+   the extracted ROI table first.
+5. Set `Plot Plugin` to `Grouped Overlay`.
+6. Set `Grouping variable` to `group`.
+7. Leave `Collapse By` empty unless you want to average repeated rows first.
 
 The signal panel will show subject-level AUC values for the selected cluster,
 with points colored by `group` and separate linear fits overlaid for each
 group. If you select multiple clusters, the explorer facets them so each panel
 keeps the same `measure`/`group` mapping.
+
+## Plot plugins are the extension point
+
+`Grouped Overlay` is only one bundled plot plugin. The explorer always extracts
+the same ROI-by-sample signal table; plot plugins decide how that table is
+rendered.
+
+A plot plugin receives:
+
+- `data`: the selected signal table, including `signal`, `cluster_id`, and the design columns carried over from the neurotab.
+- `params`: values collected from the plugin's own UI controls.
+- `context`: the current plot settings, including `x_var`, `collapse_vars`, and the available continuous and categorical columns.
+- `interactive`: whether the explorer is building a static `ggplot` or an interactive `girafe` widget.
+
+A plugin can return a `ggplot`, a `girafe`, or a list with `plot` and optional
+`diagnostics`. That means the `measure + group` example is not hard-coded into
+the explorer. It is just one way to render the extracted table.
+
+```{r custom-plot-plugin, eval = has_explorer_deps}
+scatter_lm_plugin <- list(
+  id = "scatter_lm",
+  label = "Scatter + LM",
+  param_defs = list(
+    list(
+      name = "colour_var",
+      label = "Colour variable",
+      type = "select",
+      default = "",
+      choices = function(context) {
+        cols <- context$categorical_columns
+        if (is.null(cols)) cols <- character(0)
+        c("None" = "", stats::setNames(cols, cols))
+      }
+    )
+  ),
+  render = function(data, params, context, interactive) {
+    plot_data <- data
+    plot_data$.x <- plot_data[[context$x_var]]
+    colour_var <- params$colour_var
+    if (is.null(colour_var)) colour_var <- ""
+
+    if (nzchar(colour_var)) {
+      plot_data$.colour <- plot_data[[colour_var]]
+      p <- ggplot2::ggplot(
+        plot_data,
+        ggplot2::aes(x = .x, y = signal, colour = .colour)
+      ) +
+        ggplot2::geom_point() +
+        ggplot2::geom_smooth(method = "lm", se = FALSE)
+    } else {
+      p <- ggplot2::ggplot(plot_data, ggplot2::aes(x = .x, y = signal)) +
+        ggplot2::geom_point() +
+        ggplot2::geom_smooth(method = "lm", se = FALSE)
+    }
+
+    if (dplyr::n_distinct(plot_data$cluster_id) > 1) {
+      p <- p + ggplot2::facet_wrap(~ cluster_id, scales = "free_y")
+    }
+
+    p + ggplot2::theme_minimal()
+  }
+)
+
+app_custom <- neuromosaic::nf_cluster_explorer(
+  ds = ds,
+  stat_map = inputs$stat_map,
+  data_feature = "AUC",
+  atlas = inputs$atlas,
+  surfatlas = surfatlas,
+  threshold = 3,
+  min_cluster_size = 5,
+  plot_plugins = list(scatter_lm = scatter_lm_plugin),
+  default_plot_plugin = "scatter_lm"
+)
+
+inherits(app_custom, "shiny.appobj")
+```
+
+When that app is open:
+
+1. Pick a cluster or parcel.
+2. Set `Plot Variable` to `measure`.
+3. Open `Signal Controls`.
+4. Leave `Plot Plugin` as `Scatter + LM`.
+5. Set `Colour variable` to `group`.
+
+The result is still driven by the same extracted ROI table, but now the signal
+panel is using your custom renderer instead of one of the built-in plugins.
 
 ## Direct template for your own study
 
@@ -191,7 +284,7 @@ ds <- neurotabs::nf_from_table(
   root = "~/study"
 )
 
-app <- clusterreport::nf_cluster_explorer(
+app <- neuromosaic::nf_cluster_explorer(
   ds = ds,
   stat_map = stat_map,
   data_feature = "AUC",

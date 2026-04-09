@@ -1,4 +1,4 @@
-# neurotabs adapter for cluster.explorer
+# neurotabs adapter for neuromosaic
 # Bridges nftab datasets to build_cluster_explorer_data() / cluster_explorer().
 
 # -- Validation ---------------------------------------------------------------
@@ -58,7 +58,7 @@
   feature_name <- data_feature
   function(data_source, voxel_coords) {
     # data_source is the nftab object; nf_sample returns [n_obs x n_coords]
-    # with coord_type = "voxel" (1-based, matches cluster.explorer convention)
+    # with coord_type = "voxel" (1-based, matches neuromosaic convention)
     neurotabs::nf_sample(data_source, feature_name,
                          coords     = voxel_coords,
                          coord_type = "voxel")
@@ -135,7 +135,9 @@ nf_cluster_data <- function(ds, stat_map, data_feature, atlas,
 #' @inheritParams nf_cluster_data
 #' @param surfatlas Surface atlas object passed to
 #'   \code{\link{cluster_explorer}}.
-#' @param ... Additional arguments passed to \code{\link{cluster_explorer}}.
+#' @param ... Additional arguments passed to \code{\link{cluster_explorer}},
+#'   including \code{analysis_plugins}, \code{plot_plugins},
+#'   \code{default_analysis_plugin}, and \code{default_plot_plugin}.
 #'
 #' @return A \code{shiny.appobj}.
 #' @seealso \code{\link{nf_cluster_data}},

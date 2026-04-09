@@ -33,7 +33,9 @@ cluster_explorer(
   sphere_combine = c("separate", "union"),
   selection_provider = NULL,
   analysis_plugins = NULL,
-  default_analysis_plugin = "none"
+  default_analysis_plugin = "none",
+  plot_plugins = NULL,
+  default_plot_plugin = "auto"
 )
 }
 \arguments{
@@ -123,10 +125,29 @@ matrix/data.frame with 3 columns.}
 \code{build_cluster_explorer_data()} output.}
 
 \item{analysis_plugins}{Optional list of analysis plugin definitions. Plugins
-can transform extracted time-series/design data before plotting.}
+can transform extracted time-series/design data before plotting. Each
+plugin is either a function or a list with fields \code{id},
+\code{label}, \code{run}, and optional \code{param_defs}.}
 
 \item{default_analysis_plugin}{Optional default plugin id. Defaults to
 \code{"none"}.}
+
+\item{plot_plugins}{Optional list of plot plugin definitions. Plot plugins
+render extracted signal tables into the signal panel. Each plugin is either
+a function or a list with fields \code{id}, \code{label}, \code{render},
+and optional \code{param_defs}. The render function is called as
+\code{render(data, params, context, interactive)} where \code{data} is the
+extracted signal table, \code{params} are values collected from
+\code{param_defs}, and \code{context} contains the current plotting
+selections such as \code{x_var}, \code{collapse_vars},
+\code{design_columns}, \code{continuous_columns}, and
+\code{categorical_columns}. A plot plugin may return a \code{ggplot},
+\code{girafe}, or a list with elements \code{plot}, \code{diagnostics},
+and \code{meta}. Built-in plot plugins currently include \code{"auto"} and
+\code{"group_overlay"}.}
+
+\item{default_plot_plugin}{Optional default plot plugin id. Defaults to
+\code{"auto"}.}
 }
 \value{
 A \code{shiny.appobj}.
@@ -139,4 +160,10 @@ design-aware signal plots. Clusters are formed volumetrically from
 \details{
 Calling \code{cluster_explorer()} with no arguments launches a synthetic demo
 dataset so the UI can be explored immediately.
+
+Analysis plugins and plot plugins are separate extension points. Analysis
+plugins transform the extracted ROI-by-sample table before plotting. Plot
+plugins control how that table is rendered in the signal panel. This keeps
+ROI extraction and selection generic while allowing task-specific signal
+views to be added without changing the core explorer.
 }

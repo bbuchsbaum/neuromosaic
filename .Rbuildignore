@@ -6,3 +6,5 @@
 ^tmp$
 ^\.rcmdcheck_result\.rds$
 ^\.git$
+^doc$
+^Meta$

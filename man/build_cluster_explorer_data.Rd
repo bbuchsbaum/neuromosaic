@@ -2,6 +2,7 @@
 % Please edit documentation in R/ce_compute.R
 \name{build_cluster_explorer_data}
 \alias{build_cluster_explorer_data}
+\alias{compute_clusters}
 \title{Build Cluster Explorer Data}
 \usage{
 build_cluster_explorer_data(
@@ -21,6 +22,8 @@ build_cluster_explorer_data(
   prefetch_max_voxels = Inf,
   series_cache_env = NULL
 )
+
+compute_clusters(...)
 }
 \arguments{
 \item{data_source}{A sample-wise data source supporting

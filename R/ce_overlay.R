@@ -204,8 +204,22 @@
     )
   }
 
-  if (is.null(white)) white <- current_geom
-  if (is.null(pial)) pial <- current_geom
+  if (is.null(white)) {
+    warning(
+      "Could not load white surface for overlay projection in hemi '",
+      hemi, "'; falling back to inflated geometry. ",
+      "Projection accuracy may be reduced.", call. = FALSE
+    )
+    white <- current_geom
+  }
+  if (is.null(pial)) {
+    warning(
+      "Could not load pial surface for overlay projection in hemi '",
+      hemi, "'; falling back to inflated geometry. ",
+      "Projection accuracy may be reduced.", call. = FALSE
+    )
+    pial <- current_geom
+  }
 
   list(white = white, pial = pial, surface_space = surface_space)
 }
@@ -227,6 +241,8 @@
   )
 }
 
+.overlay_geom_cache <- new.env(parent = emptyenv())
+
 .load_overlay_surface_geometry <- function(surface_space,
                                            surface_type = c("white", "pial"),
                                            hemi = c("lh", "rh"),
@@ -234,6 +250,13 @@
                                            resolution_override = NULL) {
   surface_type <- match.arg(surface_type)
   hemi <- match.arg(hemi)
+
+  cache_key <- paste(surface_space, hemi, surface_type,
+                     density_override %||% "", resolution_override %||% "",
+                     sep = "::")
+  if (exists(cache_key, envir = .overlay_geom_cache, inherits = FALSE)) {
+    return(get(cache_key, envir = .overlay_geom_cache, inherits = FALSE))
+  }
 
   # Fast packaged fallback for fsaverage6 surfaces.
   if (identical(surface_space, "fsaverage6") &&
@@ -245,7 +268,9 @@
       fsaverage <- get("fsaverage", envir = environment())
       geom_name <- paste0(hemi, "_", surface_type)
       if (!is.null(fsaverage[[geom_name]])) {
-        return(fsaverage[[geom_name]])
+        result <- fsaverage[[geom_name]]
+        assign(cache_key, result, envir = .overlay_geom_cache)
+        return(result)
       }
     }
   }
@@ -259,7 +284,7 @@
   }
 
   hemi_tf <- if (identical(hemi, "lh")) "L" else "R"
-  tryCatch(
+  result <- tryCatch(
     neuroatlas::load_surface_template(
       template_id = defaults$template_id,
       surface_type = surface_type,
@@ -269,4 +294,8 @@
     ),
     error = function(e) NULL
   )
+  if (!is.null(result)) {
+    assign(cache_key, result, envir = .overlay_geom_cache)
+  }
+  result
 }

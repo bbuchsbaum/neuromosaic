@@ -11,12 +11,16 @@ skip_if_not_installed("ggiraph")
   toy <- make_toy_cluster_explorer_inputs(n_time = 4)
   surfatlas <- make_toy_surfatlas()
 
-  plugins <- clusterreport:::.normalize_analysis_plugins(
+  plugins <- neuromosaic:::.normalize_analysis_plugins(
     analysis_plugins = NULL,
     default_plugin = "none"
   )
+  plot_plugins <- neuromosaic:::.normalize_plot_plugins(
+    plot_plugins = NULL,
+    default_plugin = "auto"
+  )
 
-  sample_tbl <- clusterreport:::.normalize_sample_table(
+  sample_tbl <- neuromosaic:::.normalize_sample_table(
     sample_table = toy$sample_table,
     n_samples = 4L
   )
@@ -24,7 +28,7 @@ skip_if_not_installed("ggiraph")
   bridge <- new.env(parent = emptyenv())
 
   server_fn <- function(input, output, session) {
-    rv <- clusterreport:::.cluster_explorer_server(
+    rv <- neuromosaic:::.cluster_explorer_server(
       input = input,
       output = output,
       session = session,
@@ -41,8 +45,10 @@ skip_if_not_installed("ggiraph")
       sphere_radius = 6,
       sphere_units = "mm",
       sphere_combine = "separate",
-      plugins = plugins,
+      analysis_plugins = plugins,
       default_analysis_plugin = "none",
+      plot_plugins = plot_plugins,
+      default_plot_plugin = "auto",
       overlay_space = NULL,
       overlay_density = NULL,
       overlay_resolution = NULL,
@@ -79,8 +85,8 @@ skip_if_not_installed("ggiraph")
     overlay_sampling = "midpoint",
     x_var = ".sample_index",
     collapse_vars = character(0),
-    group_var = "",
     analysis_plugin_id = "none",
+    plot_plugin_id = "auto",
     apply_btn = 0L
   )
 }
@@ -215,7 +221,29 @@ test_that("analysis plugin apply updates analysis_state", {
 })
 
 # ---------------------------------------------------------------------------
-# 7. Cluster table CSV round-trip
+# 7. Plot plugin apply updates plot_state
+# ---------------------------------------------------------------------------
+test_that("plot plugin apply updates plot_state", {
+  setup <- .make_test_setup()
+
+  shiny::testServer(setup$server_fn, {
+    .boot_server(session)
+    session$setInputs(apply_btn = 1L)
+
+    rv <- setup$bridge$rv
+    expect_equal(rv$plot_state$applied_plugin_id, "auto")
+
+    session$setInputs(plot_plugin_id = "group_overlay")
+    session$setInputs(plot_param_group_var = "condition")
+    session$setInputs(analysis_apply_btn = 1L)
+
+    expect_equal(rv$plot_state$applied_plugin_id, "group_overlay")
+    expect_equal(rv$plot_state$applied_params$group_var, "condition")
+  })
+})
+
+# ---------------------------------------------------------------------------
+# 8. Cluster table CSV round-trip
 # ---------------------------------------------------------------------------
 test_that("cluster table is available for CSV download", {
   setup <- .make_test_setup()
@@ -242,7 +270,7 @@ test_that("cluster table is available for CSV download", {
 })
 
 # ---------------------------------------------------------------------------
-# 8. Reset button fires without error
+# 9. Reset button fires without error
 # ---------------------------------------------------------------------------
 test_that("reset button fires without error", {
   setup <- .make_test_setup()

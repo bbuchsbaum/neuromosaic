@@ -77,6 +77,48 @@ utils::globalVariables(c("signal", "cluster_id"))
   invisible(NULL)
 }
 
+# -- Empty-tibble factories ---------------------------------------------------
+
+.empty_cluster_table <- function() {
+  tibble::tibble(
+    cluster_id = character(0),
+    sign = character(0),
+    component_id = integer(0),
+    n_voxels = integer(0),
+    peak_x = integer(0),
+    peak_y = integer(0),
+    peak_z = integer(0),
+    max_stat = numeric(0),
+    peak_coord = character(0)
+  )
+}
+
+.empty_cluster_parcels <- function() {
+  tibble::tibble(
+    cluster_id = character(0),
+    sign = character(0),
+    parcel_id = integer(0),
+    parcel_label = character(0),
+    n_voxels = integer(0),
+    frac = numeric(0),
+    peak_stat = numeric(0),
+    max_pos = numeric(0),
+    min_neg = numeric(0)
+  )
+}
+
+# -- Input coercion helpers ---------------------------------------------------
+
+.safe_numeric <- function(x, default = NA_real_) {
+  val <- suppressWarnings(as.numeric(x))
+  if (length(val) != 1L || is.na(val)) default else val
+}
+
+.safe_integer <- function(x, default = NA_integer_) {
+  val <- suppressWarnings(as.integer(x))
+  if (length(val) != 1L || is.na(val)) default else val
+}
+
 #' Build Cluster Explorer Data
 #'
 #' Compute sign-aware volumetric connected components from a statistic map,
@@ -180,8 +222,11 @@ build_cluster_explorer_data <- function(data_source,
     n_samples = n_samples
   )
 
+  stat_arr <- as.array(stat_map)
+
   comp <- .extract_stat_clusters(
     stat_map = stat_map,
+    stat_arr = stat_arr,
     threshold = threshold,
     min_cluster_size = min_cluster_size,
     connectivity = connectivity,
@@ -192,7 +237,7 @@ build_cluster_explorer_data <- function(data_source,
     cluster_table = comp$cluster_table,
     cluster_voxels = comp$cluster_voxels,
     atlas = atlas,
-    stat_map = stat_map
+    stat_arr = stat_arr
   )
 
   n_clusters <- nrow(ann$cluster_table)
@@ -240,6 +285,13 @@ build_cluster_explorer_data <- function(data_source,
     )
   )
 }
+
+
+#' @rdname build_cluster_explorer_data
+#' @usage compute_clusters(...)
+#' @export
+compute_clusters <- build_cluster_explorer_data
+
 
 .infer_n_samples <- function(data_source, sample_table = NULL, design = NULL) {
   ds_dim <- dim(data_source)
@@ -380,8 +432,9 @@ build_cluster_explorer_data <- function(data_source,
                                    threshold,
                                    min_cluster_size,
                                    connectivity,
-                                   tail) {
-  stat_arr <- as.array(stat_map)
+                                   tail,
+                                   stat_arr = NULL) {
+  if (is.null(stat_arr)) stat_arr <- as.array(stat_map)
   if (length(dim(stat_arr)) != 3) {
     stop("'stat_map' must be a 3D NeuroVol.")
   }
@@ -468,17 +521,7 @@ build_cluster_explorer_data <- function(data_source,
   }
 
   cluster_tbl <- if (length(out_tbl) == 0) {
-    tibble::tibble(
-      cluster_id = character(0),
-      sign = character(0),
-      component_id = integer(0),
-      n_voxels = integer(0),
-      peak_x = integer(0),
-      peak_y = integer(0),
-      peak_z = integer(0),
-      max_stat = numeric(0),
-      peak_coord = character(0)
-    )
+    .empty_cluster_table()
   } else {
     dplyr::bind_rows(out_tbl)
   }
@@ -493,29 +536,20 @@ build_cluster_explorer_data <- function(data_source,
 .annotate_clusters_with_atlas <- function(cluster_table,
                                           cluster_voxels,
                                           atlas,
-                                          stat_map) {
+                                          stat_map = NULL,
+                                          stat_arr = NULL) {
   if (nrow(cluster_table) == 0 || length(cluster_voxels) == 0) {
     cluster_table$atlas_label_primary <- character(0)
     cluster_table$n_parcels <- integer(0)
     cluster_table$parcel_overlap <- numeric(0)
     return(list(
       cluster_table = cluster_table,
-      cluster_parcels = tibble::tibble(
-        cluster_id = character(0),
-        sign = character(0),
-        parcel_id = integer(0),
-        parcel_label = character(0),
-        n_voxels = integer(0),
-        frac = numeric(0),
-        peak_stat = numeric(0),
-        max_pos = numeric(0),
-        min_neg = numeric(0)
-      )
+      cluster_parcels = .empty_cluster_parcels()
     ))
   }
 
   atlas_arr <- .atlas_volume_array(.get_atlas_volume(atlas))
-  stat_arr <- as.array(stat_map)
+  if (is.null(stat_arr)) stat_arr <- as.array(stat_map)
   meta <- neuroatlas::roi_metadata(atlas)
   label_map <- stats::setNames(as.character(meta$label), as.character(meta$id))
 
@@ -591,17 +625,7 @@ build_cluster_explorer_data <- function(data_source,
   }
 
   cluster_parcels <- if (length(parcel_rows) == 0) {
-    tibble::tibble(
-      cluster_id = character(0),
-      sign = character(0),
-      parcel_id = integer(0),
-      parcel_label = character(0),
-      n_voxels = integer(0),
-      frac = numeric(0),
-      peak_stat = numeric(0),
-      max_pos = numeric(0),
-      min_neg = numeric(0)
-    )
+    .empty_cluster_parcels()
   } else {
     dplyr::bind_rows(parcel_rows)
   }
@@ -638,10 +662,15 @@ build_cluster_explorer_data <- function(data_source,
       cache_key = cid
     )
 
-    sig <- vapply(seq_len(n_samples), function(t) {
-      vals <- series_mat[t, , drop = TRUE]
-      do.call(signal_fun, c(list(vals), signal_fun_args))
-    }, numeric(1))
+    sig <- if (identical(signal_fun, mean) &&
+               identical(signal_fun_args, list(na.rm = TRUE))) {
+      rowMeans(series_mat, na.rm = TRUE)
+    } else {
+      vapply(seq_len(n_samples), function(t) {
+        vals <- series_mat[t, , drop = TRUE]
+        do.call(signal_fun, c(list(vals), signal_fun_args))
+      }, numeric(1))
+    }
 
     out[[k]] <- tibble::tibble(
       .sample_index = seq_len(n_samples),
@@ -708,6 +737,12 @@ build_cluster_explorer_data <- function(data_source,
     return(x)
   }
   if (ncol(x) == n_samples) {
+    warning(
+      "series_fun returned a matrix with ncol == n_samples (",
+      n_samples, "); transposing. ",
+      "Ensure series_fun returns rows = samples, cols = voxels.",
+      call. = FALSE
+    )
     return(t(x))
   }
   if (length(x) == n_samples) {

@@ -1,17 +1,19 @@
-Package: cluster.explorer
-Title: Interactive Cluster Explorer for Neuroimaging Data
-Version: 0.1.0
+Package: neuromosaic
+Title: Rich Reports and Interactive Exploration for Neuroimaging Clusters
+Version: 0.2.0
 Authors@R:
     person("Bradley", "Buchsbaum", , "brad.buchsbaum@gmail.com", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-1108-4866"))
-Description: Provides an interactive Shiny application for exploring
-    statistical clusters in neuroimaging data. Supports volumetric and
-    surface-based visualisation, atlas-annotated cluster tables, design
-    variable plots, and extensible analysis plugins. The computation
-    engine has zero Shiny dependencies and can be used programmatically.
+Description: Generates publication-ready PDF/HTML reports from
+    neuroimaging statistical maps. Thresholds stat maps, finds clusters,
+    annotates peaks with MNI coordinates and atlas labels, extracts
+    design-aware time courses, and renders formatted tables and
+    formula-driven plots. Also provides an interactive Shiny explorer as
+    an optional UI layer. The computation engine has zero Shiny
+    dependencies and can be used programmatically.
 License: MIT + file LICENSE
-URL: https://github.com/bbuchsbaum/cluster_explorer
-BugReports: https://github.com/bbuchsbaum/cluster_explorer/issues
+URL: https://github.com/bbuchsbaum/clusterreport
+BugReports: https://github.com/bbuchsbaum/clusterreport/issues
 Depends:
     R (>= 4.1.0)
 Imports:
@@ -19,25 +21,36 @@ Imports:
     dplyr,
     ggplot2,
     ggiraph,
+    gt,
+    knitr,
     methods,
     neuroatlas,
     neuroim2,
     neurosurf,
+    rlang,
     scales,
     scico,
     stats,
     tibble,
     tools,
-    utils
+    utils,
+    withr
 Suggests:
     DT,
+    flextable,
     htmltools,
+    kableExtra,
+    neurotabs,
+    quarto,
+    rmarkdown,
     shiny,
     testthat (>= 3.0.0)
 Remotes:
     bbuchsbaum/neuroatlas,
     bbuchsbaum/neuroim2,
-    bbuchsbaum/neurosurf
+    bbuchsbaum/neurosurf,
+    bbuchsbaum/neurotabs
+VignetteBuilder: knitr
 Config/testthat/edition: 3
 Encoding: UTF-8
 RoxygenNote: 7.3.3

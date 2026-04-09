@@ -14,7 +14,7 @@
 }
 
 .cluster_explorer_css <- function() {
-  css_path <- system.file("www", "cluster-explorer.css", package = "clusterreport")
+  css_path <- system.file("www", "cluster-explorer.css", package = "neuromosaic")
   if (!nzchar(css_path)) return("")
   paste(readLines(css_path, warn = FALSE), collapse = "\n")
 }
@@ -33,8 +33,10 @@
                                      sphere_radius,
                                      sphere_units,
                                      sphere_combine,
-                                     plugins,
+                                     analysis_plugins,
                                      default_analysis_plugin,
+                                     plot_plugins,
+                                     default_plot_plugin,
                                      overlay_space,
                                      overlay_density,
                                      overlay_resolution,
@@ -74,6 +76,11 @@
   })
   analysis_state <- shiny::reactiveValues(
     applied_plugin_id = default_analysis_plugin,
+    applied_params = list(),
+    stamp = Sys.time()
+  )
+  plot_state <- shiny::reactiveValues(
+    applied_plugin_id = default_plot_plugin,
     applied_params = list(),
     stamp = Sys.time()
   )
@@ -172,10 +179,6 @@
     }
 
     design_cols <- setdiff(names(dat$sample_table), ".sample_index")
-    group_cols <- design_cols[
-      vapply(dat$sample_table[design_cols], infer_design_var_type, character(1)) ==
-        "categorical"
-    ]
     x_choices <- c(".sample_index", design_cols)
     x_selected <- if ("time" %in% design_cols) "time" else ".sample_index"
 
@@ -192,42 +195,90 @@
       selected = character(0),
       server = TRUE
     )
-    shiny::updateSelectInput(
-      session = session,
-      inputId = "group_var",
-      choices = c("None" = "", stats::setNames(group_cols, group_cols)),
-      selected = ""
-    )
 
-    analysis_state$applied_plugin_id <- "none"
+    analysis_state$applied_plugin_id <- default_analysis_plugin
     analysis_state$applied_params <- list()
     analysis_state$stamp <- Sys.time()
+    plot_state$applied_plugin_id <- default_plot_plugin
+    plot_state$applied_params <- list()
+    plot_state$stamp <- Sys.time()
+    shiny::updateSelectInput(
+      session = session,
+      inputId = "plot_plugin_id",
+      selected = default_plot_plugin
+    )
   }, ignoreNULL = FALSE)
 
-  current_plugin <- shiny::reactive({
+  current_analysis_plugin <- shiny::reactive({
     pid <- input$analysis_plugin_id
     if (is.null(pid) || !nzchar(pid)) pid <- "none"
-    plug <- plugins[[pid]]
+    plug <- analysis_plugins[[pid]]
     if (is.null(plug)) {
-      plugins[["none"]]
+      analysis_plugins[["none"]]
+    } else {
+      plug
+    }
+  })
+
+  signal_plot_context <- shiny::reactive({
+    base_tbl <- tryCatch(computed()$sample_table, error = function(e) sample_tbl)
+    design_cols <- setdiff(names(base_tbl), ".sample_index")
+    continuous_cols <- design_cols[
+      vapply(base_tbl[design_cols], infer_design_var_type, character(1)) ==
+        "continuous"
+    ]
+    categorical_cols <- setdiff(design_cols, continuous_cols)
+
+    list(
+      x_var = if (!is.null(input$x_var) && nzchar(input$x_var)) {
+        input$x_var
+      } else {
+        ".sample_index"
+      },
+      collapse_vars = input$collapse_vars %||% character(0),
+      sample_table = base_tbl,
+      design_columns = design_cols,
+      continuous_columns = continuous_cols,
+      categorical_columns = categorical_cols
+    )
+  })
+
+  current_plot_plugin <- shiny::reactive({
+    pid <- input$plot_plugin_id
+    if (is.null(pid) || !nzchar(pid)) pid <- default_plot_plugin
+    plug <- plot_plugins[[pid]]
+    if (is.null(plug)) {
+      plot_plugins[[default_plot_plugin]]
     } else {
       plug
     }
   })
 
   output$analysis_params_ui <- shiny::renderUI({
-    plugin <- current_plugin()
+    plugin <- current_analysis_plugin()
     .analysis_plugin_param_ui(plugin)
   })
 
+  output$plot_params_ui <- shiny::renderUI({
+    plugin <- current_plot_plugin()
+    .plot_plugin_param_ui(plugin, context = signal_plot_context())
+  })
+
   shiny::observeEvent(input$analysis_apply_btn, {
-    plugin <- current_plugin()
-    analysis_state$applied_plugin_id <- plugin$id
+    analysis_plugin <- current_analysis_plugin()
+    plot_plugin <- current_plot_plugin()
+    analysis_state$applied_plugin_id <- analysis_plugin$id
     analysis_state$applied_params <- .collect_analysis_params(
       input = input,
-      plugin = plugin
+      plugin = analysis_plugin
     )
     analysis_state$stamp <- Sys.time()
+    plot_state$applied_plugin_id <- plot_plugin$id
+    plot_state$applied_params <- .collect_plot_params(
+      input = input,
+      plugin = plot_plugin
+    )
+    plot_state$stamp <- Sys.time()
     set_analysis_drawer(FALSE)
   }, ignoreNULL = TRUE)
 
@@ -403,8 +454,8 @@
     dat <- computed()
     pid <- analysis_state$applied_plugin_id
     if (is.null(pid) || !nzchar(pid)) pid <- "none"
-    plugin <- plugins[[pid]]
-    if (is.null(plugin)) plugin <- plugins[["none"]]
+    plugin <- analysis_plugins[[pid]]
+    if (is.null(plugin)) plugin <- analysis_plugins[["none"]]
 
     .run_analysis_plugin(
       plugin = plugin,
@@ -546,6 +597,70 @@
     print(out$diagnostics)
   })
 
+  signal_plot_payload <- shiny::reactive({
+    analysis_out <- analyzed_ts_selected()
+    ts_tbl <- analysis_out$data
+    ids <- selected_cluster_ids()
+
+    if (nrow(ts_tbl) == 0 || length(ids) == 0) {
+      return(list(
+        data = ts_tbl,
+        plot = .empty_plot("No clusters available for plotting."),
+        diagnostics = list(
+          status = "info",
+          reason = "No clusters available for plotting."
+        )
+      ))
+    }
+
+    if (!signal_plot_context()$x_var %in% names(ts_tbl)) {
+      return(list(
+        data = ts_tbl,
+        plot = .empty_plot("Selected x variable is not available."),
+        diagnostics = list(
+          status = "error",
+          reason = "Selected x variable is not available."
+        )
+      ))
+    }
+
+    ts_tbl <- ts_tbl[ts_tbl$cluster_id %in% ids, , drop = FALSE]
+    if (nrow(ts_tbl) == 0) {
+      return(list(
+        data = ts_tbl,
+        plot = .empty_plot("No selected clusters with signal data"),
+        diagnostics = list(
+          status = "info",
+          reason = "No selected clusters with signal data."
+        )
+      ))
+    }
+
+    plot_plugin <- plot_plugins[[plot_state$applied_plugin_id]]
+    if (is.null(plot_plugin)) {
+      plot_plugin <- plot_plugins[[default_plot_plugin]]
+    }
+
+    out <- .run_plot_plugin(
+      plugin = plot_plugin,
+      data = ts_tbl,
+      params = plot_state$applied_params,
+      context = signal_plot_context(),
+      interactive = FALSE
+    )
+    out$data <- ts_tbl
+    out
+  })
+
+  output$plot_diag <- shiny::renderPrint({
+    out <- signal_plot_payload()
+    if (is.null(out$diagnostics)) {
+      cat("No plot diagnostics.\n")
+      return(invisible(NULL))
+    }
+    print(out$diagnostics)
+  })
+
   output$download_clusters_csv <- shiny::downloadHandler(
     filename = function() {
       paste0("cluster-summary-", Sys.Date(), ".csv")
@@ -556,31 +671,20 @@
   )
 
   output$signal_plot <- ggiraph::renderGirafe({
-    analysis_out <- analyzed_ts_selected()
-    ts_tbl <- analysis_out$data
-    ids <- selected_cluster_ids()
-
-    shiny::validate(
-      shiny::need(nrow(ts_tbl) > 0 && length(ids) > 0,
-                   "No clusters available for plotting."),
-      shiny::need(input$x_var %in% names(ts_tbl),
-                   "Selected x variable is not available.")
-    )
-
-    ts_tbl <- ts_tbl[ts_tbl$cluster_id %in% ids, , drop = FALSE]
-    if (nrow(ts_tbl) == 0) {
-      return(ggiraph::girafe(ggobj = .empty_plot(
-        "No selected clusters with signal data"
-      )))
+    payload <- signal_plot_payload()
+    plot_plugin <- plot_plugins[[plot_state$applied_plugin_id]]
+    if (is.null(plot_plugin)) {
+      plot_plugin <- plot_plugins[[default_plot_plugin]]
     }
 
-    g <- .build_design_plot(
-      data = ts_tbl,
-      x_var = input$x_var,
-      collapse_vars = input$collapse_vars,
-      group_var = input$group_var,
+    g <- .run_plot_plugin(
+      plugin = plot_plugin,
+      data = payload$data,
+      params = plot_state$applied_params,
+      context = signal_plot_context(),
       interactive = TRUE
     )
+    g <- g$plot
 
     ggiraph::girafe_options(
       g,
@@ -601,20 +705,18 @@
     },
     content = function(file) {
       ids <- selected_cluster_ids()
-      analysis_out <- analyzed_ts_selected()
-      ts_tbl <- analysis_out$data
-
-      if (nrow(ts_tbl) == 0 || length(ids) == 0 || !input$x_var %in% names(ts_tbl)) {
-        p <- .empty_plot("No data available")
-      } else {
-        ts_tbl <- ts_tbl[ts_tbl$cluster_id %in% ids, , drop = FALSE]
-        p <- .build_design_plot(
-          data = ts_tbl,
-          x_var = input$x_var,
-          collapse_vars = input$collapse_vars,
-          group_var = input$group_var
-        )
+      payload <- signal_plot_payload()
+      plot_plugin <- plot_plugins[[plot_state$applied_plugin_id]]
+      if (is.null(plot_plugin)) {
+        plot_plugin <- plot_plugins[[default_plot_plugin]]
       }
+      p <- .run_plot_plugin(
+        plugin = plot_plugin,
+        data = payload$data,
+        params = plot_state$applied_params,
+        context = signal_plot_context(),
+        interactive = FALSE
+      )$plot
 
       ggplot2::ggsave(filename = file, plot = p, width = 8, height = 5,
                       dpi = 150)
@@ -649,8 +751,10 @@
     selected_cluster_ids = selected_cluster_ids,
     sel_state = sel_state,
     analysis_state = analysis_state,
+    plot_state = plot_state,
     cluster_ts_selected = cluster_ts_selected,
-    analyzed_ts_selected = analyzed_ts_selected
+    analyzed_ts_selected = analyzed_ts_selected,
+    signal_plot_payload = signal_plot_payload
   ))
 }
 
@@ -659,9 +763,6 @@
 #' Interactive explorer linking a cluster summary table, parcel brain map, and
 #' design-aware signal plots. Clusters are formed volumetrically from
 #' \code{stat_map}; visualization is parcel-level on \code{surfatlas}.
-#'
-#' Calling \code{cluster_explorer()} with no arguments launches a synthetic demo
-#' dataset so the UI can be explored immediately.
 #'
 #' @inheritParams build_cluster_explorer_data
 #' @param surfatlas A surface atlas object used by \code{\link[neuroatlas]{plot_brain}()}.
@@ -703,9 +804,36 @@
 #'   \code{selection_engine = "custom"}. Must return a list compatible with
 #'   \code{build_cluster_explorer_data()} output.
 #' @param analysis_plugins Optional list of analysis plugin definitions. Plugins
-#'   can transform extracted time-series/design data before plotting.
+#'   can transform extracted time-series/design data before plotting. Each
+#'   plugin is either a function or a list with fields \code{id},
+#'   \code{label}, \code{run}, and optional \code{param_defs}.
 #' @param default_analysis_plugin Optional default plugin id. Defaults to
 #'   \code{"none"}.
+#' @param plot_plugins Optional list of plot plugin definitions. Plot plugins
+#'   render extracted signal tables into the signal panel. Each plugin is either
+#'   a function or a list with fields \code{id}, \code{label}, \code{render},
+#'   and optional \code{param_defs}. The render function is called as
+#'   \code{render(data, params, context, interactive)} where \code{data} is the
+#'   extracted signal table, \code{params} are values collected from
+#'   \code{param_defs}, and \code{context} contains the current plotting
+#'   selections such as \code{x_var}, \code{collapse_vars},
+#'   \code{design_columns}, \code{continuous_columns}, and
+#'   \code{categorical_columns}. A plot plugin may return a \code{ggplot},
+#'   \code{girafe}, or a list with elements \code{plot}, \code{diagnostics},
+#'   and \code{meta}. Built-in plot plugins currently include \code{"auto"} and
+#'   \code{"group_overlay"}.
+#' @param default_plot_plugin Optional default plot plugin id. Defaults to
+#'   \code{"auto"}.
+#'
+#' @details
+#' Calling \code{cluster_explorer()} with no arguments launches a synthetic demo
+#' dataset so the UI can be explored immediately.
+#'
+#' Analysis plugins and plot plugins are separate extension points. Analysis
+#' plugins transform the extracted ROI-by-sample table before plotting. Plot
+#' plugins control how that table is rendered in the signal panel. This keeps
+#' ROI extraction and selection generic while allowing task-specific signal
+#' views to be added without changing the core explorer.
 #'
 #' @return A \code{shiny.appobj}.
 #' @export
@@ -746,7 +874,9 @@ cluster_explorer <- function(data_source = NULL,
                              sphere_combine = c("separate", "union"),
                              selection_provider = NULL,
                              analysis_plugins = NULL,
-                             default_analysis_plugin = "none") {
+                             default_analysis_plugin = "none",
+                             plot_plugins = NULL,
+                             default_plot_plugin = "auto") {
   if (!requireNamespace("shiny", quietly = TRUE)) {
     stop("Package 'shiny' is required for cluster_explorer().")
   }
@@ -820,12 +950,19 @@ cluster_explorer <- function(data_source = NULL,
   tail <- match.arg(tail)
   overlay_fun <- match.arg(overlay_fun)
   overlay_sampling <- match.arg(overlay_sampling)
-  plugins <- .normalize_analysis_plugins(
+  analysis_plugins <- .normalize_analysis_plugins(
     analysis_plugins = analysis_plugins,
     default_plugin = default_analysis_plugin
   )
-  if (!default_analysis_plugin %in% names(plugins)) {
+  if (!default_analysis_plugin %in% names(analysis_plugins)) {
     default_analysis_plugin <- "none"
+  }
+  plot_plugins <- .normalize_plot_plugins(
+    plot_plugins = plot_plugins,
+    default_plugin = default_plot_plugin
+  )
+  if (!default_plot_plugin %in% names(plot_plugins)) {
+    default_plot_plugin <- "auto"
   }
 
   n_samples <- .infer_n_samples(
@@ -861,12 +998,22 @@ cluster_explorer <- function(data_source = NULL,
     overlay_space_choice_labels["auto"] <- "Auto (default)"
   }
   analysis_plugin_choices <- vapply(
-    plugins,
+    analysis_plugins,
     function(p) as.character(p$label),
     character(1)
   )
   names(analysis_plugin_choices) <- vapply(
-    plugins,
+    analysis_plugins,
+    function(p) as.character(p$id),
+    character(1)
+  )
+  plot_plugin_choices <- vapply(
+    plot_plugins,
+    function(p) as.character(p$label),
+    character(1)
+  )
+  names(plot_plugin_choices) <- vapply(
+    plot_plugins,
     function(p) as.character(p$id),
     character(1)
   )
@@ -1178,18 +1325,6 @@ cluster_explorer <- function(data_source = NULL,
                                           multiple = TRUE)
                   ),
                   shiny::div(
-                    class = "ce-plot-field",
-                    shiny::selectInput(
-                      "group_var",
-                      .ce_label_with_help(
-                        "Color / Group",
-                        "Optional categorical variable used to color points and fit separate trend lines within each selected cluster."
-                      ),
-                      choices = c("None" = ""),
-                      selected = ""
-                    )
-                  ),
-                  shiny::div(
                     class = "ce-plot-field ce-plot-field-btn",
                     shiny::actionButton("replot_table_btn", "Use Table Selection",
                                         class = "ce-btn ce-btn-ghost ce-btn-block")
@@ -1227,6 +1362,10 @@ cluster_explorer <- function(data_source = NULL,
                 shiny::tags$details(
                   shiny::tags$summary("Analysis Diagnostics"),
                   shiny::verbatimTextOutput("analysis_diag")
+                ),
+                shiny::tags$details(
+                  shiny::tags$summary("Plot Diagnostics"),
+                  shiny::verbatimTextOutput("plot_diag")
                 )
               )
             )
@@ -1243,8 +1382,8 @@ cluster_explorer <- function(data_source = NULL,
           class = "ce-analysis-drawer-head",
           shiny::tags$div(
             class = "ce-analysis-drawer-title",
-            shiny::tags$div(class = "ce-eyebrow", "Signal Analysis"),
-            shiny::tags$h2("Analysis Plugin")
+            shiny::tags$div(class = "ce-eyebrow", "Signal Controls"),
+            shiny::tags$h2("Analysis and Plot Plugins")
           ),
           shiny::actionButton(
             "analysis_close_btn",
@@ -1264,9 +1403,19 @@ cluster_explorer <- function(data_source = NULL,
             selected = default_analysis_plugin
           ),
           shiny::uiOutput("analysis_params_ui"),
+          shiny::selectInput(
+            "plot_plugin_id",
+            .ce_label_with_help(
+              "Plot Plugin",
+              "Controls how the extracted signal table is rendered in the signal panel."
+            ),
+            choices = plot_plugin_choices,
+            selected = default_plot_plugin
+          ),
+          shiny::uiOutput("plot_params_ui"),
           shiny::actionButton(
             "analysis_apply_btn",
-            "Apply Analysis",
+            "Apply Signal Settings",
             class = "ce-btn ce-btn-primary ce-btn-block"
           )
         )
@@ -1292,8 +1441,10 @@ cluster_explorer <- function(data_source = NULL,
       sphere_radius = sphere_radius,
       sphere_units = sphere_units,
       sphere_combine = sphere_combine,
-      plugins = plugins,
+      analysis_plugins = analysis_plugins,
       default_analysis_plugin = default_analysis_plugin,
+      plot_plugins = plot_plugins,
+      default_plot_plugin = default_plot_plugin,
       overlay_space = overlay_space,
       overlay_density = overlay_density,
       overlay_resolution = overlay_resolution,

@@ -1,0 +1,271 @@
+---
+title: "Generating Cluster Reports from Neuroimaging Results"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Generating Cluster Reports from Neuroimaging Results}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 6,
+  fig.height = 4
+)
+```
+
+You have a statistical map from a group analysis, a 4-D volume of betas for
+each condition and time point, and a design table describing what each image
+represents. You want a PDF report with brain images, MNI coordinate tables, and
+condition-by-time plots for every significant cluster. `cluster_report()` does
+all of that in a single call.
+
+## Quick start
+
+```{r quick-start}
+library(neuromosaic)
+
+inputs <- example_cluster_inputs()
+result <- cluster_report(
+  stat_map    = inputs$stat_map,
+  data_source = inputs$data_source,
+  atlas       = inputs$atlas,
+  design      = inputs$design,
+  threshold   = 3.0,
+  formulas    = list("Condition x Time" = value ~ condition * time),
+  output_file = NULL,
+  min_cluster_size = 5
+)
+result
+```
+
+That call thresholds the stat map, finds clusters, labels each peak with its
+atlas region and MNI coordinates, extracts mean signal per cluster, generates
+time-course plots grouped by condition, formats a publication-ready coordinate
+table, and renders orthographic brain slices at each peak.
+
+Set `output_file = "report.pdf"` (or `.html`) to get a rendered document
+instead of returning data.
+
+## What you get back
+
+`cluster_report()` returns a `cluster_report_result` object. It behaves like a
+list -- you can extract components with `$` -- but it also has `print()`,
+`summary()`, `plot()`, and `export_csv()` methods.
+
+```{r summary}
+summary(result)
+```
+
+## The MNI coordinate table
+
+`result$mni_table` is a formatted table ready for publication:
+
+```{r mni-table, results='asis'}
+result$mni_table
+```
+
+## Cluster plots
+
+The `plot()` method shows the time-course plot for a given cluster:
+
+```{r plot-first, fig.cap = "Time course for the first cluster, split by condition."}
+plot(result, which = 1)
+```
+
+You can also access plots directly:
+
+```{r plot-direct, fig.cap = "Same plot, accessed directly."}
+result$plots[["Condition x Time"]][[1]]
+```
+
+## How formulas control the plot
+
+The formula does not fit a model -- your data is already fitted (betas,
+contrasts, or summary scores). Instead, the formula controls **grouping and
+layout**:
+
+| Formula | X-axis | Color | Facet |
+|---------|--------|-------|-------|
+| `value ~ time` | time | -- | -- |
+| `value ~ condition * time` | time | condition | -- |
+| `value ~ group * condition * time` | time | condition | group |
+
+The last RHS term is always the x-axis (or a column named `time` if present).
+Additional terms map to color and facet in order.
+
+Note that `+` and `*` are treated identically in this context -- both are
+parsed with `all.vars()` to extract variable names. The formula operator does
+not affect the plot.
+
+You can include multiple formulas in one report:
+
+```{r multi-formula, eval = FALSE}
+cluster_report(
+  ...,
+  formulas = list(
+    "Main Effect"  = value ~ time,
+    "By Condition"  = value ~ condition * time
+  )
+)
+```
+
+Each formula gets its own subsection in the PDF, within each cluster's section.
+
+## Exporting to CSV
+
+For supplementary materials, export the cluster table, parcel overlaps, and
+time-course data:
+
+```{r export-csv, eval = FALSE}
+export_csv(result, dir = "supplementary/")
+```
+
+This writes `cluster_report_clusters.csv`, `cluster_report_parcels.csv`, and
+`cluster_report_timecourses.csv`.
+
+## Data source types
+
+`cluster_report()` accepts three types of backing data:
+
+**4-D `NeuroVec`** (shown above) -- the most common case. One volume per row
+of the design table.
+
+**List of `NeuroVol` objects** -- useful when betas are separate files:
+
+```{r list-source, eval = FALSE}
+betas <- lapply(beta_files, neuroim2::read_vol)
+
+cluster_report(
+  stat_map = stat_map,
+  data_source = betas,
+  design = design,
+  ...
+)
+```
+
+**`nftab` (neurotabs)** -- the design is embedded in the nftab object, so no
+separate `design` argument is needed:
+
+```{r nftab-source, eval = FALSE}
+cluster_report(
+  stat_map = stat_map,
+  data_source = my_nftab,
+  ...
+)
+```
+
+## Using the building blocks individually
+
+`cluster_report()` is a convenience wrapper. You can call each step yourself
+for more control:
+
+```{r building-blocks}
+# Step 1: Cluster extraction (the compute engine)
+cluster_data <- compute_clusters(
+  data_source = inputs$data_source,
+  atlas = inputs$atlas,
+  stat_map = inputs$stat_map,
+  sample_table = inputs$design,
+  threshold = 3.0,
+  min_cluster_size = 5
+)
+
+# Step 2: Enrich with MNI coordinates and atlas labels
+enriched <- enrich_cluster_table(
+  cluster_table = cluster_data$cluster_table,
+  stat_map = inputs$stat_map,
+  atlas = inputs$atlas,
+  max_clusters = 10
+)
+```
+
+```{r building-blocks-extract}
+# Step 3: Extract time-course data
+tc_data <- extract_cluster_data(
+  data_source = inputs$data_source,
+  cluster_info = cluster_data,
+  design = inputs$design
+)
+head(tc_data)
+```
+
+```{r building-blocks-plot, fig.cap = "Single-cluster plot built manually."}
+# Step 4: Plot one cluster
+plot_cluster_timecourse(
+  data = tc_data[tc_data$cluster_id == enriched$cluster_id[1], ],
+  formula = value ~ condition * time,
+  cluster_label = "Manual plot: left FrontalA"
+)
+```
+
+```{r building-blocks-table, results='asis'}
+# Step 5: Format the MNI table
+format_mni_table(enriched, style = "kable")
+```
+
+## Customisation options
+
+**Brain slices:** Orthographic brain views are generated by default. Disable
+with `brain_slices = FALSE` for faster runs, or change the color map:
+
+```{r brain-options, eval = FALSE}
+cluster_report(..., brain_slices = TRUE, brain_cmap = "viridis")
+```
+
+**Table style:** Choose between `"gt"` (default, best for HTML), `"flextable"`
+(best for Word/PDF), or `"kable"` (lightweight, no extra dependencies):
+
+```{r table-styles, eval = FALSE}
+cluster_report(..., table_style = "flextable")
+```
+
+**Tail mode:** Focus on positive activations, negative, or both:
+
+```{r tail-mode, eval = FALSE}
+cluster_report(..., tail = "positive")   # only positive clusters
+cluster_report(..., tail = "negative")   # only negative clusters
+cluster_report(..., tail = "two_sided")  # both (default)
+```
+
+**Cluster cap:** Limit how many clusters appear in the report to keep it
+manageable:
+
+```{r max-clusters, eval = FALSE}
+cluster_report(..., max_clusters = 10)
+```
+
+Clusters are sorted by peak statistic magnitude, so the strongest effects
+appear first.
+
+**Custom Rmd template:** Supply your own template for full control over the
+report layout:
+
+```{r custom-template, eval = FALSE}
+cluster_report(..., template = "my_template.Rmd")
+```
+
+The template receives `params$report_data` -- see the bundled template at
+`system.file("templates", "cluster_report.Rmd", package = "neuromosaic")`
+for the expected structure.
+
+## A note on statistical assumptions
+
+This package assumes your statistical map has already been corrected for
+multiple comparisons (e.g., via cluster-level FWE, voxel-level FDR, or
+permutation testing). The `threshold` parameter controls cluster formation,
+not statistical inference. If you pass an uncorrected map, the clusters and
+their reported coordinates will be valid, but you should not interpret them
+as statistically significant without appropriate correction.
+
+## Next steps
+
+- `?cluster_report` -- full parameter documentation
+- `?compute_clusters` -- the compute engine underneath
+- `?plot_cluster_timecourse` -- fine-grained control over individual plots
+- `?format_mni_table` -- table formatting options
+- `cluster_explorer()` -- launch the interactive Shiny explorer

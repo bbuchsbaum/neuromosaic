@@ -261,16 +261,21 @@
 
 .build_design_plot <- function(data, x_var, collapse_vars = NULL,
                                group_var = NULL,
+                               facet_var = NULL,
                                interactive = FALSE) {
   collapse_vars <- collapse_vars[collapse_vars %in% names(data)]
   collapse_vars <- setdiff(collapse_vars, c("cluster_id", "signal"))
   if (is.null(group_var) || !nzchar(group_var) || !group_var %in% names(data)) {
     group_var <- NULL
   }
+  if (is.null(facet_var) || !nzchar(facet_var) || !facet_var %in% names(data)) {
+    facet_var <- NULL
+  }
 
   plot_data <- data
   if (length(collapse_vars) > 0) {
-    group_vars <- unique(c("cluster_id", x_var, collapse_vars, group_var))
+    group_vars <- unique(c("cluster_id", x_var, collapse_vars, group_var,
+                           facet_var))
     plot_data <- plot_data |>
       dplyr::group_by(dplyr::across(dplyr::all_of(group_vars))) |>
       dplyr::summarise(signal = mean(signal, na.rm = TRUE), .groups = "drop")
@@ -279,6 +284,9 @@
   color_var <- if (is.null(group_var)) "cluster_id" else group_var
   color_label <- if (is.null(group_var)) "Cluster" else group_var
   plot_data$.plot_group_ <- factor(as.character(plot_data[[color_var]]))
+  if (!is.null(facet_var)) {
+    plot_data$.facet_panel_ <- factor(as.character(plot_data[[facet_var]]))
+  }
 
   # Build tooltip column for interactive mode
   if (isTRUE(interactive)) {
@@ -294,12 +302,23 @@
         after = 1L
       )
     }
+    if (!is.null(facet_var)) {
+      tooltip_lines <- append(
+        tooltip_lines,
+        list(paste0(facet_var, ": ", .format_plot_value(plot_data[[facet_var]])))
+      )
+    }
     plot_data$tooltip_ <- paste0(
       tooltip_lines[[1L]], "\n",
       tooltip_lines[[2L]], "\n",
       tooltip_lines[[3L]],
       if (length(tooltip_lines) > 3L) {
         paste0("\n", tooltip_lines[[4L]])
+      } else {
+        ""
+      },
+      if (length(tooltip_lines) > 4L) {
+        paste0("\n", tooltip_lines[[5L]])
       } else {
         ""
       }
@@ -415,7 +434,15 @@
     }
   }
 
-  if (length(unique(plot_data$cluster_id)) > 1) {
+  if (!is.null(facet_var) && length(unique(plot_data$cluster_id)) > 1) {
+    p <- p + ggplot2::facet_grid(
+      rows = ggplot2::vars(.data$cluster_id),
+      cols = ggplot2::vars(.data$.facet_panel_),
+      scales = "free_y"
+    )
+  } else if (!is.null(facet_var)) {
+    p <- p + ggplot2::facet_wrap(~ .facet_panel_, scales = "free_y")
+  } else if (length(unique(plot_data$cluster_id)) > 1) {
     p <- p + ggplot2::facet_wrap(~ cluster_id, scales = "free_y")
   }
 

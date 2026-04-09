@@ -317,7 +317,7 @@ test_that(".nf_make_series_fun closure returns correct matrix dimensions", {
   x  <- make_toy_cluster_explorer_inputs(n_time = 4)
   ds <- make_toy_nftab(n_obs = 4L)
 
-  sfun <- clusterreport:::.nf_make_series_fun("bold")
+  sfun <- neuromosaic:::.nf_make_series_fun("bold")
 
   # 3-voxel probe: two from the positive cluster, one from the negative
   vox_coords <- matrix(
@@ -383,4 +383,79 @@ test_that("nf_cluster_explorer constructs a shiny app from nf_from_table inputs"
   )
 
   expect_s3_class(app, "shiny.appobj")
+})
+
+test_that("nf_cluster_explorer forwards custom plot plugins through ...", {
+  skip_if_not_installed("neurotabs")
+  skip_if_not_installed("shiny")
+  skip_if_not_installed("DT")
+  skip_if_not_installed("ggiraph")
+
+  adhoc <- make_toy_nftab_from_table(n_obs = 4L)
+  on.exit(unlink(adhoc$root, recursive = TRUE), add = TRUE)
+
+  custom_plot <- list(
+    id = "custom_scatter",
+    label = "Custom Scatter",
+    render = function(data, params, context, interactive) {
+      plot_data <- data
+      plot_data$.x <- plot_data[[context$x_var]]
+      p <- ggplot2::ggplot(plot_data, ggplot2::aes(x = .x, y = signal)) +
+        ggplot2::geom_point() +
+        ggplot2::geom_smooth(method = "lm", se = FALSE)
+
+      list(
+        plot = p,
+        diagnostics = list(status = "info", reason = "custom plot used")
+      )
+    }
+  )
+
+  app <- nf_cluster_explorer(
+    ds = adhoc$ds,
+    stat_map = adhoc$toy$stat_map,
+    data_feature = "AUC",
+    atlas = adhoc$toy$atlas,
+    surfatlas = make_toy_surfatlas(),
+    threshold = 3,
+    min_cluster_size = 4,
+    plot_plugins = list(custom_scatter = custom_plot),
+    default_plot_plugin = "custom_scatter"
+  )
+
+  bridge <- new.env(parent = emptyenv())
+  server_fn <- function(input, output, session) {
+    bridge$rv <- app$serverFuncSource()(input, output, session)
+  }
+
+  shiny::testServer(server_fn, {
+    session$setInputs(
+      threshold = 3,
+      min_cluster_size = 4L,
+      connectivity = "26-connect",
+      tail = "two_sided",
+      prefetch_mode = TRUE,
+      prefetch_max_clusters = 200L,
+      prefetch_max_voxels = 100000L,
+      map_scope = "all_clusters",
+      display_mode = "dominant",
+      brain_click_mode = "parcel",
+      surface_pick_radius = 2,
+      show_cluster_overlay = FALSE,
+      overlay_threshold = 1e-06,
+      overlay_alpha = 0.45,
+      overlay_fun = "avg",
+      overlay_space_ui = "auto",
+      overlay_sampling = "midpoint",
+      x_var = "measure",
+      collapse_vars = character(0),
+      analysis_plugin_id = "none",
+      plot_plugin_id = "custom_scatter",
+      apply_btn = 1L
+    )
+
+    rv <- bridge$rv
+    expect_equal(rv$plot_state$applied_plugin_id, "custom_scatter")
+    expect_equal(rv$signal_plot_payload()$diagnostics$reason, "custom plot used")
+  })
 })

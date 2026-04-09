@@ -73,10 +73,10 @@ test_that("parcel values helper supports sign display modes", {
   )
 
   ids <- c(1L, 2L)
-  dominant <- cluster.explorer:::.parcel_values_from_clusters(cp, ids, mode = "dominant")
-  positive <- cluster.explorer:::.parcel_values_from_clusters(cp, ids,
+  dominant <- neuromosaic:::.parcel_values_from_clusters(cp, ids, mode = "dominant")
+  positive <- neuromosaic:::.parcel_values_from_clusters(cp, ids,
                                                         mode = "positive_only")
-  negative <- cluster.explorer:::.parcel_values_from_clusters(cp, ids,
+  negative <- neuromosaic:::.parcel_values_from_clusters(cp, ids,
                                                         mode = "negative_only")
 
   expect_equal(dominant[["1"]], -5.6)
@@ -131,6 +131,78 @@ test_that("cluster_explorer supports zero-argument demo mode", {
   expect_s3_class(app, "shiny.appobj")
 })
 
+test_that("cluster_explorer forwards custom plot plugins through public API", {
+  skip_if_not_installed("shiny")
+  skip_if_not_installed("DT")
+  skip_if_not_installed("ggiraph")
+
+  x <- make_toy_cluster_explorer_inputs(n_time = 4)
+  fake_surfatlas <- make_toy_surfatlas()
+
+  custom_plot <- list(
+    id = "custom_scatter",
+    label = "Custom Scatter",
+    render = function(data, params, context, interactive) {
+      plot_data <- data
+      plot_data$.x <- plot_data[[context$x_var]]
+      p <- ggplot2::ggplot(plot_data, ggplot2::aes(x = .x, y = signal)) +
+        ggplot2::geom_point() +
+        ggplot2::geom_smooth(method = "lm", se = FALSE)
+
+      list(
+        plot = p,
+        diagnostics = list(status = "info", reason = "custom plot used")
+      )
+    }
+  )
+
+  app <- cluster_explorer(
+    data_source = x$data_vec,
+    atlas = x$atlas,
+    stat_map = x$stat_map,
+    surfatlas = fake_surfatlas,
+    sample_table = x$sample_table,
+    plot_plugins = list(custom_scatter = custom_plot),
+    default_plot_plugin = "custom_scatter"
+  )
+
+  bridge <- new.env(parent = emptyenv())
+  server_fn <- function(input, output, session) {
+    bridge$rv <- app$serverFuncSource()(input, output, session)
+  }
+
+  shiny::testServer(server_fn, {
+    session$setInputs(
+      threshold = 3,
+      min_cluster_size = 4L,
+      connectivity = "26-connect",
+      tail = "two_sided",
+      prefetch_mode = TRUE,
+      prefetch_max_clusters = 200L,
+      prefetch_max_voxels = 100000L,
+      map_scope = "all_clusters",
+      display_mode = "dominant",
+      brain_click_mode = "parcel",
+      surface_pick_radius = 2,
+      show_cluster_overlay = FALSE,
+      overlay_threshold = 1e-06,
+      overlay_alpha = 0.45,
+      overlay_fun = "avg",
+      overlay_space_ui = "auto",
+      overlay_sampling = "midpoint",
+      x_var = ".sample_index",
+      collapse_vars = character(0),
+      analysis_plugin_id = "none",
+      plot_plugin_id = "custom_scatter",
+      apply_btn = 1L
+    )
+
+    rv <- bridge$rv
+    expect_equal(rv$plot_state$applied_plugin_id, "custom_scatter")
+    expect_equal(rv$signal_plot_payload()$diagnostics$reason, "custom plot used")
+  })
+})
+
 test_that("build_cluster_explorer_data supports 3D data_source as one sample", {
   x <- make_toy_cluster_explorer_inputs(n_time = 3)
 
@@ -152,8 +224,8 @@ test_that("build_cluster_explorer_data supports 3D data_source as one sample", {
 test_that("atlas harmonization resamples to stat_map dimensions", {
   x <- make_toy_mismatch_cluster_explorer_inputs(n_time = 3)
 
-  out <- cluster.explorer:::.harmonize_cluster_explorer_atlas(x$atlas, x$stat_map)
-  out_vol <- cluster.explorer:::.get_atlas_volume(out$atlas)
+  out <- neuromosaic:::.harmonize_cluster_explorer_atlas(x$atlas, x$stat_map)
+  out_vol <- neuromosaic:::.get_atlas_volume(out$atlas)
 
   expect_true(isTRUE(out$resampled))
   expect_equal(dim(out_vol)[1:3], dim(x$stat_map)[1:3])
@@ -186,7 +258,7 @@ test_that("atlas/surface mismatch warning is emitted", {
   bad_surf$ids <- c(10L, 11L)
 
   expect_warning(
-    cluster.explorer:::.warn_if_atlas_surface_mismatch(x$atlas, bad_surf),
+    neuromosaic:::.warn_if_atlas_surface_mismatch(x$atlas, bad_surf),
     "No overlapping ROI IDs"
   )
 })
@@ -198,7 +270,7 @@ test_that("build_design_plot evaluates aesthetics without pronoun errors", {
     .sample_index = rep(1:4, times = 2)
   )
 
-  p <- cluster.explorer:::.build_design_plot(dat, ".sample_index")
+  p <- neuromosaic:::.build_design_plot(dat, ".sample_index")
   expect_s3_class(p, "ggplot")
   expect_no_error(ggplot2::ggplot_build(p))
 })
@@ -222,11 +294,11 @@ test_that("analysis plugin hooks transform extracted signal data", {
     }
   )
 
-  norm <- cluster.explorer:::.normalize_analysis_plugins(
+  norm <- neuromosaic:::.normalize_analysis_plugins(
     analysis_plugins = list(scale = plugin),
     default_plugin = "none"
   )
-  out <- cluster.explorer:::.run_analysis_plugin(
+  out <- neuromosaic:::.run_analysis_plugin(
     plugin = norm[["scale"]],
     ts_data = dat,
     design = design,
@@ -253,7 +325,7 @@ test_that("custom selection engine delegates to provider", {
     res
   }
 
-  out <- cluster.explorer:::.compute_selection_data(
+  out <- neuromosaic:::.compute_selection_data(
     selection_engine = "custom",
     selection_provider = provider
   )
@@ -263,7 +335,7 @@ test_that("custom selection engine delegates to provider", {
 
 test_that("parcel selection engine builds parcel-backed selections", {
   x <- make_toy_cluster_explorer_inputs(n_time = 4)
-  out <- suppressWarnings(cluster.explorer:::.compute_selection_data(
+  out <- suppressWarnings(neuromosaic:::.compute_selection_data(
     selection_engine = "parcel",
     data_source = x$data_vec,
     atlas = x$atlas,
@@ -283,7 +355,7 @@ test_that("parcel selection engine builds parcel-backed selections", {
 
 test_that("sphere selection engine builds spherical selections", {
   x <- make_toy_cluster_explorer_inputs(n_time = 4)
-  out <- suppressWarnings(cluster.explorer:::.compute_selection_data(
+  out <- suppressWarnings(neuromosaic:::.compute_selection_data(
     selection_engine = "sphere",
     data_source = x$data_vec,
     atlas = x$atlas,
@@ -374,7 +446,7 @@ test_that("prefetch guards can skip eager series extraction", {
 
 test_that("plot_brain selection id parser handles encoded and legacy ids", {
   ids <- c("Left Lateral::7::21", "9", "bad-id")
-  parsed <- cluster.explorer:::.parse_plot_brain_selection_ids(ids)
+  parsed <- neuromosaic:::.parse_plot_brain_selection_ids(ids)
 
   expect_equal(nrow(parsed), 3)
   expect_equal(parsed$parcel_id[1], 7L)
@@ -420,7 +492,7 @@ test_that("surface pick lookup maps polygon ids to nearest surface vertex", {
     y = c(3.6, 3.5, 3.8)
   )
 
-  lookup <- cluster.explorer:::.surface_pick_lookup_from_polygons(
+  lookup <- neuromosaic:::.surface_pick_lookup_from_polygons(
     poly = poly,
     panel_ctx = panel_ctx,
     stat_map = stat_map
@@ -431,7 +503,7 @@ test_that("surface pick lookup maps polygon ids to nearest surface vertex", {
   expect_equal(c(lookup$surface_x[[1]], lookup$surface_y[[1]], lookup$surface_z[[1]]),
                c(4, 4, 2))
 
-  parsed <- cluster.explorer:::.parse_plot_brain_selection_ids(lookup$data_id[[1]])
+  parsed <- neuromosaic:::.parse_plot_brain_selection_ids(lookup$data_id[[1]])
   expect_equal(parsed$panel[[1]], "Left Lateral")
   expect_equal(parsed$parcel_id[[1]], 1L)
   expect_equal(parsed$shape_id[[1]], 10L)
@@ -445,7 +517,7 @@ test_that("surface pick cluster matcher respects radius and nearest fallback", {
                  5, 5, 4), ncol = 3, byrow = TRUE)
   )
 
-  ids_near <- cluster.explorer:::.clusters_for_grid_centers(
+  ids_near <- neuromosaic:::.clusters_for_grid_centers(
     cluster_voxels = cluster_voxels,
     centers = matrix(c(2, 2, 2), ncol = 3),
     radius = 0,
@@ -453,7 +525,7 @@ test_that("surface pick cluster matcher respects radius and nearest fallback", {
   )
   expect_equal(ids_near[1], "A")
 
-  ids_radius <- cluster.explorer:::.clusters_for_grid_centers(
+  ids_radius <- neuromosaic:::.clusters_for_grid_centers(
     cluster_voxels = cluster_voxels,
     centers = matrix(c(4.2, 4.2, 4.2), ncol = 3),
     radius = 2,
@@ -461,11 +533,129 @@ test_that("surface pick cluster matcher respects radius and nearest fallback", {
   )
   expect_equal(ids_radius[1], "B")
 
-  ids_none <- cluster.explorer:::.clusters_for_grid_centers(
+  ids_none <- neuromosaic:::.clusters_for_grid_centers(
     cluster_voxels = cluster_voxels,
     centers = matrix(c(4.2, 4.2, 4.2), ncol = 3),
     radius = 0,
     fallback_nearest = FALSE
   )
   expect_equal(length(ids_none), 0)
+})
+
+# -- LRU cache eviction -------------------------------------------------------
+
+test_that("LRU cache evicts oldest entries when max_entries exceeded", {
+  cache <- neuromosaic:::.new_lru_cache(max_entries = 3L)
+  cache$set("a", 1)
+  cache$set("b", 2)
+  cache$set("c", 3)
+  expect_equal(cache$size(), 3L)
+
+  # inserting a 4th should evict "a" (oldest)
+  cache$set("d", 4)
+  expect_equal(cache$size(), 3L)
+  expect_null(cache$get("a"))
+  expect_equal(cache$get("b"), 2)
+  expect_equal(cache$get("d"), 4)
+
+  # accessing "b" promotes it; inserting "e" should evict "c" instead
+  cache$get("b")
+  cache$set("e", 5)
+  expect_null(cache$get("c"))
+  expect_equal(cache$get("b"), 2)
+  expect_equal(cache$get("e"), 5)
+})
+
+# -- .coerce_series_matrix transposition warning -------------------------------
+
+test_that(".coerce_series_matrix warns when transposing", {
+  # Correct orientation: 4 rows (samples) x 2 cols (voxels)
+  m_ok <- matrix(1:8, nrow = 4, ncol = 2)
+  expect_silent(neuromosaic:::.coerce_series_matrix(m_ok, n_samples = 4))
+
+  # Wrong orientation: 2 rows x 4 cols — should be transposed with a warning
+  m_bad <- matrix(1:8, nrow = 2, ncol = 4)
+  expect_warning(
+    result <- neuromosaic:::.coerce_series_matrix(m_bad, n_samples = 4),
+    "transposing"
+  )
+  expect_equal(nrow(result), 4L)
+  expect_equal(ncol(result), 2L)
+})
+
+# -- tail options: positive and negative only ----------------------------------
+
+test_that("build_cluster_explorer_data with tail='positive' returns only positive clusters", {
+  x <- make_toy_cluster_explorer_inputs(n_time = 4)
+  res <- suppressWarnings(
+    build_cluster_explorer_data(
+      data_source = x$data_vec,
+      atlas = x$atlas,
+      stat_map = x$stat_map,
+      sample_table = x$sample_table,
+      threshold = 3,
+      min_cluster_size = 4,
+      tail = "positive"
+    )
+  )
+  if (nrow(res$cluster_table) > 0) {
+    expect_true(all(res$cluster_table$sign == "positive"))
+  }
+})
+
+test_that("build_cluster_explorer_data with tail='negative' returns only negative clusters", {
+  x <- make_toy_cluster_explorer_inputs(n_time = 4)
+  res <- suppressWarnings(
+    build_cluster_explorer_data(
+      data_source = x$data_vec,
+      atlas = x$atlas,
+      stat_map = x$stat_map,
+      sample_table = x$sample_table,
+      threshold = 3,
+      min_cluster_size = 4,
+      tail = "negative"
+    )
+  )
+  if (nrow(res$cluster_table) > 0) {
+    expect_true(all(res$cluster_table$sign == "negative"))
+  }
+})
+
+# -- Custom signal_fun ---------------------------------------------------------
+
+test_that("build_cluster_explorer_data respects custom signal_fun", {
+  x <- make_toy_cluster_explorer_inputs(n_time = 4)
+
+  res_mean <- suppressWarnings(
+    build_cluster_explorer_data(
+      data_source = x$data_vec,
+      atlas = x$atlas,
+      stat_map = x$stat_map,
+      sample_table = x$sample_table,
+      threshold = 3,
+      min_cluster_size = 4,
+      signal_fun = mean,
+      signal_fun_args = list(na.rm = TRUE)
+    )
+  )
+
+  res_max <- suppressWarnings(
+    build_cluster_explorer_data(
+      data_source = x$data_vec,
+      atlas = x$atlas,
+      stat_map = x$stat_map,
+      sample_table = x$sample_table,
+      threshold = 3,
+      min_cluster_size = 4,
+      signal_fun = max,
+      signal_fun_args = list(na.rm = TRUE)
+    )
+  )
+
+  # max(voxel_vals) >= mean(voxel_vals) always, so max signal should be >= mean
+  if (nrow(res_mean$cluster_ts) > 0 && nrow(res_max$cluster_ts) > 0) {
+    mean_signals <- res_mean$cluster_ts$signal
+    max_signals <- res_max$cluster_ts$signal
+    expect_true(all(max_signals >= mean_signals - 1e-10))
+  }
 })
