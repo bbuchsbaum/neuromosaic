@@ -39,6 +39,8 @@
 #'   cluster? Default `TRUE`.
 #' @param brain_cmap Color map for brain slice images. Default `"inferno"`.
 #' @param quiet Suppress rendering messages? Default `TRUE`.
+#' @param provenance Optional metadata to merge into the automatically captured
+#'   report provenance.
 #' @param ... Additional arguments passed to [build_cluster_explorer_data()].
 #'
 #' @return Invisibly, a `cluster_report_result` object (an S3 class that
@@ -102,11 +104,13 @@ cluster_report <- function(stat_map,
                            brain_slices = TRUE,
                            brain_cmap = "inferno",
                            quiet = TRUE,
+                           provenance = NULL,
                            ...) {
   connectivity <- match.arg(connectivity)
   tail <- match.arg(tail)
   table_style <- match.arg(table_style)
   has_data_source <- !is.null(data_source)
+  stat_map_path <- if (is.character(stat_map)) stat_map else NULL
 
   # Input validation
   if (is.character(stat_map)) {
@@ -261,6 +265,19 @@ cluster_report <- function(stat_map,
 
   # Step 6: Assemble and render
   atlas_name <- tryCatch(atlas$name, error = function(e) "Unknown atlas")
+  report_mode <- if (has_data_source) "full" else "table_only"
+  report_provenance <- .build_cluster_report_provenance(
+    stat_map_path = stat_map_path,
+    stat_map = stat_map,
+    data_source = data_source,
+    atlas = atlas,
+    design = design,
+    formulas = formulas,
+    output_file = output_file,
+    template = template,
+    report_mode = report_mode,
+    extra = provenance
+  )
 
   report_data <- list(
     cluster_table = enriched,
@@ -268,6 +285,7 @@ cluster_report <- function(stat_map,
     mni_table = mni_table,
     plots = all_plots,
     brain_slices = slice_plots,
+    provenance = report_provenance,
     params = list(
       threshold = threshold,
       tail = tail,
@@ -276,7 +294,7 @@ cluster_report <- function(stat_map,
       atlas_name = atlas_name,
       formulas = formulas,
       table_style = table_style,
-      report_mode = if (has_data_source) "full" else "table_only"
+      report_mode = report_mode
     )
   )
 
@@ -298,7 +316,8 @@ cluster_report <- function(stat_map,
     brain_slices    = slice_plots,
     mni_table       = mni_table,
     report_path     = report_path,
-    params          = report_data$params
+    params          = report_data$params,
+    provenance      = report_provenance
   )
   invisible(result)
 }

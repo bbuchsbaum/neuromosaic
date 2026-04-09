@@ -60,6 +60,18 @@ make_cli_fixture <- function(n_obs = 4L) {
   )
 }
 
+write_cli_config <- function(path, command, options = list(), subcommand = NULL) {
+  yaml::write_yaml(
+    Filter(Negate(is.null), list(
+      command = command,
+      subcommand = subcommand,
+      options = options
+    )),
+    file = path
+  )
+  path
+}
+
 test_that("formula_plot_plugin maps formula terms onto explorer plot controls", {
   data <- tibble::tibble(
     cluster_id = rep(c("pos_1", "neg_1"), each = 4),
@@ -162,6 +174,34 @@ test_that("cli_main prepares stat-map-only report specs without feature input", 
   expect_equal(spec$args$output_file, out_path)
 })
 
+test_that("cli_main reads YAML config files and allows CLI overrides", {
+  fixture <- make_cli_fixture()
+  config_path <- file.path(fixture$root, "report.yml")
+  config_out <- file.path(fixture$root, "from-config.qmd")
+  override_out <- file.path(fixture$root, "override.qmd")
+
+  write_cli_config(
+    config_path,
+    command = "report",
+    options = list(
+      stat_map = fixture$stat_map_path,
+      atlas = fixture$atlas_path,
+      out = config_out,
+      brain_slices = FALSE
+    )
+  )
+
+  spec <- cli_main(c("report", "--config", config_path), execute = FALSE)
+  expect_equal(spec$args$output_file, config_out)
+  expect_false(spec$args$brain_slices)
+
+  spec_override <- cli_main(
+    c("report", "--config", config_path, "--out", override_out),
+    execute = FALSE
+  )
+  expect_equal(spec_override$args$output_file, override_out)
+})
+
 test_that("cli_main prepares explore specs with formula-driven plugins", {
   fixture <- make_cli_fixture()
 
@@ -183,6 +223,37 @@ test_that("cli_main prepares explore specs with formula-driven plugins", {
   expect_equal(spec$args$default_plot_plugin, "formula")
   expect_true("formula" %in% names(spec$args$plot_plugins))
   expect_true(is.function(spec$args$series_fun))
+})
+
+test_that("cli_main dry-run and validate resolve specs without executing", {
+  fixture <- make_cli_fixture()
+  config_path <- file.path(fixture$root, "report.yml")
+  out_path <- file.path(fixture$root, "dry-run-report.html")
+
+  write_cli_config(
+    config_path,
+    command = "report",
+    options = list(
+      stat_map = fixture$stat_map_path,
+      atlas = fixture$atlas_path,
+      out = out_path,
+      brain_slices = FALSE
+    )
+  )
+
+  dry_output <- capture.output(
+    dry_spec <- cli_main(c("report", "--config", config_path, "--dry-run"), execute = TRUE)
+  )
+  expect_equal(dry_spec$type, "report")
+  expect_true(any(grepl("^Dry run: report$", dry_output)))
+  expect_false(file.exists(out_path))
+
+  validate_output <- capture.output(
+    validated_spec <- cli_main(c("report", "--config", config_path, "--validate"), execute = TRUE)
+  )
+  expect_equal(validated_spec$type, "report")
+  expect_true(any(grepl("^Validation OK: report$", validate_output)))
+  expect_false(file.exists(out_path))
 })
 
 test_that("cli_main manifest create writes a manifest-backed dataset", {
@@ -263,12 +334,14 @@ test_that("cli_main report writes qmd source for stat-map-only reports", {
 test_that("cli formula parser rejects dangerous calls", {
   expect_error(
     .cli_parse_formulas("value ~ system('whoami')"),
-    "disallowed call 'system'"
+    "disallowed call 'system'",
+    class = "neuromosaic_error_unsafe_formula"
   )
 
   expect_error(
     .cli_parse_formulas("value ~ base::system('whoami')"),
-    "disallowed call 'base::system'"
+    "disallowed call 'base::system'",
+    class = "neuromosaic_error_unsafe_formula"
   )
 })
 
@@ -279,14 +352,23 @@ test_that("cli atlas loaders validate deserialized object classes", {
   saveRDS(list(not = "an atlas"), bad_atlas_path)
   expect_error(
     .cli_load_atlas(bad_atlas_path),
-    "did not contain a valid atlas object"
+    "did not contain a valid atlas object",
+    class = "neuromosaic_error_invalid_atlas"
   )
 
   bad_surfatlas_path <- file.path(fixture$root, "bad-surfatlas.rds")
   saveRDS(list(not = "a surfatlas"), bad_surfatlas_path)
   expect_error(
     .cli_load_surfatlas(bad_surfatlas_path),
-    "did not contain a valid surfatlas object"
+    "did not contain a valid surfatlas object",
+    class = "neuromosaic_error_invalid_surfatlas"
+  )
+})
+
+test_that("cli_main reports config errors with a specific class", {
+  expect_error(
+    cli_main(c("report", "--config", tempfile("missing-", fileext = ".yml")), execute = FALSE),
+    class = "neuromosaic_error_cli_config"
   )
 })
 

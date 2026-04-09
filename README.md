@@ -10,7 +10,7 @@ Install the package from GitHub:
 
 ```r
 # install.packages("pak")
-pak::pak("bbuchsbaum/clusterreport")
+pak::pak("bbuchsbaum/neuromosaic")
 ```
 
 ## CLI Installation

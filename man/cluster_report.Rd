@@ -23,6 +23,7 @@ cluster_report(
   brain_slices = TRUE,
   brain_cmap = "inferno",
   quiet = TRUE,
+  provenance = NULL,
   ...
 )
 }
@@ -79,6 +80,9 @@ cluster? Default `TRUE`.}
 \item{brain_cmap}{Color map for brain slice images. Default `"inferno"`.}
 
 \item{quiet}{Suppress rendering messages? Default `TRUE`.}
+
+\item{provenance}{Optional metadata to merge into the automatically captured
+report provenance.}
 
 \item{...}{Additional arguments passed to [build_cluster_explorer_data()].}
 }

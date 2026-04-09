@@ -20,8 +20,21 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     return(invisible(invocation))
   }
 
+  invocation <- .cli_apply_config(invocation)
   spec <- .cli_prepare_command(invocation)
+  spec <- .cli_attach_cli_provenance(spec, invocation, args)
+
   if (!isTRUE(execute)) {
+    return(invisible(spec))
+  }
+
+  if (isTRUE(.cli_opt_flag(invocation$options, "dry_run", FALSE))) {
+    cat(.cli_render_spec_summary(spec, invocation, action = "Dry run"), "\n", sep = "")
+    return(invisible(spec))
+  }
+
+  if (isTRUE(.cli_opt_flag(invocation$options, "validate", FALSE))) {
+    cat(.cli_render_spec_summary(spec, invocation, action = "Validation OK"), "\n", sep = "")
     return(invisible(spec))
   }
 
@@ -451,7 +464,12 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     return(neuroatlas::get_schaefer_atlas(200, 7))
   }
   if (file.exists(spec)) {
-    return(.cli_read_validated_rds(spec, class_name = "atlas", label = "atlas"))
+    return(.cli_read_validated_rds(
+      spec,
+      class_name = "atlas",
+      label = "atlas",
+      error_class = "neuromosaic_error_invalid_atlas"
+    ))
   }
 
   parsed <- .cli_parse_atlas_spec(spec)
@@ -490,7 +508,8 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     return(.cli_read_validated_rds(
       spec,
       class_name = "surfatlas",
-      label = "surfatlas"
+      label = "surfatlas",
+      error_class = "neuromosaic_error_invalid_surfatlas"
     ))
   }
 
@@ -629,7 +648,7 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
   out
 }
 
-.cli_read_validated_rds <- function(path, class_name, label) {
+.cli_read_validated_rds <- function(path, class_name, label, error_class) {
   obj <- tryCatch(
     readRDS(path),
     error = function(e) {
@@ -637,7 +656,8 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
         paste0(
           "Failed to read ", label, " from '", path,
           "': ", conditionMessage(e)
-        )
+        ),
+        class = error_class
       )
     }
   )
@@ -647,7 +667,8 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
       paste0(
         "File '", path, "' did not contain a valid ", label,
         " object (expected class '", class_name, "')."
-      )
+      ),
+      class = error_class
     )
   }
 
@@ -657,7 +678,10 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
 .cli_safe_as_formula <- function(text, env = parent.frame()) {
   formula_text <- trimws(as.character(text))
   if (!nzchar(formula_text)) {
-    .cli_abort("Formula input cannot be empty.")
+    .cli_abort(
+      "Formula input cannot be empty.",
+      class = "neuromosaic_error_invalid_formula"
+    )
   }
 
   parsed <- tryCatch(
@@ -667,7 +691,8 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
         paste0(
           "Invalid formula '", formula_text,
           "': ", conditionMessage(e)
-        )
+        ),
+        class = "neuromosaic_error_invalid_formula"
       )
     }
   )
@@ -677,14 +702,16 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
       paste0(
         "Formula '", formula_text,
         "' must contain exactly one expression."
-      )
+      ),
+      class = "neuromosaic_error_invalid_formula"
     )
   }
 
   expr <- parsed[[1]]
   if (!is.call(expr) || !identical(as.character(expr[[1]]), "~")) {
     .cli_abort(
-      paste0("Expected a formula expression, got '", formula_text, "'.")
+      paste0("Expected a formula expression, got '", formula_text, "'."),
+      class = "neuromosaic_error_invalid_formula"
     )
   }
 
@@ -694,7 +721,8 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
       paste0(
         "Unsafe formula rejected: contains disallowed call '",
         bad_call, "'."
-      )
+      ),
+      class = "neuromosaic_error_unsafe_formula"
     )
   }
 
@@ -830,7 +858,10 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
 
 .cli_read_table <- function(path) {
   if (!file.exists(path)) {
-    .cli_abort(paste0("File not found: ", path))
+    .cli_abort(
+      paste0("File not found: ", path),
+      class = "neuromosaic_error_cli_missing_file"
+    )
   }
 
   ext <- tolower(tools::file_ext(path))
@@ -841,7 +872,10 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     return(utils::read.delim(path, stringsAsFactors = FALSE, check.names = FALSE))
   }
 
-  .cli_abort("Design files must be CSV or TSV.")
+  .cli_abort(
+    "Design files must be CSV or TSV.",
+    class = "neuromosaic_error_cli_invalid_design"
+  )
 }
 
 .cli_resolve_manifest_path <- function(path) {
@@ -850,14 +884,18 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     hits <- candidates[file.exists(candidates)]
     if (length(hits) == 0L) {
       .cli_abort(
-        paste0("No nftab manifest found in directory: ", normalizePath(path))
+        paste0("No nftab manifest found in directory: ", normalizePath(path)),
+        class = "neuromosaic_error_cli_missing_manifest"
       )
     }
     return(normalizePath(hits[[1]], mustWork = TRUE))
   }
 
   if (!file.exists(path)) {
-    .cli_abort(paste0("Manifest not found: ", path))
+    .cli_abort(
+      paste0("Manifest not found: ", path),
+      class = "neuromosaic_error_cli_missing_manifest"
+    )
   }
 
   normalizePath(path, mustWork = TRUE)
@@ -879,7 +917,8 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
         "Path template references missing design columns: ",
         paste(missing, collapse = ", "),
         "."
-      )
+      ),
+      class = "neuromosaic_error_cli_invalid_template"
     )
   }
 
@@ -986,13 +1025,21 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
 .cli_require_namespace <- function(pkg, context) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
     .cli_abort(
-      paste0("Package '", pkg, "' is required for ", context, ".")
+      paste0("Package '", pkg, "' is required for ", context, "."),
+      class = "neuromosaic_error_cli_missing_package"
     )
   }
 }
 
-.cli_abort <- function(...) {
-  stop(..., call. = FALSE)
+.cli_abort <- function(message,
+                       class = "neuromosaic_error_cli",
+                       ...) {
+  rlang::abort(
+    message,
+    class = c(class, "neuromosaic_error_cli", "neuromosaic_error"),
+    ...,
+    call = NULL
+  )
 }
 
 .cli_help_text <- function(command = NULL, subcommand = NULL) {
@@ -1036,6 +1083,9 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     "  --min-cluster-size <int>\n",
     "  --tail <two_sided|positive|negative>\n",
     "  --connectivity <26-connect|18-connect|6-connect>\n",
+    "  --config <file>                Load canonical option names from YAML\n",
+    "  --dry-run                      Resolve inputs and print the prepared spec\n",
+    "  --validate                     Resolve inputs and exit without executing\n",
     "  --help                         Show this help text\n"
   )
 
@@ -1045,6 +1095,9 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     "Options:\n",
     "  --feature <name>               Required for dataset-backed reports\n",
     "  --formula <expr>               Repeatable. Optional 'name::formula' labels supported.\n",
+    "  --config <file>                YAML config file using canonical option names\n",
+    "  --dry-run                      Print the prepared report spec and exit\n",
+    "  --validate                     Resolve inputs and exit without rendering\n",
     "  --out <file>                   Output path (.html, .pdf, or .qmd), default neuromosaic-report.html\n",
     "  --template <file>              Optional custom Rmd/Qmd template\n",
     "  --table-style <gt|flextable|kable>\n",
@@ -1059,6 +1112,9 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     "Options:\n",
     "  --feature <name>               Required for dataset-backed extracts\n",
     "  --formula <expr>               Optional report-style plot formula(s)\n",
+    "  --config <file>                YAML config file using canonical option names\n",
+    "  --dry-run                      Print the prepared extract spec and exit\n",
+    "  --validate                     Resolve inputs and exit without exporting\n",
     "  --dir <path>                   Output directory, default .\n",
     "  --prefix <name>                CSV prefix, default neuromosaic\n\n",
     atlas_help
@@ -1069,6 +1125,9 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     "Options:\n",
     "  --plot-formula <expr>          Launch with a formula-driven plot plugin\n",
     "  --surfatlas <spec-or-rds>      Optional custom surface atlas\n",
+    "  --config <file>                YAML config file using canonical option names\n",
+    "  --dry-run                      Print the prepared explorer spec and exit\n",
+    "  --validate                     Resolve inputs and exit without launching\n",
     "  --selection-engine <cluster|parcel|sphere|custom>\n\n",
     atlas_help
   )
@@ -1120,4 +1179,223 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
   }
 
   paste0(header, top_level)
+}
+
+.cli_apply_config <- function(invocation) {
+  config_path <- .cli_opt_scalar(invocation$options, "config", NULL)
+  if (is.null(config_path) || !nzchar(config_path)) {
+    return(invocation)
+  }
+
+  config <- .cli_read_config(config_path)
+  cfg_command <- config$command %||% invocation$command
+  cfg_subcommand <- config$subcommand %||% invocation$subcommand
+
+  if (!is.null(config$command) &&
+      !identical(as.character(config$command), invocation$command)) {
+    .cli_abort(
+      paste0(
+        "Config command '", config$command,
+        "' does not match CLI command '", invocation$command, "'."
+      ),
+      class = "neuromosaic_error_cli_config"
+    )
+  }
+
+  if (!is.null(config$subcommand) &&
+      !identical(as.character(config$subcommand), invocation$subcommand)) {
+    .cli_abort(
+      paste0(
+        "Config subcommand '", config$subcommand,
+        "' does not match CLI subcommand '", invocation$subcommand, "'."
+      ),
+      class = "neuromosaic_error_cli_config"
+    )
+  }
+
+  config_opts <- .cli_config_options(config)
+  config_opts$config <- normalizePath(config_path, mustWork = TRUE)
+  invocation$command <- cfg_command
+  invocation$subcommand <- cfg_subcommand
+  invocation$options <- .cli_merge_options(config_opts, invocation$options)
+  invocation
+}
+
+.cli_read_config <- function(path) {
+  if (!file.exists(path)) {
+    .cli_abort(
+      paste0("Config file not found: ", path),
+      class = "neuromosaic_error_cli_config"
+    )
+  }
+
+  .cli_require_namespace("yaml", "reading config files")
+  config <- tryCatch(
+    yaml::read_yaml(path),
+    error = function(e) {
+      .cli_abort(
+        paste0("Failed to read config file '", path, "': ", conditionMessage(e)),
+        class = "neuromosaic_error_cli_config"
+      )
+    }
+  )
+
+  if (!is.list(config)) {
+    .cli_abort(
+      "Config files must decode to a YAML mapping.",
+      class = "neuromosaic_error_cli_config"
+    )
+  }
+
+  config
+}
+
+.cli_config_options <- function(config) {
+  opts <- config$options
+  if (is.null(opts)) {
+    reserved <- c("command", "subcommand")
+    opts <- config[setdiff(names(config), reserved)]
+  }
+
+  if (!is.list(opts)) {
+    .cli_abort(
+      "Config 'options' must be a mapping of canonical option names to values.",
+      class = "neuromosaic_error_cli_config"
+    )
+  }
+
+  out <- list()
+  for (nm in names(opts)) {
+    if (is.null(nm) || !nzchar(nm)) {
+      next
+    }
+    key <- gsub("-", "_", nm, fixed = TRUE)
+    out[[key]] <- .cli_normalize_config_value(opts[[nm]], key)
+  }
+  out$.args <- character()
+  out
+}
+
+.cli_normalize_config_value <- function(value, key) {
+  if (is.null(value)) {
+    return(NULL)
+  }
+
+  if (is.atomic(value)) {
+    return(value)
+  }
+
+  if (is.list(value) && all(vapply(value, function(x) {
+    is.null(x) || (is.atomic(x) && length(x) <= 1L)
+  }, logical(1)))) {
+    value <- vapply(value, function(x) {
+      if (is.null(x)) "" else as.character(x)
+    }, character(1))
+    return(value)
+  }
+
+  .cli_abort(
+    paste0(
+      "Unsupported nested config value for option '", key,
+      "'. Use scalars or arrays of scalars."
+    ),
+    class = "neuromosaic_error_cli_config"
+  )
+}
+
+.cli_merge_options <- function(base, override) {
+  merged <- base
+  for (nm in names(override)) {
+    merged[[nm]] <- override[[nm]]
+  }
+  merged
+}
+
+.cli_attach_cli_provenance <- function(spec, invocation, args) {
+  cli_info <- list(
+    cli = list(
+      interface = "cli",
+      command = invocation$command,
+      subcommand = invocation$subcommand,
+      raw_args = unname(as.list(args)),
+      options = .cli_compact_options(invocation$options),
+      config_path = .cli_opt_scalar(invocation$options, "config", NULL)
+    )
+  )
+
+  if (identical(spec$type, "report")) {
+    spec$args$provenance <- utils::modifyList(
+      cli_info,
+      spec$args$provenance %||% list(),
+      keep.null = TRUE
+    )
+  }
+
+  if (identical(spec$type, "extract")) {
+    spec$report_args$provenance <- utils::modifyList(
+      cli_info,
+      spec$report_args$provenance %||% list(),
+      keep.null = TRUE
+    )
+  }
+
+  spec
+}
+
+.cli_compact_options <- function(opts) {
+  nm <- setdiff(names(opts), ".args")
+  out <- list()
+  for (name in nm) {
+    value <- opts[[name]]
+    if (length(value) <= 1L) {
+      out[[name]] <- value[[1]]
+    } else {
+      out[[name]] <- unname(as.list(value))
+    }
+  }
+  out
+}
+
+.cli_render_spec_summary <- function(spec, invocation, action = "Dry run") {
+  lines <- c(
+    paste0(action, ": ", invocation$command,
+           if (!is.null(invocation$subcommand)) paste0(" ", invocation$subcommand) else ""),
+    paste0("Spec type: ", spec$type)
+  )
+
+  config_path <- .cli_opt_scalar(invocation$options, "config", NULL)
+  if (!is.null(config_path)) {
+    lines <- c(lines, paste0("Config: ", normalizePath(config_path, mustWork = FALSE)))
+  }
+
+  if (!is.null(spec$mode)) {
+    lines <- c(lines, paste0("Mode: ", spec$mode))
+  }
+
+  if (identical(spec$type, "report")) {
+    lines <- c(
+      lines,
+      paste0("Output file: ", spec$args$output_file),
+      paste0("Atlas: ", spec$args$atlas$name %||% class(spec$args$atlas)[1]),
+      paste0("Formula count: ", length(spec$args$formulas))
+    )
+  }
+
+  if (identical(spec$type, "extract")) {
+    lines <- c(
+      lines,
+      paste0("Output dir: ", spec$export_args$dir),
+      paste0("Prefix: ", spec$export_args$prefix)
+    )
+  }
+
+  if (identical(spec$type, "explore")) {
+    lines <- c(
+      lines,
+      paste0("Selection engine: ", spec$args$selection_engine),
+      paste0("Default plot plugin: ", spec$args$default_plot_plugin)
+    )
+  }
+
+  paste(lines, collapse = "\n")
 }

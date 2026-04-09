@@ -31,6 +31,7 @@ test_that("summary.cluster_report_result runs without error", {
   )
 
   expect_output(summary(result), "Cluster Report Summary")
+  expect_output(summary(result), "Generated:")
 })
 
 test_that("plot.cluster_report_result returns ggplot", {
@@ -113,6 +114,11 @@ test_that("export_csv writes expected files", {
 
   # Cluster table CSV should always exist
   expect_true(any(grepl("clusters\\.csv$", paths)))
+  expect_true(any(grepl("provenance\\.yml$", paths)))
+  prov_path <- paths[grepl("provenance\\.yml$", paths)][1]
+  prov <- yaml::read_yaml(prov_path)
+  expect_identical(prov$package, "neuromosaic")
+  expect_identical(prov$report_mode, "full")
 })
 
 test_that("print works for zero-cluster result", {
@@ -130,4 +136,25 @@ test_that("print works for zero-cluster result", {
   )
 
   expect_output(print(result), "0 clusters")
+})
+
+test_that("cluster_report_result stores provenance metadata", {
+  inputs <- make_toy_cluster_report_inputs()
+  result <- cluster_report(
+    stat_map         = inputs$stat_map,
+    data_source      = inputs$data_vec,
+    atlas            = inputs$atlas,
+    design           = inputs$design,
+    threshold        = 3.0,
+    formulas         = list("Test" = value ~ condition * time),
+    output_file      = NULL,
+    min_cluster_size = 3,
+    brain_slices     = FALSE,
+    provenance       = list(source = "unit-test")
+  )
+
+  expect_identical(result$provenance$package, "neuromosaic")
+  expect_identical(result$provenance$report_mode, "full")
+  expect_identical(result$provenance$source, "unit-test")
+  expect_true("Test" %in% names(result$provenance$formulas))
 })

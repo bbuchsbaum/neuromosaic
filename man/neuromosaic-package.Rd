@@ -11,8 +11,9 @@ Generates publication-ready PDF/HTML reports from neuroimaging statistical maps.
 \seealso{
 Useful links:
 \itemize{
-  \item \url{https://github.com/bbuchsbaum/clusterreport}
-  \item Report bugs at \url{https://github.com/bbuchsbaum/clusterreport/issues}
+  \item \url{https://bbuchsbaum.github.io/neuromosaic/}
+  \item \url{https://github.com/bbuchsbaum/neuromosaic}
+  \item Report bugs at \url{https://github.com/bbuchsbaum/neuromosaic/issues}
 }
 
 }

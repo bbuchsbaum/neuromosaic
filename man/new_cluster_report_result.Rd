@@ -12,7 +12,8 @@ new_cluster_report_result(
   brain_slices = NULL,
   mni_table,
   report_path,
-  params
+  params,
+  provenance = NULL
 )
 }
 \arguments{
@@ -30,6 +31,8 @@ of ggplot objects.}
 \item{report_path}{Path to rendered report, or `NULL`.}
 
 \item{params}{List of pipeline parameters (threshold, tail, etc.).}
+
+\item{provenance}{Optional metadata about how the report was produced.}
 }
 \value{
 A `cluster_report_result` object.

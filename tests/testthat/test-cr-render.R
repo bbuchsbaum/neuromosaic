@@ -80,10 +80,12 @@ test_that("render_cluster_report writes qmd source and sidecar data", {
   expect_match(qmd, basename(sidecar), fixed = TRUE)
   expect_match(qmd, "expects the sidecar file", fixed = TRUE)
   expect_match(qmd, "Render from this directory", fixed = TRUE)
+  expect_match(qmd, "# Provenance", fixed = TRUE)
 
   rd <- readRDS(sidecar)
   expect_true(is.list(rd))
   expect_true("cluster_table" %in% names(rd))
+  expect_identical(rd$provenance$package, "neuromosaic")
 })
 
 test_that("render_cluster_report rejects unsupported output extensions", {

@@ -29,6 +29,7 @@ knitr::opts_chunk$set(
 )
 rd <- params$report_data
 is_pdf <- knitr::is_latex_output()
+`%||%` <- function(x, y) if (is.null(x)) y else x
 
 # Pre-split parcels for O(1) lookup per cluster
 cp_split <- if (!is.null(rd$cluster_parcels) && nrow(rd$cluster_parcels) > 0) {
@@ -129,6 +130,34 @@ if (nrow(ct) == 0) {
 
     if (is_pdf) cat("\n\\newpage\n")
   }
+}
+```
+
+# Provenance
+
+```{r provenance, results='asis'}
+prov <- rd$provenance
+if (is.null(prov)) {
+  cat("*No provenance metadata available.*\n")
+} else {
+  prov_fields <- list(
+    `Generated (UTC)` = prov$generated_at %||% NULL,
+    `Package version` = prov$package_version %||% NULL,
+    `R version` = prov$r_version %||% NULL,
+    `Report mode` = prov$report_mode %||% rd$params$report_mode,
+    `Atlas` = prov$inputs$atlas_name %||% NULL,
+    `Stat map path` = prov$inputs$stat_map_path %||% NULL,
+    `CLI command` = prov$cli$command %||% NULL,
+    `Config file` = prov$cli$config_path %||% NULL
+  )
+
+  prov_fields <- prov_fields[!vapply(prov_fields, is.null, logical(1))]
+  prov_tbl <- data.frame(
+    Field = names(prov_fields),
+    Value = unlist(prov_fields, use.names = FALSE),
+    check.names = FALSE
+  )
+  print(knitr::kable(prov_tbl, format = "pipe"))
 }
 ```
 

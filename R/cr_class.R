@@ -10,6 +10,7 @@
 #' @param mni_table Formatted gt/flextable/kable object.
 #' @param report_path Path to rendered report, or `NULL`.
 #' @param params List of pipeline parameters (threshold, tail, etc.).
+#' @param provenance Optional metadata about how the report was produced.
 #' @return A `cluster_report_result` object.
 #' @keywords internal
 #' @export
@@ -20,7 +21,8 @@ new_cluster_report_result <- function(cluster_table,
                                       brain_slices = NULL,
                                       mni_table,
                                       report_path,
-                                      params) {
+                                      params,
+                                      provenance = NULL) {
   structure(
     list(
       cluster_table   = cluster_table,
@@ -30,7 +32,8 @@ new_cluster_report_result <- function(cluster_table,
       brain_slices    = brain_slices,
       mni_table       = mni_table,
       report_path     = report_path,
-      params          = params
+      params          = params,
+      provenance      = provenance
     ),
     class = "cluster_report_result"
   )
@@ -56,6 +59,9 @@ print.cluster_report_result <- function(x, ...) {
   }
   if (!is.null(x$report_path)) {
     cat(sprintf("  Report: %s\n", x$report_path))
+  }
+  if (!is.null(x$provenance$generated_at)) {
+    cat(sprintf("  Generated: %s\n", x$provenance$generated_at))
   }
   if (n > 0) {
     cat("\nTop clusters:\n")
@@ -96,6 +102,9 @@ summary.cluster_report_result <- function(object, ...) {
               object$params$atlas_name %||% "Unknown"))
   if (!is.null(object$params$report_mode)) {
     cat(sprintf("  Mode:             %s\n", object$params$report_mode))
+  }
+  if (!is.null(object$provenance$generated_at)) {
+    cat(sprintf("  Generated:        %s\n", object$provenance$generated_at))
   }
   cat("\n")
 
@@ -221,6 +230,12 @@ export_csv.cluster_report_result <- function(x,
   if (!is.null(x$time_courses) && nrow(x$time_courses) > 0) {
     p <- file.path(dir, paste0(prefix, "_timecourses.csv"))
     utils::write.csv(x$time_courses, p, row.names = FALSE)
+    paths <- c(paths, p)
+  }
+
+  if (!is.null(x$provenance)) {
+    p <- file.path(dir, paste0(prefix, "_provenance.yml"))
+    .write_provenance_yaml(x$provenance, p)
     paths <- c(paths, p)
   }
 

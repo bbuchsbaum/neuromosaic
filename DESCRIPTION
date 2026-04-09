@@ -12,8 +12,9 @@ Description: Generates publication-ready PDF/HTML reports from
     an optional UI layer. The computation engine has zero Shiny
     dependencies and can be used programmatically.
 License: MIT + file LICENSE
-URL: https://github.com/bbuchsbaum/clusterreport
-BugReports: https://github.com/bbuchsbaum/clusterreport/issues
+URL: https://bbuchsbaum.github.io/neuromosaic/,
+    https://github.com/bbuchsbaum/neuromosaic
+BugReports: https://github.com/bbuchsbaum/neuromosaic/issues
 Depends:
     R (>= 4.1.0)
 Imports:
@@ -34,7 +35,8 @@ Imports:
     tibble,
     tools,
     utils,
-    withr
+    withr,
+    yaml
 Suggests:
     DT,
     flextable,
