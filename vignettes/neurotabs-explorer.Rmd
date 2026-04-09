@@ -1,0 +1,205 @@
+---
+title: "Exploring Ad Hoc Neurotabs Datasets"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Exploring Ad Hoc Neurotabs Datasets}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 6,
+  fig.height = 4
+)
+
+has_neurotabs <- requireNamespace("neurotabs", quietly = TRUE)
+has_explorer_deps <- has_neurotabs &&
+  requireNamespace("shiny", quietly = TRUE) &&
+  requireNamespace("DT", quietly = TRUE) &&
+  requireNamespace("ggiraph", quietly = TRUE)
+```
+
+Suppose you have one subject-level map per folder:
+
+- `sub-01/maps/AUC.nii.gz`
+- `sub-02/maps/AUC.nii.gz`
+- `...`
+- `sub-30/maps/AUC.nii.gz`
+
+and a TSV file with `subject`, a continuous covariate `measure`, and a
+two-level grouping variable `group`. You do not want to write a neurotabs
+manifest by hand. You want to build an `nftab` directly from that table and
+open the interactive explorer so that, after picking a cluster or parcel, the
+signal plot shows `AUC ~ measure` with separate fitted lines for each `group`.
+
+That workflow is:
+
+1. Build an ad hoc `nftab` with `neurotabs::nf_from_table()`.
+2. Pass that dataset to `nf_cluster_explorer()`.
+3. In the app, set `Plot Variable = measure` and `Color / Group = group`.
+
+`clusterreport::nf_cluster_explorer()` uses `neurotabs::nf_design(ds)`
+automatically, so the columns in your TSV become explorer controls without a
+separate `design` argument.
+
+## Create a nested AUC dataset
+
+This example creates a temporary study directory with the same nested structure
+you would have on disk. The group-level `stat_map` and atlas come from
+`example_cluster_inputs()`, while the subject-level AUC volumes are written as
+separate NIfTI files.
+
+```{r make-observation-table}
+inputs <- clusterreport::example_cluster_inputs()
+n_subjects <- 30L
+
+obs <- tibble::tibble(
+  subject = sprintf("sub-%02d", seq_len(n_subjects)),
+  group = rep(c("control", "patient"), each = n_subjects / 2),
+  measure = seq(-1.5, 1.5, length.out = n_subjects),
+  auc_path = file.path(subject, "maps", "AUC.nii.gz")
+)
+
+head(obs, 4)
+```
+
+```{r write-auc-volumes, eval = has_neurotabs, include = FALSE}
+study_dir <- file.path(tempdir(), "clusterreport-auc-study")
+dir.create(study_dir, recursive = TRUE, showWarnings = FALSE)
+
+space_3d <- neuroim2::space(inputs$stat_map)
+dims <- as.integer(dim(inputs$stat_map))[1:3]
+
+for (i in seq_len(n_subjects)) {
+  subject_dir <- file.path(study_dir, obs$subject[i], "maps")
+  dir.create(subject_dir, recursive = TRUE, showWarnings = FALSE)
+
+  arr <- array(stats::rnorm(prod(dims), sd = 0.05), dim = dims)
+  arr[2:4, 2:4, 2:4] <- 0.4 + 0.9 * obs$measure[i] +
+    ifelse(obs$group[i] == "patient", 0.6, -0.6) +
+    stats::rnorm(27, sd = 0.08)
+  arr[7:9, 7:9, 7:9] <- 0.2 - 0.5 * obs$measure[i] +
+    stats::rnorm(27, sd = 0.08)
+
+  neuroim2::write_vol(
+    neuroim2::NeuroVol(arr, space = space_3d),
+    file.path(study_dir, obs$auc_path[i])
+  )
+}
+
+obs_path <- file.path(study_dir, "participants.tsv")
+utils::write.table(obs, obs_path, sep = "\t", quote = FALSE, row.names = FALSE)
+
+stopifnot(file.exists(obs_path))
+stopifnot(all(file.exists(file.path(study_dir, obs$auc_path))))
+```
+
+## Build the `nftab` without a manifest
+
+`nf_from_table()` is the ad hoc entry point in neurotabs. The `auc_path` column
+stores relative file paths, and `root` tells neurotabs where those files live.
+Here `axes = "subject"` keeps `group` and `measure` as row metadata rather than
+observation axes.
+
+```{r build-nftab, eval = has_neurotabs}
+ds <- neurotabs::nf_from_table(
+  observations = obs_path,
+  feature = "AUC",
+  locator_col = "auc_path",
+  axes = "subject",
+  space = "MNI152NLin2009cAsym",
+  dataset_id = "auc-demo",
+  root = study_dir
+)
+
+ds
+```
+
+```{r inspect-design, eval = has_neurotabs}
+design_tbl <- neurotabs::nf_design(ds)
+design_tbl[1:4, c("subject", "group", "measure")]
+```
+
+Those design columns are the bridge into `clusterreport`:
+`clusterreport::nf_cluster_explorer()` reads `nf_design(ds)` and merges it into
+the extracted cluster signal table.
+
+## Launch the interactive explorer
+
+`cluster_explorer()` expects both a volumetric atlas and a `surfatlas`. If you
+already have a real surface atlas, use it. For a volume-only workflow, a small
+label-only `surfatlas` is enough to enable the fallback parcel view used here.
+
+```{r make-surfatlas}
+surfatlas <- structure(
+  list(
+    ids = inputs$atlas$ids,
+    labels = inputs$atlas$labels,
+    hemi = inputs$atlas$hemi
+  ),
+  class = c("toy_surf", "surfatlas", "atlas")
+)
+```
+
+```{r build-app, eval = has_explorer_deps}
+app <- clusterreport::nf_cluster_explorer(
+  ds = ds,
+  stat_map = inputs$stat_map,
+  data_feature = "AUC",
+  atlas = inputs$atlas,
+  surfatlas = surfatlas,
+  threshold = 3,
+  min_cluster_size = 5
+)
+
+inherits(app, "shiny.appobj")
+```
+
+In an interactive R session, run `app` or `shiny::runApp(app)`.
+
+Once the app is open:
+
+1. Click a parcel in the brain view or select a cluster from the table.
+2. Set `Plot Variable` to `measure`.
+3. Set `Color / Group` to `group`.
+4. Leave `Collapse By` empty unless you want to average repeated rows first.
+
+The signal panel will show subject-level AUC values for the selected cluster,
+with points colored by `group` and separate linear fits overlaid for each
+group. If you select multiple clusters, the explorer facets them so each panel
+keeps the same `measure`/`group` mapping.
+
+## Direct template for your own study
+
+If your data already lives on disk, the only part you need to change is the
+table and paths:
+
+```{r your-study-template, eval = FALSE}
+obs <- utils::read.delim("~/study/participants.tsv")
+
+ds <- neurotabs::nf_from_table(
+  observations = obs,
+  feature = "AUC",
+  locator_col = "auc_path",
+  axes = "subject",
+  space = "MNI152NLin2009cAsym",
+  root = "~/study"
+)
+
+app <- clusterreport::nf_cluster_explorer(
+  ds = ds,
+  stat_map = stat_map,
+  data_feature = "AUC",
+  atlas = atlas,
+  surfatlas = surfatlas
+)
+```
+
+For larger datasets, `nf_cluster_explorer(..., strategy = "lazy")` avoids
+stacking every subject volume up front and samples from the NIfTI files on
+demand.

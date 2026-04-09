@@ -11,12 +11,12 @@ skip_if_not_installed("ggiraph")
   toy <- make_toy_cluster_explorer_inputs(n_time = 4)
   surfatlas <- make_toy_surfatlas()
 
-  plugins <- cluster.explorer:::.normalize_analysis_plugins(
+  plugins <- clusterreport:::.normalize_analysis_plugins(
     analysis_plugins = NULL,
     default_plugin = "none"
   )
 
-  sample_tbl <- cluster.explorer:::.normalize_sample_table(
+  sample_tbl <- clusterreport:::.normalize_sample_table(
     sample_table = toy$sample_table,
     n_samples = 4L
   )
@@ -24,7 +24,7 @@ skip_if_not_installed("ggiraph")
   bridge <- new.env(parent = emptyenv())
 
   server_fn <- function(input, output, session) {
-    rv <- cluster.explorer:::.cluster_explorer_server(
+    rv <- clusterreport:::.cluster_explorer_server(
       input = input,
       output = output,
       session = session,
@@ -79,6 +79,7 @@ skip_if_not_installed("ggiraph")
     overlay_sampling = "midpoint",
     x_var = ".sample_index",
     collapse_vars = character(0),
+    group_var = "",
     analysis_plugin_id = "none",
     apply_btn = 0L
   )

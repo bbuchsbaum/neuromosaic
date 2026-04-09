@@ -191,25 +191,118 @@
   ggiraph::girafe(ggobj = p)
 }
 
+# Shared brain-plot builder used by both the interactive render and the PNG
+# download handler to avoid duplicating val/lim computation and the
+# neuroatlas::plot_brain fallback chain.
+.make_brain_plot <- function(surfatlas, cluster_parcels, scope_ids,
+                              display_mode, use_surface_plot,
+                              overlay_vals, overlay_threshold, overlay_alpha,
+                              brain_views, brain_hemis, palette,
+                              interactive) {
+  surf_ids <- as.integer(surfatlas$ids)
+  vals <- .parcel_values_from_clusters(
+    cluster_parcels = cluster_parcels,
+    atlas_ids = surf_ids,
+    selected_cluster_ids = scope_ids,
+    mode = display_mode
+  )
+
+  lim <- NULL
+  finite_vals <- vals[is.finite(vals)]
+  if (length(finite_vals) > 0) {
+    lim_max <- max(abs(finite_vals))
+    lim <- c(-lim_max, lim_max)
+  }
+
+  g <- .fallback_brain_plot(
+    surfatlas = surfatlas, vals = vals, palette = palette,
+    lim = lim, interactive = interactive
+  )
+
+  if (isTRUE(use_surface_plot)) {
+    plot_args <- list(
+      surfatlas = surfatlas, vals = vals,
+      views = brain_views, hemis = brain_hemis,
+      palette = palette, lim = lim,
+      overlay = overlay_vals,
+      overlay_threshold = max(abs(overlay_threshold), .Machine$double.eps),
+      overlay_alpha = overlay_alpha,
+      overlay_palette = palette,
+      interactive = interactive
+    )
+    if (interactive) plot_args$data_id_mode <- "polygon"
+    g <- tryCatch(
+      do.call(neuroatlas::plot_brain, plot_args),
+      error = function(e) {
+        .fallback_brain_plot(
+          surfatlas = surfatlas, vals = vals, palette = palette,
+          lim = lim, interactive = interactive,
+          title = paste0("Parcel Layout (Fallback): ", conditionMessage(e))
+        )
+      }
+    )
+  }
+
+  g
+}
+
+.format_plot_value <- function(x) {
+  if (inherits(x, "Date")) {
+    return(format(x))
+  }
+  if (inherits(x, "POSIXt")) {
+    return(format(x, usetz = TRUE))
+  }
+  if (is.numeric(x)) {
+    return(as.character(signif(x, 4)))
+  }
+  as.character(x)
+}
+
 .build_design_plot <- function(data, x_var, collapse_vars = NULL,
+                               group_var = NULL,
                                interactive = FALSE) {
   collapse_vars <- collapse_vars[collapse_vars %in% names(data)]
   collapse_vars <- setdiff(collapse_vars, c("cluster_id", "signal"))
+  if (is.null(group_var) || !nzchar(group_var) || !group_var %in% names(data)) {
+    group_var <- NULL
+  }
 
   plot_data <- data
   if (length(collapse_vars) > 0) {
-    group_vars <- unique(c("cluster_id", x_var, collapse_vars))
+    group_vars <- unique(c("cluster_id", x_var, collapse_vars, group_var))
     plot_data <- plot_data |>
       dplyr::group_by(dplyr::across(dplyr::all_of(group_vars))) |>
       dplyr::summarise(signal = mean(signal, na.rm = TRUE), .groups = "drop")
   }
 
+  color_var <- if (is.null(group_var)) "cluster_id" else group_var
+  color_label <- if (is.null(group_var)) "Cluster" else group_var
+  plot_data$.plot_group_ <- factor(as.character(plot_data[[color_var]]))
+
   # Build tooltip column for interactive mode
   if (isTRUE(interactive)) {
+    tooltip_lines <- list(
+      paste0("cluster: ", plot_data$cluster_id),
+      paste0(x_var, ": ", .format_plot_value(plot_data[[x_var]])),
+      paste0("signal: ", .format_plot_value(plot_data$signal))
+    )
+    if (!is.null(group_var)) {
+      tooltip_lines <- append(
+        tooltip_lines,
+        list(paste0(group_var, ": ", .format_plot_value(plot_data[[group_var]]))),
+        after = 1L
+      )
+    }
     plot_data$tooltip_ <- paste0(
-      plot_data$cluster_id, "\n",
-      x_var, ": ", signif(as.numeric(plot_data[[x_var]]), 4), "\n",
-      "signal: ", signif(plot_data$signal, 4)
+      tooltip_lines[[1L]], "\n",
+      tooltip_lines[[2L]], "\n",
+      tooltip_lines[[3L]],
+      if (length(tooltip_lines) > 3L) {
+        paste0("\n", tooltip_lines[[4L]])
+      } else {
+        ""
+      }
     )
   }
 
@@ -223,7 +316,8 @@
         plot_data,
         ggplot2::aes(x = .data[[x_var]],
                      y = signal,
-                     color = cluster_id)
+                     color = .data$.plot_group_,
+                     group = .data$.plot_group_)
       ) +
         ggplot2::geom_line(alpha = 0.7)
       if (isTRUE(interactive)) {
@@ -239,7 +333,7 @@
         plot_data,
         ggplot2::aes(x = .data[[x_var]],
                      y = signal,
-                     color = cluster_id)
+                     color = .data$.plot_group_)
       )
       if (isTRUE(interactive)) {
         p <- p + ggiraph::geom_point_interactive(
@@ -249,23 +343,75 @@
       } else {
         p <- p + ggplot2::geom_point(alpha = 0.7)
       }
-      p <- p + ggplot2::geom_smooth(se = FALSE, method = "loess")
+      if (is.null(group_var)) {
+        p <- p + ggplot2::geom_smooth(se = FALSE, method = "loess")
+      } else {
+        p <- p + ggplot2::geom_smooth(
+          ggplot2::aes(group = .data$.plot_group_),
+          se = FALSE,
+          method = "lm"
+        )
+      }
     }
   } else {
-    p <- ggplot2::ggplot(
-      plot_data,
-      ggplot2::aes(x = factor(.data[[x_var]]),
-                   y = signal,
-                   color = cluster_id)
-    ) +
-      ggplot2::geom_boxplot(outlier.shape = NA, alpha = 0.25)
-    if (isTRUE(interactive)) {
-      p <- p + ggiraph::geom_jitter_interactive(
-        ggplot2::aes(tooltip = tooltip_),
-        width = 0.15, alpha = 0.75, size = 1.5
-      )
+    if (is.null(group_var)) {
+      p <- ggplot2::ggplot(
+        plot_data,
+        ggplot2::aes(x = factor(.data[[x_var]]),
+                     y = signal,
+                     color = .data$.plot_group_)
+      ) +
+        ggplot2::geom_boxplot(outlier.shape = NA, alpha = 0.25)
     } else {
-      p <- p + ggplot2::geom_jitter(width = 0.15, alpha = 0.75, size = 1.5)
+      plot_data$.box_group_ <- interaction(
+        plot_data[[x_var]],
+        plot_data$.plot_group_,
+        drop = TRUE
+      )
+      p <- ggplot2::ggplot(
+        plot_data,
+        ggplot2::aes(x = factor(.data[[x_var]]),
+                     y = signal,
+                     color = .data$.plot_group_)
+      ) +
+        ggplot2::geom_boxplot(
+          ggplot2::aes(group = .data$.box_group_),
+          outlier.shape = NA,
+          alpha = 0.2,
+          position = ggplot2::position_dodge(width = 0.75)
+        )
+    }
+    if (isTRUE(interactive)) {
+      jitter_mapping <- ggplot2::aes(tooltip = tooltip_)
+      if (is.null(group_var)) {
+        p <- p + ggiraph::geom_jitter_interactive(
+          jitter_mapping,
+          width = 0.15, alpha = 0.75, size = 1.5
+        )
+      } else {
+        p <- p + ggiraph::geom_jitter_interactive(
+          jitter_mapping,
+          position = ggplot2::position_jitterdodge(
+            jitter.width = 0.15,
+            dodge.width = 0.75
+          ),
+          alpha = 0.75,
+          size = 1.5
+        )
+      }
+    } else {
+      if (is.null(group_var)) {
+        p <- p + ggplot2::geom_jitter(width = 0.15, alpha = 0.75, size = 1.5)
+      } else {
+        p <- p + ggplot2::geom_jitter(
+          position = ggplot2::position_jitterdodge(
+            jitter.width = 0.15,
+            dodge.width = 0.75
+          ),
+          alpha = 0.75,
+          size = 1.5
+        )
+      }
     }
   }
 
@@ -291,7 +437,7 @@
     ggplot2::labs(
       x = x_var,
       y = "Cluster Signal",
-      color = "Cluster"
+      color = color_label
     )
 
   if (isTRUE(interactive)) {

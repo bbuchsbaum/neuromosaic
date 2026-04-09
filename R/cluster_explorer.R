@@ -14,7 +14,7 @@
 }
 
 .cluster_explorer_css <- function() {
-  css_path <- system.file("www", "cluster-explorer.css", package = "cluster.explorer")
+  css_path <- system.file("www", "cluster-explorer.css", package = "clusterreport")
   if (!nzchar(css_path)) return("")
   paste(readLines(css_path, warn = FALSE), collapse = "\n")
 }
@@ -104,8 +104,8 @@
   }, ignoreNULL = TRUE)
 
   computed <- shiny::eventReactive(input$apply_btn, {
-    thresh_val <- suppressWarnings(as.numeric(input$threshold))
-    mcs_val <- suppressWarnings(as.integer(input$min_cluster_size))
+    thresh_val <- .safe_numeric(input$threshold)
+    mcs_val <- .safe_integer(input$min_cluster_size)
     shiny::validate(
       shiny::need(is.finite(thresh_val) && thresh_val > 0,
                    "Threshold must be a positive number."),
@@ -113,33 +113,35 @@
                    "Min cluster size must be an integer >= 1.")
     )
 
-    max_clusters <- suppressWarnings(as.numeric(input$prefetch_max_clusters))
-    max_voxels <- suppressWarnings(as.numeric(input$prefetch_max_voxels))
+    max_clusters <- .safe_numeric(input$prefetch_max_clusters, Inf)
+    max_voxels <- .safe_numeric(input$prefetch_max_voxels, Inf)
     if (!is.finite(max_clusters) || max_clusters < 1) max_clusters <- Inf
     if (!is.finite(max_voxels) || max_voxels < 1) max_voxels <- Inf
 
-    .compute_selection_data(
-      selection_engine = selection_engine,
-      selection_provider = selection_provider,
-      data_source = data_source,
-      atlas = atlas,
-      stat_map = stat_map,
-      sample_table = sample_tbl,
-      threshold = thresh_val,
-      min_cluster_size = mcs_val,
-      connectivity = input$connectivity,
-      tail = input$tail,
-      series_fun = series_fun,
-      prefetch = isTRUE(input$prefetch_mode),
-      prefetch_max_clusters = max_clusters,
-      prefetch_max_voxels = max_voxels,
-      series_cache_env = cache_state$series_cache,
-      parcel_ids = parcel_ids,
-      sphere_centers = sphere_centers,
-      sphere_radius = sphere_radius,
-      sphere_units = sphere_units,
-      sphere_combine = sphere_combine
-    )
+    shiny::withProgress(message = "Computing clusters...", value = 0.5, {
+      .compute_selection_data(
+        selection_engine = selection_engine,
+        selection_provider = selection_provider,
+        data_source = data_source,
+        atlas = atlas,
+        stat_map = stat_map,
+        sample_table = sample_tbl,
+        threshold = thresh_val,
+        min_cluster_size = mcs_val,
+        connectivity = input$connectivity,
+        tail = input$tail,
+        series_fun = series_fun,
+        prefetch = isTRUE(input$prefetch_mode),
+        prefetch_max_clusters = max_clusters,
+        prefetch_max_voxels = max_voxels,
+        series_cache_env = cache_state$series_cache,
+        parcel_ids = parcel_ids,
+        sphere_centers = sphere_centers,
+        sphere_radius = sphere_radius,
+        sphere_units = sphere_units,
+        sphere_combine = sphere_combine
+      )
+    })
   }, ignoreNULL = FALSE)
 
   set_selection <- function(ids, source) {
@@ -170,6 +172,10 @@
     }
 
     design_cols <- setdiff(names(dat$sample_table), ".sample_index")
+    group_cols <- design_cols[
+      vapply(dat$sample_table[design_cols], infer_design_var_type, character(1)) ==
+        "categorical"
+    ]
     x_choices <- c(".sample_index", design_cols)
     x_selected <- if ("time" %in% design_cols) "time" else ".sample_index"
 
@@ -185,6 +191,12 @@
       choices = design_cols,
       selected = character(0),
       server = TRUE
+    )
+    shiny::updateSelectInput(
+      session = session,
+      inputId = "group_var",
+      choices = c("None" = "", stats::setNames(group_cols, group_cols)),
+      selected = ""
     )
 
     analysis_state$applied_plugin_id <- "none"
@@ -315,8 +327,8 @@
 
     ids <- character(0)
     if (identical(mode, "surface_pick")) {
-      radius <- suppressWarnings(as.numeric(input$surface_pick_radius))
-      if (!is.finite(radius) || radius < 0) radius <- 0
+      radius <- .safe_numeric(input$surface_pick_radius, 0)
+      if (radius < 0) radius <- 0
 
       lookup <- surface_pick_lookup_cache()
 
@@ -424,8 +436,8 @@
     scope_ids <- brain_scope_ids()
     if (length(scope_ids) == 0) return(NULL)
 
-    ovl_thresh <- suppressWarnings(as.numeric(input$overlay_threshold))
-    ovl_alpha <- suppressWarnings(as.numeric(input$overlay_alpha))
+    ovl_thresh <- .safe_numeric(input$overlay_threshold)
+    ovl_alpha <- .safe_numeric(input$overlay_alpha)
     shiny::validate(
       shiny::need(is.finite(ovl_thresh), "Overlay threshold must be a number."),
       shiny::need(is.finite(ovl_alpha) && ovl_alpha >= 0 && ovl_alpha <= 1,
@@ -480,61 +492,17 @@
 
   output$brain_plot <- ggiraph::renderGirafe({
     dat <- computed()
-    surf_ids <- as.integer(surfatlas$ids)
     overlay_payload <- cluster_overlay_payload()
     overlay_vals <- if (!is.null(overlay_payload)) overlay_payload$overlay else NULL
 
-    scope_ids <- brain_scope_ids()
-
-    vals <- .parcel_values_from_clusters(
-      cluster_parcels = dat$cluster_parcels,
-      atlas_ids = surf_ids,
-      selected_cluster_ids = scope_ids,
-      mode = input$display_mode
+    g <- .make_brain_plot(
+      surfatlas = surfatlas, cluster_parcels = dat$cluster_parcels,
+      scope_ids = brain_scope_ids(), display_mode = input$display_mode,
+      use_surface_plot = use_surface_plot, overlay_vals = overlay_vals,
+      overlay_threshold = input$overlay_threshold, overlay_alpha = input$overlay_alpha,
+      brain_views = brain_views, brain_hemis = brain_hemis,
+      palette = palette, interactive = TRUE
     )
-
-    lim <- NULL
-    finite_vals <- vals[is.finite(vals)]
-    if (length(finite_vals) > 0) {
-      lim_max <- max(abs(finite_vals))
-      lim <- c(-lim_max, lim_max)
-    }
-
-    g <- .fallback_brain_plot(
-      surfatlas = surfatlas,
-      vals = vals,
-      palette = palette,
-      lim = lim,
-      interactive = TRUE
-    )
-    if (isTRUE(use_surface_plot)) {
-      g <- tryCatch(
-        neuroatlas::plot_brain(
-          surfatlas = surfatlas,
-          vals = vals,
-          views = brain_views,
-          hemis = brain_hemis,
-          palette = palette,
-          lim = lim,
-          data_id_mode = "polygon",
-          overlay = overlay_vals,
-          overlay_threshold = max(abs(input$overlay_threshold), .Machine$double.eps),
-          overlay_alpha = input$overlay_alpha,
-          overlay_palette = palette,
-          interactive = TRUE
-        ),
-        error = function(e) {
-          .fallback_brain_plot(
-            surfatlas = surfatlas,
-            vals = vals,
-            palette = palette,
-            lim = lim,
-            interactive = TRUE,
-            title = paste0("Parcel Layout (Fallback): ", conditionMessage(e))
-          )
-        }
-      )
-    }
 
     if (inherits(g, "girafe")) {
       g <- ggiraph::girafe_options(
@@ -610,6 +578,7 @@
       data = ts_tbl,
       x_var = input$x_var,
       collapse_vars = input$collapse_vars,
+      group_var = input$group_var,
       interactive = TRUE
     )
 
@@ -642,7 +611,8 @@
         p <- .build_design_plot(
           data = ts_tbl,
           x_var = input$x_var,
-          collapse_vars = input$collapse_vars
+          collapse_vars = input$collapse_vars,
+          group_var = input$group_var
         )
       }
 
@@ -659,58 +629,15 @@
       dat <- computed()
       overlay_payload <- cluster_overlay_payload()
       overlay_vals <- if (!is.null(overlay_payload)) overlay_payload$overlay else NULL
-      surf_ids <- as.integer(surfatlas$ids)
-      scope_ids <- brain_scope_ids()
 
-      vals <- .parcel_values_from_clusters(
-        cluster_parcels = dat$cluster_parcels,
-        atlas_ids = surf_ids,
-        selected_cluster_ids = scope_ids,
-        mode = input$display_mode
+      p <- .make_brain_plot(
+        surfatlas = surfatlas, cluster_parcels = dat$cluster_parcels,
+        scope_ids = brain_scope_ids(), display_mode = input$display_mode,
+        use_surface_plot = use_surface_plot, overlay_vals = overlay_vals,
+        overlay_threshold = input$overlay_threshold, overlay_alpha = input$overlay_alpha,
+        brain_views = brain_views, brain_hemis = brain_hemis,
+        palette = palette, interactive = FALSE
       )
-
-      lim <- NULL
-      finite_vals <- vals[is.finite(vals)]
-      if (length(finite_vals) > 0) {
-        lim_max <- max(abs(finite_vals))
-        lim <- c(-lim_max, lim_max)
-      }
-
-      p <- .fallback_brain_plot(
-        surfatlas = surfatlas,
-        vals = vals,
-        palette = palette,
-        lim = lim,
-        interactive = FALSE
-      )
-
-      if (isTRUE(use_surface_plot)) {
-        p <- tryCatch(
-          neuroatlas::plot_brain(
-            surfatlas = surfatlas,
-            vals = vals,
-            views = brain_views,
-            hemis = brain_hemis,
-            palette = palette,
-            lim = lim,
-            overlay = overlay_vals,
-            overlay_threshold = max(abs(input$overlay_threshold), .Machine$double.eps),
-            overlay_alpha = input$overlay_alpha,
-            overlay_palette = palette,
-            interactive = FALSE
-          ),
-          error = function(e) {
-            .fallback_brain_plot(
-              surfatlas = surfatlas,
-              vals = vals,
-              palette = palette,
-              lim = lim,
-              interactive = FALSE,
-              title = paste0("Parcel Layout (Fallback): ", conditionMessage(e))
-            )
-          }
-        )
-      }
 
       ggplot2::ggsave(filename = file, plot = p, width = 8, height = 5,
                       dpi = 150)
@@ -1249,6 +1176,18 @@ cluster_explorer <- function(data_source = NULL,
                       ),
                                           choices = character(0),
                                           multiple = TRUE)
+                  ),
+                  shiny::div(
+                    class = "ce-plot-field",
+                    shiny::selectInput(
+                      "group_var",
+                      .ce_label_with_help(
+                        "Color / Group",
+                        "Optional categorical variable used to color points and fit separate trend lines within each selected cluster."
+                      ),
+                      choices = c("None" = ""),
+                      selected = ""
+                    )
                   ),
                   shiny::div(
                     class = "ce-plot-field ce-plot-field-btn",
