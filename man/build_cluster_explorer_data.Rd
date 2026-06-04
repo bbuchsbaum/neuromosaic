@@ -23,7 +23,23 @@ build_cluster_explorer_data(
   series_cache_env = NULL
 )
 
-compute_clusters(...)
+compute_clusters(
+  data_source,
+  atlas,
+  stat_map,
+  sample_table = NULL,
+  threshold = 3,
+  min_cluster_size = 20,
+  connectivity = c("26-connect", "18-connect", "6-connect"),
+  tail = c("two_sided", "positive", "negative"),
+  signal_fun = mean,
+  signal_fun_args = list(na.rm = TRUE),
+  series_fun = NULL,
+  prefetch = TRUE,
+  prefetch_max_clusters = Inf,
+  prefetch_max_voxels = Inf,
+  series_cache_env = NULL
+)
 }
 \arguments{
 \item{data_source}{A sample-wise data source supporting

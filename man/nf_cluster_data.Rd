@@ -18,7 +18,7 @@ nf_cluster_data(
 \item{ds}{An \code{nftab} object.}
 
 \item{stat_map}{A \code{\link[neuroim2]{NeuroVol}} representing the
-group-level statistic map.  Must be provided separately — it is not
+group-level statistic map.  Must be provided separately - it is not
 stored per-row in the NFTab.}
 
 \item{data_feature}{Character.  Name of the per-row volumetric feature in

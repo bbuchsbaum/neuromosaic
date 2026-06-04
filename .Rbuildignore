@@ -3,6 +3,14 @@
 ^LICENSE\.md$
 ^\.claude$
 ^\.omc$
+^\.mote$
+^design$
+^\.covr_result\.rds$
+^AGENTS\.md$
+^R/AGENTS\.md$
+^inst/AGENTS\.md$
+^man/AGENTS\.md$
+^tests/AGENTS\.md$
 ^tmp$
 ^\.rcmdcheck_result\.rds$
 ^\.git$

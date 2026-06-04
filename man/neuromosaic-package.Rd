@@ -4,9 +4,9 @@
 \name{neuromosaic-package}
 \alias{neuromosaic}
 \alias{neuromosaic-package}
-\title{neuromosaic: Rich Reports and Interactive Exploration for Neuroimaging Clusters}
+\title{neuromosaic: Rich Reports and Interactive Exploration for Neuroimaging Statistical Maps}
 \description{
-Generates publication-ready PDF/HTML reports from neuroimaging statistical maps. Thresholds stat maps, finds clusters, annotates peaks with MNI coordinates and atlas labels, extracts design-aware time courses, and renders formatted tables and formula-driven plots. Also provides an interactive Shiny explorer as an optional UI layer. The computation engine has zero Shiny dependencies and can be used programmatically.
+Generates publication-ready PDF/HTML reports from neuroimaging statistical maps, including single-map cluster reports and multi-map montage reports. Thresholds stat maps, finds clusters, annotates peaks with MNI coordinates and atlas labels, extracts design-aware time courses, and renders formatted tables and formula-driven plots. Also provides an interactive Shiny explorer as an optional UI layer. The computation engine has zero Shiny dependencies and can be used programmatically.
 }
 \seealso{
 Useful links:

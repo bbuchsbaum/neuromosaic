@@ -1,0 +1,105 @@
+---
+title: "Montage Report"
+date: last-modified
+format:
+  html:
+    toc: true
+    theme: flatly
+  pdf:
+    toc: true
+    number-sections: true
+    pdf-engine: xelatex
+execute:
+  echo: false
+  warning: false
+  message: false
+  fig-align: center
+---
+
+```{r}
+rd <- readRDS("__REPORT_DATA_FILE__")
+manifest <- rd$manifest
+panels <- rd$panels
+layout <- rd$params$layout
+is_html <- knitr::is_html_output()
+`%||%` <- function(x, y) if (is.null(x)) y else x
+qc <- rd$qc %||% data.frame()
+fmt <- neuromosaic::montage_report_formatters(
+  manifest = manifest,
+  layout = layout,
+  is_html = is_html
+)
+```
+
+# `r rd$params$title`
+
+```{r}
+#| results: asis
+fmt$emit_report_styles()
+fmt$emit_report_overview()
+fmt$emit_qc_summary(qc)
+```
+
+# Maps
+
+```{r}
+#| results: asis
+if (nrow(manifest) == 0L) {
+  cat("*No maps to display.*\n")
+} else {
+  for (i in seq_len(nrow(manifest))) {
+    row <- manifest[i, , drop = FALSE]
+    map_id <- as.character(row$map_id[[1]])
+    label <- as.character(row$label[[1]])
+    panel <- panels[[map_id]] %||% list()
+
+    fmt$emit_panel_heading(i, label)
+    if ("description" %in% names(row) &&
+        !is.na(row$description[[1]]) &&
+        nzchar(row$description[[1]])) {
+      cat(row$description[[1]], "\n\n", sep = "")
+    }
+    fmt$emit_metadata(row)
+    fmt$emit_panel_qc(panel$qc)
+
+    volume_image <- panel$volume_image %||% panel$volume_image_path
+    surface_image <- panel$surface_image %||% panel$surface_image_path
+    fmt$emit_panel_image(volume_image, paste(label, "volume montage"))
+    fmt$emit_panel_image(surface_image, paste(label, "surface montage"))
+
+    fmt$emit_table(panel$table)
+  }
+}
+```
+
+# Provenance
+
+```{r}
+#| results: asis
+prov <- rd$provenance
+if (is.null(prov)) {
+  cat("*No provenance metadata available.*\n")
+} else {
+  prov_fields <- vapply(names(prov), function(field) {
+    value <- prov[[field]]
+    if (is.null(value) || length(value) != 1L) "" else as.character(value)
+  }, character(1))
+  prov_fields <- prov_fields[nzchar(prov_fields)]
+  if (length(prov_fields) == 0L) {
+    cat("*No scalar provenance metadata available.*\n")
+  } else {
+    prov_tbl <- data.frame(
+      Field = names(prov_fields),
+      Value = unname(prov_fields),
+      check.names = FALSE
+    )
+    cat(knitr::kable(prov_tbl, format = "pipe"), sep = "\n")
+  }
+}
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```

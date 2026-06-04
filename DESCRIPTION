@@ -1,11 +1,12 @@
 Package: neuromosaic
-Title: Rich Reports and Interactive Exploration for Neuroimaging Clusters
+Title: Rich Reports and Interactive Exploration for Neuroimaging Statistical Maps
 Version: 0.2.0
 Authors@R:
     person("Bradley", "Buchsbaum", , "brad.buchsbaum@gmail.com", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-1108-4866"))
 Description: Generates publication-ready PDF/HTML reports from
-    neuroimaging statistical maps. Thresholds stat maps, finds clusters,
+    neuroimaging statistical maps, including single-map cluster reports
+    and multi-map montage reports. Thresholds stat maps, finds clusters,
     annotates peaks with MNI coordinates and atlas labels, extracts
     design-aware time courses, and renders formatted tables and
     formula-driven plots. Also provides an interactive Shiny explorer as
@@ -20,13 +21,14 @@ Depends:
 Imports:
     assertthat,
     dplyr,
+    gifti,
     ggplot2,
     ggiraph,
     gt,
     knitr,
     methods,
     neuroatlas,
-    neuroim2,
+    neuroim2 (>= 0.16),
     neurosurf,
     rlang,
     scales,
@@ -40,6 +42,7 @@ Imports:
 Suggests:
     DT,
     flextable,
+    fmrigds,
     htmltools,
     kableExtra,
     neurotabs,
@@ -48,6 +51,7 @@ Suggests:
     shiny,
     testthat (>= 3.0.0)
 Remotes:
+    bbuchsbaum/fmrigds,
     bbuchsbaum/neuroatlas,
     bbuchsbaum/neuroim2,
     bbuchsbaum/neurosurf,

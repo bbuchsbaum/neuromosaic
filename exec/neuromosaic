@@ -1,0 +1,10 @@
+#!/usr/bin/env Rscript
+
+args <- commandArgs(trailingOnly = TRUE)
+
+if (!requireNamespace("neuromosaic", quietly = TRUE)) {
+  stop("Package 'neuromosaic' must be installed to use the neuromosaic CLI.",
+       call. = FALSE)
+}
+
+neuromosaic::cli_main(args)

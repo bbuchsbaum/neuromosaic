@@ -237,6 +237,12 @@
                       resolution = "05"),
     fsaverage = list(template_id = "fsaverage", density = "164k",
                      resolution = NULL),
+    fsLR = list(template_id = "fsLR", density = "32k",
+                resolution = NULL),
+    `fsLR-32k` = list(template_id = "fsLR", density = "32k",
+                      resolution = NULL),
+    fsLR32k = list(template_id = "fsLR", density = "32k",
+                   resolution = NULL),
     list(template_id = surface_space, density = NULL, resolution = NULL)
   )
 }
@@ -284,18 +290,108 @@
   }
 
   hemi_tf <- if (identical(hemi, "lh")) "L" else "R"
+  result <- .load_overlay_surface_template(
+    template_id = defaults$template_id,
+    surface_type = surface_type,
+    hemi = hemi_tf,
+    density = density,
+    resolution = resolution
+  )
+  if (is.null(result) && identical(defaults$template_id, "fsLR") &&
+      surface_type %in% c("white", "pial")) {
+    result <- .load_overlay_surface_template(
+      template_id = defaults$template_id,
+      surface_type = "midthickness",
+      hemi = hemi_tf,
+      density = density,
+      resolution = resolution
+    )
+  }
+  if (!is.null(result)) {
+    assign(cache_key, result, envir = .overlay_geom_cache)
+  }
+  result
+}
+
+.load_overlay_surface_template <- function(template_id,
+                                           surface_type,
+                                           hemi,
+                                           density,
+                                           resolution) {
   result <- tryCatch(
     neuroatlas::load_surface_template(
-      template_id = defaults$template_id,
+      template_id = template_id,
       surface_type = surface_type,
-      hemi = hemi_tf,
+      hemi = hemi,
       density = density,
       resolution = resolution
     ),
     error = function(e) NULL
   )
   if (!is.null(result)) {
-    assign(cache_key, result, envir = .overlay_geom_cache)
+    return(result)
   }
-  result
+
+  path <- tryCatch(
+    neuroatlas::get_surface_template(
+      template_id = template_id,
+      surface_type = surface_type,
+      hemi = hemi,
+      density = density,
+      resolution = resolution,
+      load_as_path = TRUE
+    ),
+    error = function(e) NULL
+  )
+  if (is.null(path) || length(path) == 0L || !file.exists(path[[1]])) {
+    return(NULL)
+  }
+  .read_gifti_surface_geometry(path[[1]], hemi = hemi)
+}
+
+.read_gifti_surface_geometry <- function(path, hemi) {
+  if (!requireNamespace("gifti", quietly = TRUE)) {
+    return(NULL)
+  }
+  gii <- tryCatch(gifti::readgii(path), error = function(e) NULL)
+  if (is.null(gii) || is.null(gii$data)) {
+    return(NULL)
+  }
+  arrays <- gii$data
+  coords <- NULL
+  faces <- NULL
+  for (arr in arrays) {
+    mat <- as.matrix(arr)
+    if (ncol(mat) != 3L) {
+      next
+    }
+    if (is.null(coords) && is.numeric(mat) && any(abs(mat %% 1) > 0)) {
+      coords <- mat
+    } else if (is.null(faces)) {
+      faces <- mat
+    }
+  }
+  if (is.null(coords) || is.null(faces)) {
+    mats <- lapply(arrays, function(x) as.matrix(x))
+    three_col <- mats[vapply(mats, function(x) ncol(x) == 3L, logical(1))]
+    if (length(three_col) >= 2L) {
+      coords <- three_col[[1L]]
+      faces <- three_col[[2L]]
+    }
+  }
+  if (is.null(coords) || is.null(faces)) {
+    return(NULL)
+  }
+  faces <- matrix(as.integer(faces), ncol = 3L)
+  if (min(faces, na.rm = TRUE) == 0L) {
+    faces <- faces + 1L
+  }
+  tryCatch(
+    neurosurf::SurfaceGeometry(
+      vert = coords,
+      faces = faces,
+      hemi = if (identical(hemi, "L")) "left" else "right"
+    ),
+    error = function(e) NULL
+  )
 }

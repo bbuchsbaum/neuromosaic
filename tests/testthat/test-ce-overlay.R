@@ -97,6 +97,10 @@ test_that(".surface_template_defaults returns valid defaults for known spaces", 
   expect_equal(d_unknown$template_id, "MNI152NLin2009cAsym")
   expect_null(d_unknown$density)
 
+  d_fslr <- neuromosaic:::.surface_template_defaults("fsLR-32k")
+  expect_equal(d_fslr$template_id, "fsLR")
+  expect_equal(d_fslr$density, "32k")
+
   d_null <- neuromosaic:::.surface_template_defaults(NULL)
   expect_equal(d_null$template_id, "fsaverage")
 })

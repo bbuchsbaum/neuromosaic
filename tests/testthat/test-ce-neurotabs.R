@@ -363,6 +363,66 @@ test_that("nf_cluster_data works with nf_from_table one-file-per-row inputs", {
   expect_true(nrow(res$cluster_table) >= 1L)
 })
 
+test_that("nf_render_manifest adapts file-backed NFTab rows", {
+  skip_if_not_installed("neurotabs")
+
+  adhoc <- make_toy_nftab_from_table(n_obs = 3L)
+  on.exit(unlink(adhoc$root, recursive = TRUE), add = TRUE)
+
+  manifest <- nf_render_manifest(
+    ds = adhoc$ds,
+    data_feature = "AUC",
+    threshold = 3,
+    min_cluster_size = 3L
+  )
+
+  expect_s3_class(manifest, "data.frame")
+  expect_equal(nrow(manifest), 3L)
+  expect_true(all(file.exists(manifest$path)))
+  expect_true(all(c("map_id", "label", "path", "stat_kind", "signed",
+                    "threshold", "level", "n", "subjects") %in% names(manifest)))
+  expect_identical(manifest$level, rep("subject", 3L))
+  expect_equal(manifest$n, rep(1, 3L))
+  expect_identical(manifest$subjects, adhoc$observations$subject)
+  expect_true(all(grepl("^subject-", manifest$map_id)))
+})
+
+test_that("nf_render_manifest materializes backend-backed NFTab rows", {
+  skip_if_not_installed("neurotabs")
+
+  ds <- make_toy_nftab(n_obs = 2L, backend_name = "mock_ce_array_render")
+  out_dir <- tempfile("nf-render-materialized-")
+
+  manifest <- nf_render_manifest(
+    ds = ds,
+    data_feature = "bold",
+    materialize_dir = out_dir,
+    threshold = 3,
+    min_cluster_size = 3L
+  )
+
+  expect_equal(nrow(manifest), 2L)
+  expect_true(all(file.exists(manifest$path)))
+  expect_true(all(dirname(manifest$path) == normalizePath(out_dir)))
+  expect_s3_class(validate_manifest(manifest), "data.frame")
+})
+
+test_that("nf_render_manifest validates feature and path column inputs", {
+  skip_if_not_installed("neurotabs")
+
+  adhoc <- make_toy_nftab_from_table(n_obs = 2L)
+  on.exit(unlink(adhoc$root, recursive = TRUE), add = TRUE)
+
+  expect_error(
+    nf_render_manifest(adhoc$ds, data_feature = "missing"),
+    "not found"
+  )
+  expect_error(
+    nf_render_manifest(adhoc$ds, data_feature = "AUC", path_col = "missing"),
+    "path_col"
+  )
+})
+
 test_that("nf_cluster_explorer constructs a shiny app from nf_from_table inputs", {
   skip_if_not_installed("neurotabs")
   skip_if_not_installed("shiny")

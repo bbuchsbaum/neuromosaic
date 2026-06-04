@@ -24,7 +24,7 @@
   reserved <- intersect(names(dots), c("data_source", "sample_table", "series_fun"))
   if (length(reserved))
     stop("Do not pass ", paste(reserved, collapse = ", "),
-         " via '...' — the adapter manages these arguments.", call. = FALSE)
+         " via '...' - the adapter manages these arguments.", call. = FALSE)
 }
 
 # -- Strategy helpers ---------------------------------------------------------
@@ -32,10 +32,10 @@
 #' @keywords internal
 .nf_collect_to_neurovec <- function(ds, data_feature, stat_map) {
   result <- neurotabs::nf_collect_array(ds, data_feature)
-  # result$data  — plain 4D R array [x,y,z,n_obs]; neurotabs uses
+  # result$data  - plain 4D R array [x,y,z,n_obs]; neurotabs uses
   #                array(as.vector(vol), dim=dim(vol)) internally so
   #                there are no S4 dispatch surprises.
-  # result$space — NeuroSpace from the first resolved volume.
+  # result$space - NeuroSpace from the first resolved volume.
 
   d3      <- as.integer(dim(result$data))[1:3]
   sm_dims <- as.integer(dim(stat_map))[1:3]
@@ -75,7 +75,7 @@
 #'
 #' @param ds An \code{nftab} object.
 #' @param stat_map A \code{\link[neuroim2]{NeuroVol}} representing the
-#'   group-level statistic map.  Must be provided separately — it is not
+#'   group-level statistic map.  Must be provided separately - it is not
 #'   stored per-row in the NFTab.
 #' @param data_feature Character.  Name of the per-row volumetric feature in
 #'   \code{ds} to use as the sample-wise data source (e.g. \code{"bold"},

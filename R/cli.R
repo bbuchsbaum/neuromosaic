@@ -16,7 +16,11 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
   invocation <- .cli_parse_invocation(args)
 
   if (isTRUE(invocation$help)) {
-    cat(.cli_help_text(invocation$command, invocation$subcommand))
+    cat(.cli_help_text(
+      invocation$command,
+      invocation$subcommand,
+      style = .cli_opt_scalar(invocation$options, "style", NULL)
+    ))
     return(invisible(invocation))
   }
 
@@ -74,6 +78,12 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
       print(result)
       result
     },
+    montage_report = {
+      if (identical(spec$mode, "montage_validate")) {
+        return(invisible(spec))
+      }
+      do.call(render_montage_report, spec$args)
+    },
     extract = {
       result <- do.call(cluster_report, spec$report_args)
       paths <- do.call(export_csv, c(list(x = result), spec$export_args))
@@ -84,6 +94,14 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
         .cli_abort("Package 'shiny' is required for the 'explore' command.")
       }
       app <- do.call(cluster_explorer, spec$args)
+      shiny::runApp(app)
+      app
+    },
+    montage_explore = {
+      if (!requireNamespace("shiny", quietly = TRUE)) {
+        .cli_abort("Package 'shiny' is required for the montage explorer.")
+      }
+      app <- do.call(montage_explorer, spec$args)
       shiny::runApp(app)
       app
     },
@@ -113,6 +131,19 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
 }
 
 .cli_prepare_report <- function(opts) {
+  style <- .cli_opt_scalar(opts, "style", "cluster")
+  if (!style %in% c("cluster", "montage")) {
+    .cli_abort("Report '--style' must be 'cluster' or 'montage'.")
+  }
+
+  switch(
+    style,
+    cluster = .cli_prepare_cluster_report(opts),
+    montage = .cli_prepare_montage_report(opts)
+  )
+}
+
+.cli_prepare_cluster_report <- function(opts) {
   stat_map <- .cli_load_stat_map(.cli_require_scalar(opts, "stat_map"))
   atlas <- .cli_load_atlas(.cli_opt_scalar(opts, "atlas", "schaefer:200:7"))
   dataset <- NULL
@@ -159,10 +190,267 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
 
   list(
     type = "report",
+    style = "cluster",
     args = args,
     dataset = dataset,
     mode = if (is.null(source)) "stat_only" else "dataset"
   )
+}
+
+.cli_prepare_montage_report <- function(opts) {
+  manifest_source <- .cli_resolve_render_manifest_source(opts)
+  manifest <- build_manifest(
+    manifest_source$manifest,
+    overrides = .cli_montage_manifest_overrides(opts),
+    validate = FALSE,
+    check_files = TRUE
+  )
+
+  labels_path <- .cli_opt_scalar(opts, "labels", NULL)
+  if (!is.null(labels_path) && nzchar(labels_path)) {
+    manifest <- .cli_apply_render_labels(manifest, labels_path)
+  }
+
+  layout <- .cli_parse_layout(.cli_opt_scalar(opts, "layout", NULL))
+  default_p <- .cli_opt_numeric(opts, "p", 0.005)
+  validate_maps <- isTRUE(.cli_opt_flag(opts, "validate", FALSE))
+  background <- .cli_opt_scalar(opts, "background", NULL)
+  render_surface <- .cli_opt_flag(opts, "surface", FALSE)
+  surfatlas <- if (isTRUE(render_surface)) {
+    .cli_load_surfatlas(.cli_require_scalar(opts, "surfatlas"))
+  } else {
+    NULL
+  }
+  atlas_spec <- .cli_opt_scalar(opts, "atlas", NULL)
+  atlas <- if (!is.null(atlas_spec) && nzchar(atlas_spec)) {
+    .cli_load_atlas(atlas_spec)
+  } else {
+    NULL
+  }
+  policy <- montage_policy(
+    p = default_p,
+    tail = .cli_opt_scalar(opts, "tail", "two_sided"),
+    connectivity = .cli_opt_scalar(opts, "connectivity", "18-connect"),
+    min_cluster_size = .cli_opt_integer(opts, "min_cluster_size", 10L),
+    cap_within = .cli_parse_layout(.cli_opt_scalar(opts, "cap_within", NULL)),
+    layout = layout
+  )
+  manifest <- validate_manifest(
+    manifest,
+    background = background,
+    check_files = TRUE,
+    load_maps = validate_maps,
+    default_p = default_p
+  )
+
+  list(
+    type = "montage_report",
+    style = "montage",
+    args = list(
+      manifest = manifest,
+      output_file = .cli_opt_scalar(opts, "out", "neuromosaic-montage-report.html"),
+      template = .cli_opt_scalar(opts, "template", NULL),
+      title = .cli_opt_scalar(opts, "title", "Montage Report"),
+      layout = layout,
+      policy = policy,
+      bg = background,
+      surfatlas = surfatlas,
+      atlas = atlas,
+      render_volume = !is.null(background) && nzchar(background),
+      render_surface = render_surface,
+      render_peaks = !is.null(atlas),
+      cache_dir = .cli_opt_scalar(opts, "cache_dir", NULL),
+      materialize_recipes = .cli_opt_flag(opts, "materialize_recipes", TRUE),
+      overwrite_recipes = .cli_opt_flag(opts, "overwrite_recipes", FALSE),
+      cache_surface = .cli_opt_flag(opts, "cache_surface", TRUE),
+      image_width = .cli_opt_integer(opts, "image_width", 1400L),
+      image_height = .cli_opt_integer(opts, "image_height", 1000L),
+      image_res = .cli_opt_integer(opts, "image_res", 144L),
+      max_clusters = .cli_opt_integer(opts, "max_clusters", 20L),
+      quiet = .cli_opt_flag(opts, "quiet", TRUE),
+      validate = FALSE
+    ),
+    manifest_path = manifest_source$path,
+    manifest_source = manifest_source$source,
+    labels_path = if (is.null(labels_path) || !nzchar(labels_path)) {
+      NULL
+    } else {
+      normalizePath(labels_path, mustWork = TRUE)
+    },
+    background_path = if (is.null(background) || !nzchar(background)) {
+      NULL
+    } else {
+      normalizePath(background, mustWork = TRUE)
+    },
+    surface = render_surface,
+    atlas = atlas_spec,
+    mode = if (validate_maps) "montage_validate" else "montage"
+  )
+}
+
+.cli_resolve_render_manifest_source <- function(opts) {
+  manifest_path <- .cli_opt_scalar(opts, "render_manifest", NULL)
+  if (!is.null(manifest_path) && nzchar(manifest_path)) {
+    return(list(
+      manifest = .cli_read_render_manifest(manifest_path),
+      path = normalizePath(manifest_path, mustWork = TRUE),
+      source = "render_manifest"
+    ))
+  }
+
+  nftab_manifest <- .cli_opt_scalar(opts, "manifest", NULL)
+  feature <- .cli_opt_scalar(opts, "feature", NULL)
+  if (!is.null(nftab_manifest) && nzchar(nftab_manifest) &&
+      !is.null(feature) && nzchar(feature)) {
+    .cli_require_namespace("neurotabs", "montage NFTab manifest adapter")
+    ds <- neurotabs::nf_read(.cli_resolve_manifest_path(nftab_manifest),
+                             validate_schema = TRUE)
+    return(list(
+      manifest = nf_render_manifest(
+        ds = ds,
+        data_feature = feature,
+        path_col = .cli_opt_scalar(opts, "locator_col", NULL),
+        root = .cli_opt_scalar(opts, "root", NULL),
+        materialize_dir = .cli_opt_scalar(opts, "materialize_dir", NULL),
+        validate = FALSE,
+        check_files = TRUE
+      ),
+      path = normalizePath(nftab_manifest, mustWork = TRUE),
+      source = "nftab_manifest"
+    ))
+  }
+
+  design <- .cli_opt_scalar(opts, "design", NULL)
+  path_template <- .cli_opt_scalar(opts, "path_template", NULL)
+  if (!is.null(design) && nzchar(design) &&
+      !is.null(path_template) && nzchar(path_template)) {
+    observations <- .cli_read_table(design)
+    root <- .cli_opt_scalar(
+      opts,
+      "root",
+      dirname(normalizePath(design, mustWork = TRUE))
+    )
+    paths <- .cli_apply_path_template(path_template, observations)
+    relative <- !grepl("^(/|[A-Za-z]:[/\\\\])", paths)
+    paths[relative] <- file.path(root, paths[relative])
+    observations$path <- paths
+    if (!"map_id" %in% names(observations)) {
+      observations$map_id <- sprintf("map_%03d", seq_len(nrow(observations)))
+    }
+    return(list(
+      manifest = observations,
+      path = normalizePath(design, mustWork = TRUE),
+      source = "design_path_template"
+    ))
+  }
+
+  .cli_abort(paste0(
+    "Montage reports require '--render-manifest', '--manifest' with '--feature', ",
+    "or '--design' with '--path-template'."
+  ))
+}
+
+.cli_montage_manifest_overrides <- function(opts) {
+  overrides <- list()
+  for (field in c("stat_kind", "units", "tail", "connectivity")) {
+    value <- .cli_opt_scalar(opts, field, NULL)
+    if (!is.null(value) && nzchar(value)) {
+      overrides[[field]] <- value
+    }
+  }
+  for (field in c("threshold", "p")) {
+    value <- .cli_opt_scalar(opts, field, NULL)
+    if (!is.null(value) && nzchar(value)) {
+      numeric_value <- suppressWarnings(as.numeric(value))
+      if (!is.finite(numeric_value)) {
+        .cli_abort(
+          paste0("Option '--", gsub("_", "-", field), "' must be numeric.")
+        )
+      }
+      overrides[[field]] <- numeric_value
+    }
+  }
+  min_cluster_size <- .cli_opt_scalar(opts, "min_cluster_size", NULL)
+  if (!is.null(min_cluster_size) && nzchar(min_cluster_size)) {
+    overrides$min_cluster_size <- .cli_opt_integer(opts, "min_cluster_size", 10L)
+  }
+  if (!is.null(opts$signed)) {
+    overrides$signed <- .cli_opt_flag(opts, "signed", TRUE)
+  }
+
+  if (length(overrides) == 0L) {
+    return(NULL)
+  }
+  overrides
+}
+
+.cli_read_render_manifest <- function(path) {
+  if (!file.exists(path)) {
+    .cli_abort(
+      paste0("Render manifest not found: ", path),
+      class = "neuromosaic_error_cli_missing_manifest"
+    )
+  }
+
+  ext <- tolower(tools::file_ext(path))
+  if (ext == "csv") {
+    return(utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE))
+  }
+  if (ext %in% c("tsv", "txt")) {
+    return(utils::read.delim(path, stringsAsFactors = FALSE, check.names = FALSE))
+  }
+
+  .cli_abort(
+    "Render manifest files must be CSV or TSV.",
+    class = "neuromosaic_error_cli_invalid_manifest"
+  )
+}
+
+.cli_apply_render_labels <- function(manifest, labels_path) {
+  labels <- .cli_read_render_manifest(labels_path)
+  if (!"map_id" %in% names(labels)) {
+    .cli_abort(
+      "Labels table must contain a 'map_id' column.",
+      class = "neuromosaic_error_cli_invalid_manifest"
+    )
+  }
+
+  label_fields <- intersect(
+    c("label", "description", "short", "legend_semantics"),
+    names(labels)
+  )
+  if (length(label_fields) == 0L) {
+    .cli_abort(
+      "Labels table must contain at least one of: label, description, short, legend_semantics.",
+      class = "neuromosaic_error_cli_invalid_manifest"
+    )
+  }
+
+  if (anyDuplicated(labels$map_id)) {
+    .cli_abort(
+      "Labels table 'map_id' values must be unique.",
+      class = "neuromosaic_error_cli_invalid_manifest"
+    )
+  }
+
+  idx <- match(manifest$map_id, labels$map_id)
+  for (field in label_fields) {
+    if (!field %in% names(manifest)) {
+      manifest[[field]] <- NA_character_
+    }
+    hit <- !is.na(idx)
+    manifest[[field]][hit] <- labels[[field]][idx[hit]]
+  }
+
+  manifest
+}
+
+.cli_parse_layout <- function(layout) {
+  if (is.null(layout) || !nzchar(layout)) {
+    return(character())
+  }
+  out <- trimws(strsplit(layout, "[/,]", perl = TRUE)[[1]])
+  out[nzchar(out)]
 }
 
 .cli_prepare_extract <- function(opts) {
@@ -222,6 +510,14 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
 }
 
 .cli_prepare_explore <- function(opts) {
+  style <- .cli_opt_scalar(opts, "style", "cluster")
+  if (!style %in% c("cluster", "montage")) {
+    .cli_abort("Explore '--style' must be 'cluster' or 'montage'.")
+  }
+  if (identical(style, "montage")) {
+    return(.cli_prepare_montage_explore(opts))
+  }
+
   dataset <- .cli_resolve_dataset(opts, require_feature = TRUE)
   stat_map <- .cli_load_stat_map(.cli_require_scalar(opts, "stat_map"))
   atlas <- .cli_load_atlas(.cli_opt_scalar(opts, "atlas", "schaefer:200:7"))
@@ -269,6 +565,32 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     ),
     dataset = dataset,
     plot_formula = plot_formula
+  )
+}
+
+.cli_prepare_montage_explore <- function(opts) {
+  report_spec <- .cli_prepare_montage_report(opts)
+  report_args <- report_spec$args
+  keep <- c(
+    "manifest", "title", "layout", "policy", "bg", "surfatlas", "atlas",
+    "render_volume", "render_surface", "render_peaks", "cache_dir",
+    "materialize_recipes", "overwrite_recipes", "cache_surface",
+    "image_width", "image_height", "image_res", "max_clusters", "validate"
+  )
+  args <- report_args[intersect(keep, names(report_args))]
+  args$validate <- FALSE
+
+  list(
+    type = "montage_explore",
+    style = "montage",
+    args = args,
+    manifest_path = report_spec$manifest_path,
+    manifest_source = report_spec$manifest_source,
+    labels_path = report_spec$labels_path,
+    background_path = report_spec$background_path,
+    surface = report_spec$surface,
+    atlas = report_spec$atlas,
+    mode = "montage_explore"
   )
 }
 
@@ -1042,7 +1364,7 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
   )
 }
 
-.cli_help_text <- function(command = NULL, subcommand = NULL) {
+.cli_help_text <- function(command = NULL, subcommand = NULL, style = NULL) {
   atlas_help <- paste0(
     "Atlas specs:\n",
     "  Schaefer100, Schaefer200, Schaefer300, Schaefer400, Schaefer500,\n",
@@ -1076,6 +1398,7 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     "  --locator-col <column>         Existing path column in the design table\n",
     "  --shared-4d <file>             Shared 4D NIfTI, one volume per row\n\n",
     "Common options:\n",
+    "  --style <cluster|montage>      Report style, default cluster\n",
     "  --stat-map <file>              Cluster-defining statistic map\n",
     "  --atlas <spec-or-rds>          Atlas spec, default schaefer:200:7\n",
     "  --strategy <lazy|collect>      Dataset access strategy, default lazy\n",
@@ -1089,10 +1412,11 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     "  --help                         Show this help text\n"
   )
 
-  report_help <- paste0(
-    "Usage: neuromosaic report [dataset options] --stat-map <file> [options]\n\n",
+  report_cluster_help <- paste0(
+    "Usage: neuromosaic report --style cluster [dataset options] --stat-map <file> [options]\n\n",
     "If you omit --manifest/--design, neuromosaic generates a stat-map-only table report.\n\n",
     "Options:\n",
+    "  --style cluster                Existing cluster report path (default)\n",
     "  --feature <name>               Required for dataset-backed reports\n",
     "  --formula <expr>               Repeatable. Optional 'name::formula' labels supported.\n",
     "  --config <file>                YAML config file using canonical option names\n",
@@ -1104,6 +1428,57 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     "  --brain-slices / --no-brain-slices\n",
     "  --quiet / --no-quiet\n\n",
     atlas_help
+  )
+
+  report_montage_help <- paste0(
+    "Usage: neuromosaic report --style montage --render-manifest <csv-or-tsv> [options]\n",
+    "   or: neuromosaic report --style montage --manifest <nftab.yaml> --feature <name> [options]\n",
+    "   or: neuromosaic report --style montage --design <csv-or-tsv> --path-template <template> [options]\n\n",
+    "Montage reports consume a render manifest with one row per map and do not require --stat-map.\n\n",
+    "Options:\n",
+    "  --style montage                Use the multi-map montage report path\n",
+    "  --render-manifest <file>       Render manifest CSV/TSV; distinct from nftab manifests\n",
+    "  --manifest <nftab.yaml>        NFTab dataset manifest source for adapter-backed render manifests\n",
+    "  --feature <name>               NFTab feature to adapt into montage map rows\n",
+    "  --design <file>                Build a render manifest from a design table\n",
+    "  --path-template <template>     Map path template for --design rows\n",
+    "  --root <dir>                   Root for relative --design/--manifest paths\n",
+    "  --materialize-dir <dir>        Directory for backend-backed NFTab feature maps\n",
+    "  --cache-dir <dir>              Directory for derived recipe maps\n",
+    "  --materialize-recipes / --no-materialize-recipes\n",
+    "                                 Precompute recipe-backed rows to disk, default on\n",
+    "  --overwrite-recipes             Recompute derived maps even when cache files exist\n",
+    "  --labels <file>                Optional CSV/TSV keyed by map_id with label/description columns\n",
+    "  --layout <a/b/c>               Nested report layout columns, e.g. contrast/model/variant\n",
+    "  --cap-within <a/b>             Manifest columns that share a color cap\n",
+    "  --background <file>            Optional background image for validate-time grid QC\n",
+    "                                 and volume montage rendering\n",
+    "  --stat-kind <z|t|beta|cope>    Override/default statistic kind\n",
+    "  --units <text>                 Override/default display units\n",
+    "  --threshold <num>              Override/default numeric threshold\n",
+    "  --p <num>                      Default p-value for validate-time threshold derivation\n",
+    "  --signed / --no-signed         Override/default signed-map semantics\n",
+    "  --surface                      Render surface montage panels\n",
+    "  --cache-surface / --no-cache-surface\n",
+    "                                 Reuse surface PNGs by map hash, threshold, and cap\n",
+    "  --surfatlas <spec-or-rds>      Required with --surface\n",
+    "  --atlas <spec-or-rds>          Optional atlas for peak annotation tables\n",
+    "  --config <file>                YAML config file using canonical option names\n",
+    "  --dry-run                      Validate manifest structure and print the prepared spec\n",
+    "  --validate                     Run validate_manifest() with map-level QC and render nothing\n",
+    "  --out <file>                   Output path (.html, .pdf, or .qmd), default neuromosaic-montage-report.html\n",
+    "  --template <file>              Optional custom Rmd/Qmd template\n",
+    "  --title <text>                 Report title\n",
+    "  --quiet / --no-quiet\n"
+  )
+
+  report_help <- paste0(
+    "Usage:\n",
+    "  neuromosaic report --style cluster [dataset options] --stat-map <file> [options]\n",
+    "  neuromosaic report --style montage --render-manifest <csv-or-tsv> [options]\n\n",
+    report_cluster_help,
+    "\n",
+    report_montage_help
   )
 
   extract_help <- paste0(
@@ -1121,8 +1496,11 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
   )
 
   explore_help <- paste0(
-    "Usage: neuromosaic explore [dataset options] --feature <name> --stat-map <file> [options]\n\n",
+    "Usage: neuromosaic explore [dataset options] --feature <name> --stat-map <file> [options]\n",
+    "   or: neuromosaic explore --style montage --render-manifest <csv-or-tsv> [options]\n\n",
     "Options:\n",
+    "  --style <cluster|montage>      Explorer style, default cluster\n",
+    "  --render-manifest <file>       Montage render manifest for row-driven explorer\n",
     "  --plot-formula <expr>          Launch with a formula-driven plot plugin\n",
     "  --surfatlas <spec-or-rds>      Optional custom surface atlas\n",
     "  --config <file>                YAML config file using canonical option names\n",
@@ -1154,6 +1532,12 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
   }
 
   if (identical(command, "report")) {
+    if (identical(style, "montage")) {
+      return(paste0(header, report_montage_help))
+    }
+    if (identical(style, "cluster")) {
+      return(paste0(header, report_cluster_help))
+    }
     return(paste0(header, report_help))
   }
   if (identical(command, "extract")) {
@@ -1331,6 +1715,14 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     )
   }
 
+  if (identical(spec$type, "montage_report")) {
+    spec$args$provenance <- utils::modifyList(
+      cli_info,
+      spec$args$provenance %||% list(),
+      keep.null = TRUE
+    )
+  }
+
   if (identical(spec$type, "extract")) {
     spec$report_args$provenance <- utils::modifyList(
       cli_info,
@@ -1381,6 +1773,27 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     )
   }
 
+  if (identical(spec$type, "montage_report")) {
+    layout <- spec$args$layout
+    lines <- c(
+      lines,
+      paste0("Output file: ", spec$args$output_file),
+      paste0("Render manifest: ", spec$manifest_path),
+      if (!is.null(spec$background_path)) {
+        paste0("Background: ", spec$background_path)
+      },
+      if (!is.null(spec$atlas)) {
+        paste0("Atlas: ", spec$atlas)
+      },
+      paste0("Map count: ", nrow(spec$args$manifest)),
+      paste0("Layout: ", if (length(layout) > 0L) {
+        paste(layout, collapse = " / ")
+      } else {
+        "flat"
+      })
+    )
+  }
+
   if (identical(spec$type, "extract")) {
     lines <- c(
       lines,
@@ -1394,6 +1807,20 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
       lines,
       paste0("Selection engine: ", spec$args$selection_engine),
       paste0("Default plot plugin: ", spec$args$default_plot_plugin)
+    )
+  }
+
+  if (identical(spec$type, "montage_explore")) {
+    layout <- spec$args$layout
+    lines <- c(
+      lines,
+      paste0("Render manifest: ", spec$manifest_path),
+      paste0("Map count: ", nrow(spec$args$manifest)),
+      paste0("Layout: ", if (length(layout) > 0L) {
+        paste(layout, collapse = " / ")
+      } else {
+        "flat"
+      })
     )
   }
 
