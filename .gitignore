@@ -2,3 +2,9 @@
 /Meta/
 docs
 .mote/
+
+# Tooling and check/coverage scratch artifacts
+.covr_result.rds
+.rcmdcheck_result.rds
+.omc/
+Rplots.pdf
