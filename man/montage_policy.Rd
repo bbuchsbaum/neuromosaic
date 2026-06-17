@@ -11,6 +11,9 @@ montage_policy(
   connectivity = c("18-connect", "26-connect", "6-connect"),
   min_cluster_size = 10L,
   cap_within = character(),
+  cap = NULL,
+  cap_quantile = 0.99,
+  cap_floor = NULL,
   layout = character(),
   layout_fun = NULL
 )
@@ -29,6 +32,19 @@ thresholds.}
 \item{min_cluster_size}{Default minimum cluster size.}
 
 \item{cap_within}{Character vector of manifest columns that share color caps.}
+
+\item{cap}{Optional fixed color cap (magnitude). When supplied, every cap
+group uses this value and the robust quantile default is ignored. `NULL`
+(default) derives a cap per group from the data.}
+
+\item{cap_quantile}{Quantile of the suprathreshold `|stat|` distribution used
+for the data-driven cap when `cap` is `NULL`. Defaults to `0.99`, which is
+robust to a few extreme voxels (the raw maximum washes the rest of a strong
+map out under proportional/soft alpha).}
+
+\item{cap_floor}{Optional lower bound applied to the data-driven cap so maps
+with a narrow suprathreshold range still span a usable color scale. `NULL`
+(default) applies no floor.}
 
 \item{layout}{Character vector of manifest columns used for nested sections.}
 

@@ -20,7 +20,8 @@ stat_montage(
   bg_cmap = "grays",
   ov_cmap = if (isTRUE(signed)) "blue-red" else "inferno",
   ov_alpha = 0.7,
-  ov_alpha_mode = c("soft", "binary", "proportional"),
+  ov_alpha_mode = c("soft", "binary", "proportional", "ramp"),
+  alpha_gamma = NULL,
   style = "report",
   on_mismatch = c("error", "restamp"),
   empty = c("error", "warning"),
@@ -50,7 +51,15 @@ clipped to this cap before plotting.}
 
 \item{ov_alpha}{Overlay alpha.}
 
-\item{ov_alpha_mode}{`"soft"` maps to `plot_overlay()`'s proportional alpha.}
+\item{ov_alpha_mode}{How overlay opacity tracks magnitude. `"binary"` gives
+every suprathreshold voxel full `ov_alpha`; `"ramp"` ramps alpha linearly
+from the threshold to the color cap; `"proportional"` sets alpha to
+`|v| / cap`; `"soft"` uses a nonlinear self-tuning curve. Modes unknown to
+the installed `neuroim2` fall back to its proportional alpha.}
+
+\item{alpha_gamma}{Optional exponent for `ov_alpha_mode = "soft"`, forwarded
+to `neuroim2::plot_overlay()`. `NULL` (default) lets `neuroim2` auto-tune
+it; larger values push more of the low-value range toward transparency.}
 
 \item{style}{Requested plot style. `"report"` is used when supported by the
 installed `neuroim2`; otherwise it falls back to `"light"`.}

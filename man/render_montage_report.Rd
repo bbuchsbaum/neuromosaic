@@ -16,6 +16,8 @@ render_montage_report(
   surfatlas = NULL,
   atlas = NULL,
   panels = NULL,
+  volume_args = list(),
+  surface_args = list(),
   render_volume = !is.null(bg),
   render_surface = !is.null(surfatlas),
   render_peaks = !is.null(atlas),
@@ -64,6 +66,24 @@ montage PNGs are generated with [stat_montage()].}
 
 \item{panels}{Optional named list keyed by `map_id`. Each panel may contain
 `volume_image`, `surface_image`, `table`, or other renderer-specific data.}
+
+\item{volume_args}{Optional named list of styling arguments forwarded to
+[stat_montage()] for every volume panel (e.g.
+`list(ov_alpha_mode = "ramp", cap = 8)`). Caller values win over the
+manifest/policy-derived defaults; `bg`, `stat`, and `draw` are managed by
+the renderer and cannot be overridden. Note that these are merged with
+[utils::modifyList()], so passing `cap = NULL` (or any `NULL`) *removes*
+the derived default rather than forcing it; omit the argument to keep the
+policy/robust default. Overriding analytical controls (`threshold`, `tail`,
+`signed`) here changes only the rendered panel, not the manifest-driven
+peak tables, so the two can diverge.}
+
+\item{surface_args}{Optional named list of styling arguments forwarded to
+[surf_montage()] for every surface panel (e.g.
+`list(overlay_alpha = 0.9, fun = "mode")`). Caller values win over the
+defaults; `stat`, `surfatlas`, and `output_file` are managed by the
+renderer. The same `modifyList`/`NULL` and analytical-override caveats as
+`volume_args` apply.}
 
 \item{render_volume}{Logical; generate volume montage PNGs when `bg` is
 supplied?}

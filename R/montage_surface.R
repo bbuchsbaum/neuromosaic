@@ -100,23 +100,53 @@ surf_montage <- function(stat,
   display_arr <- .clip_montage_overlay(display_arr, cap = cap, signed = signed)
   display_vol <- neuroim2::NeuroVol(display_arr, space = neuroim2::space(stat))
 
-  projection <- projection %||% .project_cluster_overlay(
-    cluster_vol = display_vol,
-    surfatlas = surfatlas,
-    space_override = surface_space,
-    density_override = density_override,
-    resolution_override = resolution_override,
-    fun = fun,
-    sampling = sampling
-  )
-  diagnostics <- .overlay_projection_diagnostics(
-    cluster_vol = display_vol,
-    projection = projection,
-    threshold = threshold,
-    sampling = sampling,
-    fun = fun
-  )
-  overlay <- .clip_surface_overlay(projection$overlay, cap = cap, signed = signed)
+  # Volume -> surface projection. By default delegate to neuroatlas::plot_brain,
+  # which resolves the anatomical geometry that matches the atlas's own surface
+  # space and handles the vol_to_surf sampling. The historical in-package
+  # projection (.project_cluster_overlay) forced an fsLR-32k geometry; on an
+  # fsaverage atlas the vertex counts disagreed and every vertex collapsed to
+  # NA, so the panel rendered blank regardless of map intensity (issue #5). The
+  # `projection` argument keeps the manual path available as a testing hook.
+  if (is.null(projection)) {
+    # Hand plot_brain the continuous statistic and let it project, then
+    # threshold the projected vertex values (overlay_threshold) and clamp the
+    # color scale (overlay_lim). Projecting continuous values and thresholding
+    # on the surface gives focal clusters; projecting a pre-masked volume
+    # over-dilates because every column touching a suprathreshold voxel lights.
+    # plot_brain has no tail channel and gates on |value|, so for a one-sided
+    # tail we must drop the wrong-signed voxels here or they would render.
+    overlay_arr <- stat_arr
+    if (identical(tail, "positive")) {
+      overlay_arr[stat_arr < 0] <- NA_real_
+    } else if (identical(tail, "negative")) {
+      overlay_arr[stat_arr > 0] <- NA_real_
+    }
+    overlay_payload <- neuroim2::NeuroVol(
+      overlay_arr, space = neuroim2::space(stat)
+    )
+    result_overlay <- NULL
+    surface_space_out <- surfatlas$surface_space %||% surface_space
+    diagnostics <- list(
+      projection = "plot_brain",
+      projection_fun = fun,
+      projection_sampling = sampling,
+      surface_space = surface_space_out,
+      cluster_voxels_nonzero = n_supra
+    )
+  } else {
+    diagnostics <- .overlay_projection_diagnostics(
+      cluster_vol = display_vol,
+      projection = projection,
+      threshold = threshold,
+      sampling = sampling,
+      fun = fun
+    )
+    overlay_payload <- .clip_surface_overlay(
+      projection$overlay, cap = cap, signed = signed
+    )
+    result_overlay <- overlay_payload
+    surface_space_out <- projection$meta$surface_space %||% surface_space
+  }
 
   output_dir <- dirname(output_file)
   if (!dir.exists(output_dir)) {
@@ -124,7 +154,16 @@ surf_montage <- function(stat,
   }
   plot_fun <- plot_fun %||% neuroatlas::plot_brain
   vals <- .surface_base_values(surfatlas)
-  overlay_lim <- if (isTRUE(signed)) c(-cap, cap) else c(0, cap)
+  # Match the color limits to the rendered sign: symmetric for signed maps, and
+  # for unsigned maps the half-range that holds the retained tail so negative
+  # one-sided effects are not clamped to a [0, cap] scale.
+  overlay_lim <- if (isTRUE(signed)) {
+    c(-cap, cap)
+  } else if (identical(tail, "negative")) {
+    c(-cap, 0)
+  } else {
+    c(0, cap)
+  }
 
   grDevices::png(filename = output_file, width = width, height = height, res = res)
   tryCatch({
@@ -137,11 +176,13 @@ surf_montage <- function(stat,
       palette = palette,
       lim = c(0, 0),
       interactive = FALSE,
-      overlay = overlay,
+      overlay = overlay_payload,
       overlay_threshold = max(abs(threshold), .Machine$double.eps),
       overlay_alpha = overlay_alpha,
       overlay_palette = overlay_palette,
       overlay_lim = overlay_lim,
+      overlay_fun = fun,
+      overlay_sampling = sampling,
       colorbar = TRUE,
       colorbar_title = "Statistic",
       title = title,
@@ -154,14 +195,14 @@ surf_montage <- function(stat,
   structure(
     list(
       image = normalizePath(output_file, mustWork = FALSE),
-      overlay = overlay,
+      overlay = result_overlay,
       diagnostics = diagnostics,
       threshold = threshold,
       tail = tail,
       signed = signed,
       cap = cap,
       n_suprathreshold = n_supra,
-      surface_space = projection$meta$surface_space %||% surface_space,
+      surface_space = surface_space_out,
       views = views,
       hemis = hemis
     ),

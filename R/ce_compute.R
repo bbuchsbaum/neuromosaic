@@ -455,6 +455,12 @@ compute_clusters <- build_cluster_explorer_data
     stop("'stat_map' must be a 3D NeuroVol.")
   }
 
+  # Treat non-finite voxels (NaN/Inf) as below-threshold background. fMRI stat
+  # maps (fmrireg, FSL, SPM, AFNI) routinely write NaN out-of-brain voxels;
+  # leaving them in lets `stat_arr > threshold` evaluate to NA, which propagates
+  # into conn_comp() and trips its `length(clusters) == sum(mask)` assertion.
+  stat_arr[!is.finite(stat_arr)] <- 0
+
   out_tbl <- list()
   cluster_voxels <- list()
   cluster_arr <- array(0L, dim = dim(stat_arr))

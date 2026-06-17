@@ -100,3 +100,61 @@ test_that("surf_montage rejects invalid inputs and empty overlays", {
     "No finite suprathreshold voxels"
   )
 })
+
+test_that("surf_montage delegates projection to plot_brain without a hook", {
+  inputs <- make_toy_cluster_report_inputs()
+  captured <- new.env(parent = emptyenv())
+  plot_fun <- function(..., overlay) {
+    captured$overlay <- overlay
+    ggplot2::ggplot(data.frame(x = 1, y = 1), ggplot2::aes(x, y)) +
+      ggplot2::geom_point()
+  }
+  output_file <- tempfile("surface-builtin-", fileext = ".png")
+
+  res <- surf_montage(
+    stat = inputs$stat_map,
+    surfatlas = make_toy_surfatlas(),
+    output_file = output_file,
+    threshold = 3,
+    cap = 5,
+    plot_fun = plot_fun,
+    width = 320, height = 220, res = 72
+  )
+
+  # The raw statistic volume is handed to plot_brain, which projects it itself
+  # (rather than a pre-projected lh/rh list from the broken manual path).
+  expect_true(inherits(captured$overlay, "NeuroVol"))
+  expect_identical(res$diagnostics$projection, "plot_brain")
+  expect_null(res$overlay)
+  expect_equal(res$cap, 5)
+  expect_gt(res$n_suprathreshold, 0)
+})
+
+test_that("surf_montage drops wrong-signed voxels for one-sided tails", {
+  inputs <- make_toy_cluster_report_inputs()  # +4.5 cluster and -5.5 cluster
+  captured <- new.env(parent = emptyenv())
+  plot_fun <- function(..., overlay) {
+    captured$overlay <- overlay
+    ggplot2::ggplot(data.frame(x = 1, y = 1), ggplot2::aes(x, y)) +
+      ggplot2::geom_point()
+  }
+
+  surf_montage(
+    stat = inputs$stat_map, surfatlas = make_toy_surfatlas(),
+    output_file = tempfile(fileext = ".png"), threshold = 3, tail = "positive",
+    plot_fun = plot_fun, width = 320, height = 220, res = 72
+  )
+  pos <- as.numeric(as.array(captured$overlay))
+  expect_true(inherits(captured$overlay, "NeuroVol"))
+  expect_false(any(pos[is.finite(pos)] < 0))   # no negative clusters leak in
+  expect_true(any(pos[is.finite(pos)] > 3))     # positive suprathreshold kept
+
+  surf_montage(
+    stat = inputs$stat_map, surfatlas = make_toy_surfatlas(),
+    output_file = tempfile(fileext = ".png"), threshold = 3, tail = "negative",
+    plot_fun = plot_fun, width = 320, height = 220, res = 72
+  )
+  neg <- as.numeric(as.array(captured$overlay))
+  expect_false(any(neg[is.finite(neg)] > 0))   # no positive clusters leak in
+  expect_true(any(neg[is.finite(neg)] < -3))    # negative suprathreshold kept
+})

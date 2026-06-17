@@ -42,3 +42,18 @@ Sources may be CSV/TSV tables, data frames, explicit path vectors, or a glob
 pattern. Path-based sources parse BIDS-style filename entities such as
 `contrast-faces_model-m1_stat-z.nii.gz`.
 }
+\details{
+For an explicit `source` data frame (or CSV/TSV) you control every column,
+including the required `map_id`, `stat_kind`, `signed`, and `label`; this is
+the recommended route for non-BIDS filenames where token parsing is
+unreliable. See [montage_manifest_schema()] for the full column contract.
+
+For path/`pattern` discovery, `map_id` is derived from the full filename
+stem so maps differing only by a *bare* (non `key-value`) token stay
+distinct; a warning is emitted if any derived `map_id` still collides.
+Key-value BIDS entities become columns, and a `stat-` entity (`t`, `z`,
+`beta`, or `cope`)
+(or a bare token naming the statistic) populates `stat_kind` and a default
+`signed = TRUE`. Other required fields, notably `label`, still come from a
+`labeller`, `overrides`, or an explicit `source`.
+}

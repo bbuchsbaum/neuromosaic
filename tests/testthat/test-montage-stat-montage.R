@@ -101,3 +101,26 @@ test_that("stat_montage validates inputs and can restamp via prepare_overlay", {
   expect_true(.same_neuro_space(neuroim2::space(out$overlay),
                                 neuroim2::space(inputs$stat_map)))
 })
+
+test_that("stat_montage accepts the ramp alpha mode and validates alpha_gamma", {
+  inputs <- make_toy_cluster_report_inputs()
+
+  out <- stat_montage(
+    inputs$stat_map, inputs$stat_map, threshold = 3,
+    ov_alpha_mode = "ramp", draw = FALSE
+  )
+  alpha_choices <- eval(formals(neuroim2::plot_overlay)$ov_alpha_mode)
+  expected <- if ("ramp" %in% alpha_choices) "ramp" else "proportional"
+  expect_identical(out$alpha_mode, expected)
+
+  # alpha_gamma is forwarded only when supported, but is always validated.
+  expect_error(
+    stat_montage(inputs$stat_map, inputs$stat_map, threshold = 3,
+                 alpha_gamma = -1, draw = FALSE),
+    "alpha_gamma"
+  )
+  expect_silent(
+    stat_montage(inputs$stat_map, inputs$stat_map, threshold = 3,
+                 ov_alpha_mode = "soft", alpha_gamma = 2, draw = FALSE)
+  )
+})

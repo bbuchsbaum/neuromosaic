@@ -16,7 +16,14 @@
 #' @param zlevels,along,ncol Slice selection arguments passed through.
 #' @param bg_cmap,ov_cmap Background and overlay color maps.
 #' @param ov_alpha Overlay alpha.
-#' @param ov_alpha_mode `"soft"` maps to `plot_overlay()`'s proportional alpha.
+#' @param ov_alpha_mode How overlay opacity tracks magnitude. `"binary"` gives
+#'   every suprathreshold voxel full `ov_alpha`; `"ramp"` ramps alpha linearly
+#'   from the threshold to the color cap; `"proportional"` sets alpha to
+#'   `|v| / cap`; `"soft"` uses a nonlinear self-tuning curve. Modes unknown to
+#'   the installed `neuroim2` fall back to its proportional alpha.
+#' @param alpha_gamma Optional exponent for `ov_alpha_mode = "soft"`, forwarded
+#'   to `neuroim2::plot_overlay()`. `NULL` (default) lets `neuroim2` auto-tune
+#'   it; larger values push more of the low-value range toward transparency.
 #' @param style Requested plot style. `"report"` is used when supported by the
 #'   installed `neuroim2`; otherwise it falls back to `"light"`.
 #' @param on_mismatch Passed to [prepare_overlay()].
@@ -41,7 +48,9 @@ stat_montage <- function(bg,
                          bg_cmap = "grays",
                          ov_cmap = if (isTRUE(signed)) "blue-red" else "inferno",
                          ov_alpha = 0.7,
-                         ov_alpha_mode = c("soft", "binary", "proportional"),
+                         ov_alpha_mode = c("soft", "binary", "proportional",
+                                           "ramp"),
+                         alpha_gamma = NULL,
                          style = "report",
                          on_mismatch = c("error", "restamp"),
                          empty = c("error", "warning"),
@@ -61,6 +70,11 @@ stat_montage <- function(bg,
   if (!is.null(cap) && (!is.numeric(cap) || length(cap) != 1L ||
                         !is.finite(cap) || cap <= 0)) {
     stop("'cap' must be NULL or a positive number.", call. = FALSE)
+  }
+  if (!is.null(alpha_gamma) && (!is.numeric(alpha_gamma) ||
+                                length(alpha_gamma) != 1L ||
+                                !is.finite(alpha_gamma) || alpha_gamma <= 0)) {
+    stop("'alpha_gamma' must be NULL or a positive number.", call. = FALSE)
   }
 
   aligned <- prepare_overlay(bg, stat, on_mismatch = on_mismatch)
@@ -90,7 +104,7 @@ stat_montage <- function(bg,
   plot_style <- .plot_overlay_style(style)
   alpha_mode <- .plot_overlay_alpha_mode(ov_alpha_mode)
 
-  plot <- neuroim2::plot_overlay(
+  overlay_args <- list(
     bgvol = aligned$background,
     overlay = display_stat,
     zlevels = plot_zlevels,
@@ -110,6 +124,13 @@ stat_montage <- function(bg,
     draw = draw,
     style = plot_style
   )
+  # alpha_gamma is newer than the oldest neuroim2 we support; only forward it
+  # when the installed plot_overlay accepts it, so the call stays portable.
+  if (!is.null(alpha_gamma) &&
+      "alpha_gamma" %in% names(formals(neuroim2::plot_overlay))) {
+    overlay_args$alpha_gamma <- alpha_gamma
+  }
+  plot <- do.call(neuroim2::plot_overlay, overlay_args)
 
   structure(
     list(
@@ -181,12 +202,14 @@ stat_montage <- function(bg,
   if (alpha_mode %in% choices) {
     return(alpha_mode)
   }
-  if (identical(alpha_mode, "soft") && "proportional" %in% choices) {
+  # `soft`/`ramp` are newer neuroim2 modes; degrade to the proportional ramp
+  # that every supported plot_overlay provides.
+  if (alpha_mode %in% c("soft", "ramp") && "proportional" %in% choices) {
     return("proportional")
   }
   stop(
     "'ov_alpha_mode' must be one of: ",
-    paste(unique(c(choices, "soft")), collapse = ", "),
+    paste(unique(c(choices, "soft", "ramp")), collapse = ", "),
     call. = FALSE
   )
 }

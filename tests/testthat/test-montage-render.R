@@ -320,6 +320,103 @@ test_that("render_montage_report adds peak tables and effective-N QC", {
   expect_match(qmd, "montage_report_formatters", fixed = TRUE)
 })
 
+test_that("render_montage_report handles a relative template and isolates intermediates (#4)", {
+  skip_if_not_installed("rmarkdown")
+  skip_if_not(rmarkdown::pandoc_available(), "pandoc is required for render tests")
+
+  manifest <- make_montage_render_manifest()
+
+  # Template copied to its own dir; we never write next to it (HPC read-only libs).
+  template_dir <- tempfile("montage-template-")
+  dir.create(template_dir, recursive = TRUE)
+  template_path <- file.path(template_dir, "montage_report.Rmd")
+  file.copy(
+    system.file("templates", "montage_report.Rmd", package = "neuromosaic"),
+    template_path,
+    overwrite = TRUE
+  )
+
+  output_dir <- tempfile("montage-output-")
+  dir.create(output_dir, recursive = TRUE)
+  out_file <- file.path(output_dir, "report.html")
+
+  # Render from a third directory, passing the template by a path relative to
+  # it, so the absolutize-before-with_dir() fix is exercised.
+  work_dir <- tempfile("montage-work-")
+  dir.create(work_dir, recursive = TRUE)
+  rel_template <- file.path("..", basename(template_dir), "montage_report.Rmd")
+
+  result <- withr::with_dir(work_dir, {
+    render_montage_report(
+      manifest,
+      output_file = out_file,
+      template = rel_template,
+      title = "Relative Template",
+      layout = c("contrast", "model"),
+      quiet = TRUE
+    )
+  })
+
+  expect_true(file.exists(result))
+  expect_equal(normalizePath(result), normalizePath(out_file))
+  # Intermediates must not land next to the (possibly read-only) template.
+  expect_length(list.files(template_dir, pattern = "knit\\.md$"), 0)
+  expect_false(file.exists(file.path(template_dir, "report.knit.md")))
+})
+
+test_that("render_montage_report passes an absolute template and output-dir intermediates to rmarkdown (#4)", {
+  skip_if_not_installed("rmarkdown")
+  skip_if_not(
+    exists("local_mocked_bindings", envir = asNamespace("testthat"), inherits = FALSE),
+    "testthat::local_mocked_bindings() is required for this test"
+  )
+
+  manifest <- make_montage_render_manifest()
+
+  template_dir <- tempfile("montage-template-")
+  dir.create(template_dir, recursive = TRUE)
+  template_path <- file.path(template_dir, "montage_report.Rmd")
+  file.copy(
+    system.file("templates", "montage_report.Rmd", package = "neuromosaic"),
+    template_path,
+    overwrite = TRUE
+  )
+
+  output_dir <- tempfile("montage-output-")
+  dir.create(output_dir, recursive = TRUE)
+  out_file <- file.path(output_dir, "report.html")
+
+  work_dir <- tempfile("montage-work-")
+  dir.create(work_dir, recursive = TRUE)
+  rel_template <- file.path("..", basename(template_dir), "montage_report.Rmd")
+
+  captured <- NULL
+  testthat::local_mocked_bindings(
+    render = function(input, output_file, output_dir, intermediates_dir, ...) {
+      captured <<- list(input = input, output_dir = output_dir,
+                        intermediates_dir = intermediates_dir)
+      invisible(input)
+    },
+    .package = "rmarkdown"
+  )
+
+  withr::with_dir(work_dir, {
+    render_montage_report(
+      manifest,
+      output_file = out_file,
+      template = rel_template,
+      layout = c("contrast", "model"),
+      quiet = TRUE
+    )
+  })
+
+  expect_false(is.null(captured))
+  # #4a: a relative template= is absolutized before with_dir() changes the cwd.
+  expect_identical(captured$input, normalizePath(template_path))
+  # #4b: intermediates go to the writable output dir, never the template dir.
+  expect_identical(captured$intermediates_dir, normalizePath(output_dir))
+})
+
 test_that("render_montage_report validates output and layout contract", {
   manifest <- make_montage_render_manifest()
 
@@ -379,4 +476,132 @@ test_that("montage templates share formatter helpers and base64 image strategy",
   expect_match(text, "montage_report_formatters", fixed = TRUE)
   expect_match(image_html, "data:image/png;base64", fixed = TRUE)
   expect_match(text, "results='asis'", fixed = TRUE)
+})
+
+test_that(".montage_shared_caps uses a robust quantile, not the raw maximum", {
+  sp <- neuroim2::NeuroSpace(dim = c(4, 4, 4), spacing = c(2, 2, 2))
+  arr <- array(0, dim = c(4, 4, 4))
+  arr[1:27] <- seq(3.1, 4.5, length.out = 27)  # ordinary suprathreshold voxels
+  arr[64] <- 50                                # one extreme hot voxel
+  vol <- neuroim2::NeuroVol(arr, sp)
+
+  manifest <- data.frame(
+    map_id = "m", stat_kind = "z", signed = TRUE, label = "m",
+    stringsAsFactors = FALSE
+  )
+  manifest$effective_threshold <- 3
+  manifest$effective_tail <- "two_sided"
+  manifest$cap_key <- "m"
+
+  robust <- .montage_shared_caps(
+    manifest, list(vol), policy = montage_policy(cap_quantile = 0.9)
+  )
+  expect_lt(robust[["m"]], 6)        # the lone z = 50 voxel does not set the cap
+  expect_gt(robust[["m"]], 4)
+
+  fixed <- .montage_shared_caps(
+    manifest, list(vol), policy = montage_policy(cap = 8)
+  )
+  expect_equal(fixed[["m"]], 8)
+
+  floored <- .montage_shared_caps(
+    manifest, list(vol), policy = montage_policy(cap_quantile = 0.5, cap_floor = 10)
+  )
+  expect_gte(floored[["m"]], 10)
+})
+
+test_that("render_montage_report forwards volume_args and validates passthrough", {
+  inputs <- make_toy_cluster_report_inputs()
+  tmpdir <- tempfile("montage-volargs-")
+  dir.create(tmpdir, recursive = TRUE)
+  stat_path <- file.path(tmpdir, "contrast-faces_model-m1_stat-z.nii.gz")
+  neuroim2::write_vol(inputs$stat_map, stat_path)
+  manifest <- data.frame(
+    map_id = "faces_m1", path = stat_path, stat_kind = "z", signed = TRUE,
+    threshold = 3, contrast = "faces", model = "m1", label = "Faces",
+    stringsAsFactors = FALSE
+  )
+  out <- file.path(tmpdir, "vol.qmd")
+
+  r <- render_montage_report(
+    manifest, output_file = out, bg = inputs$stat_map, render_peaks = FALSE,
+    volume_args = list(cap = 4, ov_alpha_mode = "binary"),
+    image_width = 360, image_height = 260, image_res = 72
+  )
+  rd <- readRDS(sub("\\.qmd$", "_report-data.rds", r))
+  expect_equal(rd$panels$faces_m1$volume$cap, 4)        # caller cap wins
+  expect_identical(rd$panels$faces_m1$volume$alpha_mode, "binary")
+
+  expect_error(
+    render_montage_report(manifest, output_file = out, bg = inputs$stat_map,
+                          render_peaks = FALSE, volume_args = list(bogus = 1)),
+    "cannot be forwarded"
+  )
+  expect_error(
+    render_montage_report(manifest, output_file = out, bg = inputs$stat_map,
+                          render_peaks = FALSE,
+                          volume_args = list(bg = inputs$stat_map)),
+    "cannot be forwarded"
+  )
+  expect_error(
+    render_montage_report(manifest, output_file = out, bg = inputs$stat_map,
+                          render_peaks = FALSE, surface_args = list(stat = 1)),
+    "cannot be forwarded"
+  )
+})
+
+test_that("surface cache key changes when surface_args change", {
+  skip_if_not(
+    exists("local_mocked_bindings", envir = asNamespace("testthat"), inherits = FALSE),
+    "testthat::local_mocked_bindings() is required for this test"
+  )
+  inputs <- make_toy_cluster_report_inputs()
+  tmpdir <- tempfile("montage-surface-cachekey-")
+  dir.create(tmpdir, recursive = TRUE)
+  stat_path <- file.path(tmpdir, "contrast-faces_model-m1_stat-z.nii.gz")
+  neuroim2::write_vol(inputs$stat_map, stat_path)
+  manifest <- data.frame(
+    map_id = "faces_m1", path = stat_path, stat_kind = "z", units = "z",
+    signed = TRUE, threshold = 3, contrast = "faces", model = "m1",
+    label = "Faces M1", stringsAsFactors = FALSE
+  )
+  calls <- 0L
+  testthat::local_mocked_bindings(
+    surf_montage = function(stat, surfatlas, output_file, threshold, tail,
+                            signed, cap, overlay_alpha, width, height, res,
+                            title, subtitle, ...) {
+      calls <<- calls + 1L
+      writeLines("surface placeholder", output_file)
+      structure(
+        list(image = normalizePath(output_file, mustWork = FALSE),
+             threshold = threshold, tail = tail, signed = signed, cap = cap,
+             n_suprathreshold = 4L, surface_space = "fsLR-32k",
+             diagnostics = list(cache_hit = FALSE)),
+        class = "surf_montage_result"
+      )
+    },
+    .package = "neuromosaic"
+  )
+
+  base <- list(
+    manifest = manifest, surfatlas = make_toy_surfatlas(),
+    image_dir = file.path(tmpdir, "images"),
+    image_width = 700, image_height = 500, image_res = 72
+  )
+  out1 <- do.call(render_montage_report, c(base, list(
+    output_file = file.path(tmpdir, "a.qmd"),
+    surface_args = list(overlay_alpha = 0.4)
+  )))
+  out2 <- do.call(render_montage_report, c(base, list(
+    output_file = file.path(tmpdir, "b.qmd"),
+    surface_args = list(overlay_alpha = 0.9)
+  )))
+  rd1 <- readRDS(sub("\\.qmd$", "_report-data.rds", out1))
+  rd2 <- readRDS(sub("\\.qmd$", "_report-data.rds", out2))
+
+  expect_equal(calls, 2L)  # different overlay_alpha is not a cache hit
+  expect_false(identical(
+    basename(rd1$panels$faces_m1$surface_image),
+    basename(rd2$panels$faces_m1$surface_image)
+  ))
 })

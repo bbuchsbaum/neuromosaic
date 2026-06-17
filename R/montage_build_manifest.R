@@ -5,6 +5,21 @@
 #' pattern. Path-based sources parse BIDS-style filename entities such as
 #' `contrast-faces_model-m1_stat-z.nii.gz`.
 #'
+#' @details
+#' For an explicit `source` data frame (or CSV/TSV) you control every column,
+#' including the required `map_id`, `stat_kind`, `signed`, and `label`; this is
+#' the recommended route for non-BIDS filenames where token parsing is
+#' unreliable. See [montage_manifest_schema()] for the full column contract.
+#'
+#' For path/`pattern` discovery, `map_id` is derived from the full filename
+#' stem so maps differing only by a *bare* (non `key-value`) token stay
+#' distinct; a warning is emitted if any derived `map_id` still collides.
+#' Key-value BIDS entities become columns, and a `stat-` entity (`t`, `z`,
+#' `beta`, or `cope`)
+#' (or a bare token naming the statistic) populates `stat_kind` and a default
+#' `signed = TRUE`. Other required fields, notably `label`, still come from a
+#' `labeller`, `overrides`, or an explicit `source`.
+#'
 #' @param source A data frame, CSV/TSV path, path vector, or `NULL` when using
 #'   `pattern`.
 #' @param pattern Optional glob pattern resolved under `root`.
@@ -87,9 +102,12 @@ build_manifest <- function(source = NULL,
   stop("Manifest tables must be CSV or TSV.", call. = FALSE)
 }
 
+.montage_stat_entities <- c("t", "z", "beta", "cope")
+
 .manifest_from_paths <- function(paths, root = ".") {
   paths <- normalizePath(paths, mustWork = TRUE)
-  entities <- lapply(paths, .parse_bids_entities)
+  parsed <- lapply(paths, .parse_bids_filename)
+  entities <- lapply(parsed, `[[`, "entities")
   fields <- unique(unlist(lapply(entities, names), use.names = FALSE))
 
   out <- data.frame(
@@ -101,43 +119,94 @@ build_manifest <- function(source = NULL,
                            character(1))
   }
   if (!"map_id" %in% names(out)) {
-    out$map_id <- vapply(seq_along(entities), function(i) {
-      .manifest_map_id(entities[[i]], paths[[i]])
-    }, character(1))
+    # Derive map_id from the full filename stem (not just the key-value
+    # entities) so maps that differ only by a bare token keep distinct keys.
+    out$map_id <- vapply(parsed, `[[`, character(1), "stem")
+    .warn_duplicate_map_ids(out$map_id)
   }
 
+  out <- .derive_manifest_stat_fields(out, parsed)
   out
 }
 
-.parse_bids_entities <- function(path) {
+# Warn (don't silently collide) when filename parsing yields duplicate map_ids;
+# map_id is the schema's stable join/cache/figure/table key.
+.warn_duplicate_map_ids <- function(map_id) {
+  dups <- unique(map_id[duplicated(map_id)])
+  if (length(dups) > 0L) {
+    warning(
+      "Duplicate map_id derived from filenames: ",
+      paste(dups, collapse = ", "),
+      ". map_id is the stable join/cache/figure key; distinct maps must not ",
+      "share one. Supply an explicit `source`/`overrides` table with unique ",
+      "map_id values, or rename the files.",
+      call. = FALSE
+    )
+  }
+}
+
+# A `stat-{t,z,beta,cope}` entity (or a bare token naming the statistic, e.g.
+# `..._z_g.nii.gz`) already encodes the required `stat_kind`/`signed` fields.
+# Derive them when absent so pattern-only discovery can satisfy validate = TRUE.
+.derive_manifest_stat_fields <- function(out, parsed) {
+  if ("stat_kind" %in% names(out)) {
+    return(out)
+  }
+  kinds <- vapply(seq_along(parsed), function(i) {
+    stat_entity <- if ("stat" %in% names(out)) {
+      tolower(trimws(as.character(out$stat[[i]])))
+    } else {
+      NA_character_
+    }
+    if (!is.na(stat_entity) && stat_entity %in% .montage_stat_entities) {
+      return(stat_entity)
+    }
+    tokens <- tolower(parsed[[i]]$tokens)
+    hit <- tokens[tokens %in% .montage_stat_entities]
+    if (length(hit) > 0L) hit[[1]] else NA_character_
+  }, character(1))
+
+  if (all(is.na(kinds))) {
+    return(out)
+  }
+  out$stat_kind <- kinds
+  # All four statistic families carry a sign; default signed = TRUE where the
+  # kind was derived. Never clobber an explicit `signed` value that filename
+  # parsing already captured (e.g. a `signed-false` entity): only fill rows
+  # that are still missing one.
+  if ("signed" %in% names(out)) {
+    fill <- is.na(out$signed) & !is.na(kinds)
+    out$signed[fill] <- TRUE
+  } else {
+    out$signed <- ifelse(is.na(kinds), NA, TRUE)
+  }
+  out
+}
+
+.parse_bids_filename <- function(path) {
   stem <- basename(path)
   stem <- sub("\\.nii\\.gz$", "", stem, ignore.case = TRUE)
   stem <- sub("\\.[^.]+$", "", stem)
   parts <- strsplit(stem, "_", fixed = TRUE)[[1]]
 
   entities <- list()
+  tokens <- character(0)
   for (part in parts) {
-    if (!grepl("-", part, fixed = TRUE)) {
+    if (!nzchar(part)) {
       next
     }
-    split <- strsplit(part, "-", fixed = TRUE)[[1]]
-    key <- make.names(split[[1]], unique = FALSE)
-    value <- paste(split[-1], collapse = "-")
-    if (nzchar(key) && nzchar(value)) {
-      entities[[key]] <- value
+    if (grepl("-", part, fixed = TRUE)) {
+      split <- strsplit(part, "-", fixed = TRUE)[[1]]
+      key <- make.names(split[[1]], unique = FALSE)
+      value <- paste(split[-1], collapse = "-")
+      if (nzchar(key) && nzchar(value)) {
+        entities[[key]] <- value
+        next
+      }
     }
+    tokens <- c(tokens, part)
   }
-  entities
-}
-
-.manifest_map_id <- function(entities, path) {
-  if (length(entities) == 0L) {
-    stem <- basename(path)
-    stem <- sub("\\.nii\\.gz$", "", stem, ignore.case = TRUE)
-    return(tools::file_path_sans_ext(stem))
-  }
-  paste(paste(names(entities), unlist(entities, use.names = FALSE), sep = "-"),
-        collapse = "_")
+  list(stem = stem, entities = entities, tokens = tokens)
 }
 
 .apply_manifest_overrides <- function(manifest, overrides) {
@@ -190,6 +259,14 @@ build_manifest <- function(source = NULL,
   }
 
   idx <- match(manifest[[key]], overrides[[key]])
+  if (identical(key, "map_id") && nrow(overrides) > 0L && all(is.na(idx))) {
+    warning(
+      "Override table keyed by 'map_id' matched no manifest rows; the keys ",
+      "may be stale (path discovery derives map_id from the full filename ",
+      "stem). No overrides were applied.",
+      call. = FALSE
+    )
+  }
   fields <- setdiff(names(overrides), key)
   for (field in fields) {
     if (!field %in% names(manifest)) {

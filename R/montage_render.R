@@ -23,6 +23,22 @@
 #'   `TRUE`, per-panel peak tables are generated with [montage_peak_table()].
 #' @param panels Optional named list keyed by `map_id`. Each panel may contain
 #'   `volume_image`, `surface_image`, `table`, or other renderer-specific data.
+#' @param volume_args Optional named list of styling arguments forwarded to
+#'   [stat_montage()] for every volume panel (e.g.
+#'   `list(ov_alpha_mode = "ramp", cap = 8)`). Caller values win over the
+#'   manifest/policy-derived defaults; `bg`, `stat`, and `draw` are managed by
+#'   the renderer and cannot be overridden. Note that these are merged with
+#'   [utils::modifyList()], so passing `cap = NULL` (or any `NULL`) *removes*
+#'   the derived default rather than forcing it; omit the argument to keep the
+#'   policy/robust default. Overriding analytical controls (`threshold`, `tail`,
+#'   `signed`) here changes only the rendered panel, not the manifest-driven
+#'   peak tables, so the two can diverge.
+#' @param surface_args Optional named list of styling arguments forwarded to
+#'   [surf_montage()] for every surface panel (e.g.
+#'   `list(overlay_alpha = 0.9, fun = "mode")`). Caller values win over the
+#'   defaults; `stat`, `surfatlas`, and `output_file` are managed by the
+#'   renderer. The same `modifyList`/`NULL` and analytical-override caveats as
+#'   `volume_args` apply.
 #' @param render_volume Logical; generate volume montage PNGs when `bg` is
 #'   supplied?
 #' @param render_surface Logical; generate surface montage PNGs when
@@ -59,6 +75,8 @@ render_montage_report <- function(manifest,
                                   surfatlas = NULL,
                                   atlas = NULL,
                                   panels = NULL,
+                                  volume_args = list(),
+                                  surface_args = list(),
                                   render_volume = !is.null(bg),
                                   render_surface = !is.null(surfatlas),
                                   render_peaks = !is.null(atlas),
@@ -76,6 +94,17 @@ render_montage_report <- function(manifest,
                                   check_files = TRUE,
                                   load_maps = FALSE,
                                   provenance = NULL) {
+  volume_args <- .validate_montage_passthrough(
+    volume_args, stat_montage, c("bg", "stat", "draw"), "volume_args"
+  )
+  surface_args <- .validate_montage_passthrough(
+    surface_args, surf_montage,
+    # `plot_fun`/`projection` are advanced/testing hooks (executable code), not
+    # styling; keep them out of the report-level passthrough surface.
+    c("stat", "surfatlas", "output_file", "plot_fun", "projection"),
+    "surface_args"
+  )
+
   ext <- tolower(tools::file_ext(output_file))
   if (!ext %in% c("html", "pdf", "qmd")) {
     stop(
@@ -102,6 +131,10 @@ render_montage_report <- function(manifest,
     )
   }
 
+  # Absolutize the template so a relative `template=` still resolves after
+  # withr::with_dir() changes the working directory below.
+  template <- normalizePath(template, mustWork = TRUE)
+
   output_dir <- dirname(output_file)
   if (!dir.exists(output_dir)) {
     dir.create(output_dir, recursive = TRUE)
@@ -126,6 +159,8 @@ render_montage_report <- function(manifest,
     surfatlas = surfatlas,
     atlas = atlas,
     panels = panels,
+    volume_args = volume_args,
+    surface_args = surface_args,
     render_volume = render_volume,
     render_surface = render_surface,
     render_peaks = render_peaks,
@@ -162,6 +197,10 @@ render_montage_report <- function(manifest,
       input = template,
       output_file = basename(output_file),
       output_dir = ".",
+      # Write knit intermediates into the (writable, already-normalized) output
+      # directory rather than next to the template, which lives in a possibly
+      # read-only package/system library on HPC nodes and containers.
+      intermediates_dir = output_dir,
       output_format = output_format,
       params = list(report_data = report_data),
       envir = new.env(parent = globalenv()),
@@ -203,6 +242,8 @@ render_montage_report <- function(manifest,
                                          surfatlas,
                                          atlas,
                                          panels,
+                                         volume_args = list(),
+                                         surface_args = list(),
                                          render_volume,
                                          render_surface,
                                          render_peaks,
@@ -289,7 +330,9 @@ render_montage_report <- function(manifest,
       image_dir = image_dir,
       width = image_width,
       height = image_height,
-      res = image_res
+      res = image_res,
+      policy = policy,
+      volume_args = volume_args
     )
   }
   if (isTRUE(render_surface)) {
@@ -301,7 +344,9 @@ render_montage_report <- function(manifest,
       cache_surface = cache_surface,
       width = image_width,
       height = image_height,
-      res = image_res
+      res = image_res,
+      policy = policy,
+      surface_args = surface_args
     )
   }
 
@@ -348,13 +393,45 @@ render_montage_report <- function(manifest,
   empty
 }
 
+# Validate a styling passthrough list (volume_args/surface_args). Must be a
+# named list whose names are forwardable formals of the target montage function
+# and not one of the renderer-managed arguments. Returns the (possibly empty)
+# list so the caller can assign it back.
+.validate_montage_passthrough <- function(args, fn, managed, label) {
+  if (is.null(args)) {
+    return(list())
+  }
+  if (length(args) == 0L) {
+    return(list())
+  }
+  if (!is.list(args) || is.null(names(args)) || any(!nzchar(names(args)))) {
+    stop("'", label, "' must be a named list.", call. = FALSE)
+  }
+  if (anyDuplicated(names(args))) {
+    stop("'", label, "' has duplicate argument names.", call. = FALSE)
+  }
+  allowed <- setdiff(names(formals(fn)), c("...", managed))
+  unknown <- setdiff(names(args), allowed)
+  if (length(unknown) > 0L) {
+    stop(
+      "'", label, "' contains argument(s) that cannot be forwarded: ",
+      paste(unknown, collapse = ", "), ".\nAllowed: ",
+      paste(allowed, collapse = ", "), ".",
+      call. = FALSE
+    )
+  }
+  args
+}
+
 .render_montage_volume_panels <- function(manifest,
                                           bg,
                                           panels,
                                           image_dir,
                                           width,
                                           height,
-                                          res) {
+                                          res,
+                                          policy = NULL,
+                                          volume_args = list()) {
   if (is.null(bg)) {
     stop("'bg' is required when render_volume = TRUE.", call. = FALSE)
   }
@@ -365,11 +442,24 @@ render_montage_report <- function(manifest,
   stat_maps <- lapply(seq_len(nrow(manifest)), function(i) {
     .montage_manifest_stat_source(manifest, i)
   })
-  caps <- .montage_shared_caps(manifest, stat_maps)
+  caps <- .montage_shared_caps(manifest, stat_maps, policy = policy)
 
   for (i in seq_len(nrow(manifest))) {
     map_id <- as.character(manifest$map_id[[i]])
     image_path <- file.path(image_dir, paste0(.safe_file_stem(map_id), "_volume.png"))
+    cap_value <- caps[[manifest$cap_key[[i]]]]
+    base_args <- list(
+      bg = bg,
+      stat = stat_maps[[i]],
+      threshold = manifest$effective_threshold[[i]],
+      tail = manifest$effective_tail[[i]],
+      signed = manifest$signed[[i]],
+      cap = if (is.finite(cap_value)) cap_value else NULL,
+      title = manifest$label[[i]],
+      subtitle = .montage_panel_subtitle(manifest[i, , drop = FALSE]),
+      draw = TRUE
+    )
+    call_args <- utils::modifyList(base_args, volume_args)
     grDevices::png(
       filename = image_path,
       width = width,
@@ -377,17 +467,7 @@ render_montage_report <- function(manifest,
       res = res
     )
     result <- tryCatch(
-      stat_montage(
-        bg = bg,
-        stat = stat_maps[[i]],
-        threshold = manifest$effective_threshold[[i]],
-        tail = manifest$effective_tail[[i]],
-        signed = manifest$signed[[i]],
-        cap = caps[[manifest$cap_key[[i]]]],
-        title = manifest$label[[i]],
-        subtitle = .montage_panel_subtitle(manifest[i, , drop = FALSE]),
-        draw = TRUE
-      ),
+      do.call(stat_montage, call_args),
       finally = grDevices::dev.off()
     )
 
@@ -397,6 +477,7 @@ render_montage_report <- function(manifest,
       tail = result$tail,
       cap = result$cap,
       n_suprathreshold = result$n_suprathreshold,
+      alpha_mode = result$alpha_mode,
       style = result$style
     )
   }
@@ -411,7 +492,9 @@ render_montage_report <- function(manifest,
                                            cache_surface,
                                            width,
                                            height,
-                                           res) {
+                                           res,
+                                           policy = NULL,
+                                           surface_args = list()) {
   if (is.null(surfatlas)) {
     stop("'surfatlas' is required when render_surface = TRUE.", call. = FALSE)
   }
@@ -421,29 +504,53 @@ render_montage_report <- function(manifest,
   stat_maps <- lapply(seq_len(nrow(manifest)), function(i) {
     .montage_manifest_stat_source(manifest, i)
   })
-  caps <- .montage_shared_caps(manifest, stat_maps)
+  caps <- .montage_shared_caps(manifest, stat_maps, policy = policy)
 
   for (i in seq_len(nrow(manifest))) {
     map_id <- as.character(manifest$map_id[[i]])
+    group_cap <- caps[[manifest$cap_key[[i]]]]
+    # surface_args (caller wins) can override threshold/tail/signed/cap; merge
+    # before computing the cache key so it reflects the values actually rendered.
+    base_args <- utils::modifyList(
+      list(
+        stat = stat_maps[[i]],
+        surfatlas = surfatlas,
+        threshold = manifest$effective_threshold[[i]],
+        tail = manifest$effective_tail[[i]],
+        signed = manifest$signed[[i]],
+        cap = if (is.finite(group_cap)) group_cap else NULL,
+        width = width,
+        height = height,
+        res = res,
+        title = manifest$label[[i]],
+        subtitle = .montage_panel_subtitle(manifest[i, , drop = FALSE])
+      ),
+      surface_args
+    )
+    eff_threshold <- base_args$threshold
+    eff_tail <- base_args$tail
+    eff_cap <- base_args$cap
+    style_key <- .montage_surface_style_key(base_args, surfatlas)
     image_path <- .montage_cached_panel_image_path(
       image_dir = image_dir,
       map_id = map_id,
       kind = "surface",
       map_hash = manifest$map_hash[[i]] %||% NA_character_,
-      threshold = manifest$effective_threshold[[i]],
-      cap = caps[[manifest$cap_key[[i]]]]
+      threshold = eff_threshold,
+      cap = eff_cap,
+      style_key = style_key
     )
 
     if (isTRUE(cache_surface) && file.exists(image_path)) {
       panels[[map_id]]$surface_image <- normalizePath(image_path, mustWork = TRUE)
       panels[[map_id]]$surface <- list(
-        threshold = manifest$effective_threshold[[i]],
-        tail = manifest$effective_tail[[i]],
-        cap = caps[[manifest$cap_key[[i]]]],
+        threshold = eff_threshold,
+        tail = eff_tail,
+        cap = eff_cap,
         n_suprathreshold = sum(.suprathreshold_mask(
           as.numeric(stat_maps[[i]]),
-          threshold = manifest$effective_threshold[[i]],
-          tail = manifest$effective_tail[[i]]
+          threshold = eff_threshold,
+          tail = eff_tail
         ), na.rm = TRUE),
         surface_space = NA_character_,
         diagnostics = list(cache_hit = TRUE)
@@ -451,20 +558,8 @@ render_montage_report <- function(manifest,
       next
     }
 
-    result <- surf_montage(
-      stat = stat_maps[[i]],
-      surfatlas = surfatlas,
-      output_file = image_path,
-      threshold = manifest$effective_threshold[[i]],
-      tail = manifest$effective_tail[[i]],
-      signed = manifest$signed[[i]],
-      cap = caps[[manifest$cap_key[[i]]]],
-      width = width,
-      height = height,
-      res = res,
-      title = manifest$label[[i]],
-      subtitle = .montage_panel_subtitle(manifest[i, , drop = FALSE])
-    )
+    base_args$output_file <- image_path
+    result <- do.call(surf_montage, base_args)
     panels[[map_id]]$surface_image <- result$image
     panels[[map_id]]$surface <- list(
       threshold = result$threshold,
@@ -503,23 +598,60 @@ render_montage_report <- function(manifest,
   )
 }
 
-.montage_shared_caps <- function(manifest, stat_maps) {
+.montage_shared_caps <- function(manifest, stat_maps, policy = NULL) {
+  cap_override <- policy$cap
+  cap_quantile <- policy$cap_quantile %||% 0.99
+  cap_floor <- policy$cap_floor
   keys <- unique(as.character(manifest$cap_key))
   caps <- stats::setNames(vector("list", length(keys)), keys)
   for (key in keys) {
     rows <- which(manifest$cap_key == key)
-    signed <- any(manifest$signed[rows], na.rm = TRUE)
-    values <- unlist(lapply(stat_maps[rows], as.numeric), use.names = FALSE)
-    values <- values[is.finite(values)]
-    caps[[key]] <- if (length(values) == 0L) {
-      NA_real_
-    } else if (isTRUE(signed)) {
-      max(abs(values), na.rm = TRUE)
-    } else {
-      max(values, na.rm = TRUE)
+    if (!is.null(cap_override)) {
+      caps[[key]] <- cap_override
+      next
     }
+    caps[[key]] <- .montage_group_cap(
+      manifest = manifest,
+      stat_maps = stat_maps,
+      rows = rows,
+      cap_quantile = cap_quantile,
+      cap_floor = cap_floor
+    )
   }
   caps
+}
+
+# Robust per-group cap: a high quantile (default 0.99) of the pooled
+# suprathreshold |stat| magnitudes. The raw maximum lets a single hot voxel set
+# the scale, which then washes out the rest of a strongly significant map under
+# proportional/soft alpha (see GitHub issue #5). Falls back to the map maximum
+# when no voxels survive threshold so a cap is always available.
+.montage_group_cap <- function(manifest, stat_maps, rows, cap_quantile,
+                               cap_floor) {
+  supra <- unlist(lapply(rows, function(r) {
+    values <- as.numeric(stat_maps[[r]])
+    mask <- .suprathreshold_mask(
+      values,
+      threshold = manifest$effective_threshold[[r]],
+      tail = manifest$effective_tail[[r]]
+    )
+    abs(values[mask])
+  }), use.names = FALSE)
+  supra <- supra[is.finite(supra)]
+
+  cap <- if (length(supra) > 0L) {
+    as.numeric(stats::quantile(supra, probs = cap_quantile, names = FALSE,
+                               type = 7))
+  } else {
+    values <- unlist(lapply(stat_maps[rows], as.numeric), use.names = FALSE)
+    values <- abs(values[is.finite(values)])
+    if (length(values) == 0L) NA_real_ else max(values)
+  }
+
+  if (!is.null(cap_floor) && is.finite(cap)) {
+    cap <- max(cap, cap_floor)
+  }
+  cap
 }
 
 .montage_panel_subtitle <- function(row) {
@@ -553,7 +685,8 @@ render_montage_report <- function(manifest,
                                              kind,
                                              map_hash,
                                              threshold,
-                                             cap) {
+                                             cap,
+                                             style_key = NULL) {
   key <- if (!is.null(map_hash) && length(map_hash) == 1L &&
              !is.na(map_hash) && nzchar(map_hash)) {
     map_hash
@@ -570,14 +703,37 @@ render_montage_report <- function(manifest,
   } else {
     "na"
   }
+  # The cache stores rendered pixels, so the key must change when any
+  # render-affecting argument changes, not just the map/threshold/cap.
+  style_part <- if (!is.null(style_key) && length(style_key) == 1L &&
+                    !is.na(style_key) && nzchar(style_key)) {
+    style_key
+  } else {
+    "default"
+  }
   file.path(
     image_dir,
     paste0(
       .safe_file_stem(map_id), "_", kind, "_",
-      .safe_file_stem(paste(key, threshold_value, cap_value, sep = "_")),
+      .safe_file_stem(paste(key, threshold_value, cap_value, style_part,
+                            sep = "_")),
       ".png"
     )
   )
+}
+
+# Stable digest of the render-affecting surface call arguments (tail, signed,
+# alpha, palette, sampling, views, hemis, device size, titles, ...) so the
+# surface PNG cache key changes whenever any of them does. The statistic volume
+# is covered by `map_hash`, and `surfatlas` by a cheap identity, so both are
+# excluded from the (potentially large) hashed payload.
+.montage_surface_style_key <- function(base_args, surfatlas) {
+  payload <- base_args[setdiff(
+    names(base_args), c("stat", "surfatlas", "output_file")
+  )]
+  payload$.surfatlas <- surfatlas$name %||% surfatlas$surface_space %||%
+    NA_character_
+  substr(rlang::hash(payload), 1, 16)
 }
 
 .montage_report_provenance <- function() {

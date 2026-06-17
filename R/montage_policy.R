@@ -50,6 +50,16 @@
 #' @param connectivity Default cluster connectivity policy.
 #' @param min_cluster_size Default minimum cluster size.
 #' @param cap_within Character vector of manifest columns that share color caps.
+#' @param cap Optional fixed color cap (magnitude). When supplied, every cap
+#'   group uses this value and the robust quantile default is ignored. `NULL`
+#'   (default) derives a cap per group from the data.
+#' @param cap_quantile Quantile of the suprathreshold `|stat|` distribution used
+#'   for the data-driven cap when `cap` is `NULL`. Defaults to `0.99`, which is
+#'   robust to a few extreme voxels (the raw maximum washes the rest of a strong
+#'   map out under proportional/soft alpha).
+#' @param cap_floor Optional lower bound applied to the data-driven cap so maps
+#'   with a narrow suprathreshold range still span a usable color scale. `NULL`
+#'   (default) applies no floor.
 #' @param layout Character vector of manifest columns used for nested sections.
 #' @param layout_fun Optional custom layout function for non-nested layouts.
 #'
@@ -62,6 +72,9 @@ montage_policy <- function(p = 0.005,
                                             "6-connect"),
                            min_cluster_size = 10L,
                            cap_within = character(),
+                           cap = NULL,
+                           cap_quantile = 0.99,
+                           cap_floor = NULL,
                            layout = character(),
                            layout_fun = NULL) {
   tail <- match.arg(tail)
@@ -78,6 +91,18 @@ montage_policy <- function(p = 0.005,
   }
   if (!is.character(cap_within)) {
     stop("'cap_within' must be a character vector.", call. = FALSE)
+  }
+  if (!is.null(cap) && (!is.numeric(cap) || length(cap) != 1L ||
+                        !is.finite(cap) || cap <= 0)) {
+    stop("'cap' must be NULL or a positive number.", call. = FALSE)
+  }
+  if (!is.numeric(cap_quantile) || length(cap_quantile) != 1L ||
+      !is.finite(cap_quantile) || cap_quantile <= 0 || cap_quantile > 1) {
+    stop("'cap_quantile' must be a single number in (0, 1].", call. = FALSE)
+  }
+  if (!is.null(cap_floor) && (!is.numeric(cap_floor) || length(cap_floor) != 1L ||
+                              !is.finite(cap_floor) || cap_floor <= 0)) {
+    stop("'cap_floor' must be NULL or a positive number.", call. = FALSE)
   }
   if (!is.character(layout)) {
     stop("'layout' must be a character vector.", call. = FALSE)
@@ -108,6 +133,9 @@ montage_policy <- function(p = 0.005,
       connectivity = connectivity,
       min_cluster_size = as.integer(min_cluster_size),
       cap_within = cap_within,
+      cap = cap,
+      cap_quantile = cap_quantile,
+      cap_floor = cap_floor,
       layout = layout,
       layout_fun = layout_fun
     ),

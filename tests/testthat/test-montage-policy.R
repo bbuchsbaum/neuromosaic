@@ -42,6 +42,23 @@ test_that("montage_policy validates constructor inputs", {
   expect_error(montage_policy(threshold = -1), "positive number")
 })
 
+test_that("montage_policy carries and validates cap controls", {
+  policy <- montage_policy(cap = 8, cap_quantile = 0.95, cap_floor = 2)
+  expect_equal(policy$cap, 8)
+  expect_equal(policy$cap_quantile, 0.95)
+  expect_equal(policy$cap_floor, 2)
+
+  default <- montage_policy()
+  expect_null(default$cap)
+  expect_equal(default$cap_quantile, 0.99)
+  expect_null(default$cap_floor)
+
+  expect_error(montage_policy(cap = -1), "positive number")
+  expect_error(montage_policy(cap_quantile = 0), "in \\(0, 1\\]")
+  expect_error(montage_policy(cap_quantile = 1.5), "in \\(0, 1\\]")
+  expect_error(montage_policy(cap_floor = -3), "positive number")
+})
+
 test_that("resolve_montage_policy applies defaults and row overrides", {
   manifest <- make_policy_manifest()
   policy <- montage_policy(
