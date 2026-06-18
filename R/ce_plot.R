@@ -198,7 +198,9 @@
                               display_mode, use_surface_plot,
                               overlay_vals, overlay_threshold, overlay_alpha,
                               brain_views, brain_hemis, palette,
-                              interactive) {
+                              interactive,
+                              overlay_fun = "avg",
+                              overlay_sampling = "midpoint") {
   surf_ids <- as.integer(surfatlas$ids)
   vals <- .parcel_values_from_clusters(
     cluster_parcels = cluster_parcels,
@@ -230,6 +232,12 @@
       overlay_palette = palette,
       interactive = interactive
     )
+    # When `overlay_vals` is a NeuroVol, plot_brain projects it with the atlas's
+    # own geometry; forward the sampling controls so they are honored.
+    if (methods::is(overlay_vals, "NeuroVol")) {
+      plot_args$overlay_fun <- overlay_fun
+      plot_args$overlay_sampling <- overlay_sampling
+    }
     if (interactive) plot_args$data_id_mode <- "polygon"
     g <- tryCatch(
       do.call(neuroatlas::plot_brain, plot_args),

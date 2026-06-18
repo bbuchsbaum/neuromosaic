@@ -495,39 +495,30 @@
                    "Overlay alpha must be between 0 and 1.")
     )
 
-    space_override_ui <- input$overlay_space_ui
-    space_override_eff <- if (is.null(space_override_ui) ||
-                              identical(space_override_ui, "auto")) {
-      overlay_space
-    } else {
-      as.character(space_override_ui)
-    }
-
     tryCatch({
+      # Hand the cluster statistic volume to plot_brain (via .make_brain_plot)
+      # and let it project with the atlas's own geometry. The former in-package
+      # path (.project_cluster_overlay) forced a surface space that mismatched
+      # the atlas vertex count and rendered every overlay blank (issue #5). The
+      # space/density/resolution overrides no longer steer projection.
       cl_vol <- .build_cluster_overlay_volume(
         stat_map = stat_map,
         cluster_voxels = dat$cluster_voxels,
         selected_cluster_ids = scope_ids
       )
-
-      proj <- .project_cluster_overlay(
-        cluster_vol = cl_vol,
-        surfatlas = surfatlas,
-        space_override = space_override_eff,
-        density_override = overlay_density,
-        resolution_override = overlay_resolution,
-        fun = input$overlay_fun,
-        sampling = input$overlay_sampling
-      )
+      cl_arr <- as.numeric(cl_vol)
+      thr <- max(abs(ovl_thresh), .Machine$double.eps)
 
       list(
-        overlay = proj$overlay,
-        diagnostics = .overlay_projection_diagnostics(
-          cluster_vol = cl_vol,
-          projection = proj,
-          threshold = max(abs(ovl_thresh), .Machine$double.eps),
-          sampling = input$overlay_sampling,
-          fun = input$overlay_fun
+        overlay = cl_vol,
+        diagnostics = list(
+          status = "ok",
+          projection = "plot_brain",
+          projection_fun = input$overlay_fun,
+          projection_sampling = input$overlay_sampling,
+          surface_space = surfatlas$surface_space %||% overlay_space %||% "auto",
+          overlay_voxels = sum(cl_arr != 0, na.rm = TRUE),
+          suprathreshold_voxels = sum(is.finite(cl_arr) & abs(cl_arr) >= thr)
         )
       )
     }, error = function(e) {
@@ -552,7 +543,8 @@
       use_surface_plot = use_surface_plot, overlay_vals = overlay_vals,
       overlay_threshold = input$overlay_threshold, overlay_alpha = input$overlay_alpha,
       brain_views = brain_views, brain_hemis = brain_hemis,
-      palette = palette, interactive = TRUE
+      palette = palette, interactive = TRUE,
+      overlay_fun = input$overlay_fun, overlay_sampling = input$overlay_sampling
     )
 
     if (inherits(g, "girafe")) {
@@ -738,7 +730,8 @@
         use_surface_plot = use_surface_plot, overlay_vals = overlay_vals,
         overlay_threshold = input$overlay_threshold, overlay_alpha = input$overlay_alpha,
         brain_views = brain_views, brain_hemis = brain_hemis,
-        palette = palette, interactive = FALSE
+        palette = palette, interactive = FALSE,
+        overlay_fun = input$overlay_fun, overlay_sampling = input$overlay_sampling
       )
 
       ggplot2::ggsave(filename = file, plot = p, width = 8, height = 5,

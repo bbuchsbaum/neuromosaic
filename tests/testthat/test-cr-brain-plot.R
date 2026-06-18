@@ -76,3 +76,47 @@ test_that("plot_all_cluster_slices returns empty list for empty table", {
 
   expect_equal(length(slices), 0)
 })
+
+test_that(".make_brain_plot hands a NeuroVol overlay to plot_brain for projection", {
+  skip_if_not(
+    exists("local_mocked_bindings", envir = asNamespace("testthat"), inherits = FALSE),
+    "testthat::local_mocked_bindings() is required for this test"
+  )
+  inputs <- make_toy_cluster_report_inputs()
+  captured <- new.env(parent = emptyenv())
+
+  testthat::local_mocked_bindings(
+    .parcel_values_from_clusters = function(...) c(1, -1),
+    .fallback_brain_plot = function(...) {
+      ggplot2::ggplot() + ggplot2::geom_blank()
+    },
+    .package = "neuromosaic"
+  )
+  testthat::local_mocked_bindings(
+    plot_brain = function(..., overlay, overlay_fun, overlay_sampling) {
+      captured$overlay <- overlay
+      captured$fun <- overlay_fun
+      captured$sampling <- overlay_sampling
+      ggplot2::ggplot() + ggplot2::geom_blank()
+    },
+    .package = "neuroatlas"
+  )
+
+  # The fix: the cluster statistic VOLUME is forwarded so plot_brain projects it
+  # with the atlas's own geometry, instead of a pre-projected (and, on fsaverage
+  # atlases, all-NA) lh/rh list.
+  neuromosaic:::.make_brain_plot(
+    surfatlas = make_toy_surfatlas(),
+    cluster_parcels = list(), scope_ids = integer(0),
+    display_mode = "dominant", use_surface_plot = TRUE,
+    overlay_vals = inputs$stat_map,
+    overlay_threshold = 3, overlay_alpha = 0.9,
+    brain_views = "lateral", brain_hemis = "left",
+    palette = "vik", interactive = FALSE,
+    overlay_fun = "mode", overlay_sampling = "thickness"
+  )
+
+  expect_true(inherits(captured$overlay, "NeuroVol"))
+  expect_identical(captured$fun, "mode")
+  expect_identical(captured$sampling, "thickness")
+})
