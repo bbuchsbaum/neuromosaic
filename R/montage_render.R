@@ -335,7 +335,8 @@ render_montage_report <- function(manifest,
     manifest <- apply_montage_labeller(
       manifest,
       labeller = labeller,
-      check_files = check_files
+      check_files = check_files,
+      empty = empty
     )
   } else if (isTRUE(validate)) {
     manifest <- validate_manifest(
@@ -511,7 +512,10 @@ render_montage_report <- function(manifest,
       threshold = manifest$effective_threshold[[i]],
       tail = manifest$effective_tail[[i]],
       signed = manifest$signed[[i]],
-      cap = if (is.finite(cap_value)) cap_value else NULL,
+      # A non-positive group cap (an entirely empty/all-zero cap group) is not a
+      # valid color magnitude; pass NULL so the montage picks its own benign
+      # default instead of failing the cap > 0 check (defeats empty = "warning").
+      cap = if (is.finite(cap_value) && cap_value > 0) cap_value else NULL,
       title = manifest$label[[i]],
       subtitle = .montage_panel_subtitle(manifest[i, , drop = FALSE]),
       draw = TRUE,
@@ -577,7 +581,9 @@ render_montage_report <- function(manifest,
         threshold = manifest$effective_threshold[[i]],
         tail = manifest$effective_tail[[i]],
         signed = manifest$signed[[i]],
-        cap = if (is.finite(group_cap)) group_cap else NULL,
+        # See the volume renderer: a non-positive cap (empty cap group) is not a
+        # valid magnitude; pass NULL so surf_montage uses its benign default.
+        cap = if (is.finite(group_cap) && group_cap > 0) group_cap else NULL,
         width = width,
         height = height,
         res = res,
@@ -600,17 +606,35 @@ render_montage_report <- function(manifest,
       style_key = style_key
     )
 
+    # Effective empty policy: a caller's surface_args$empty wins over the
+    # report-level default. `empty` is excluded from the cache key (non-visual),
+    # so the policy must be enforced explicitly on both branches below.
+    eff_empty <- base_args$empty %||% empty
+
     if (isTRUE(cache_surface) && file.exists(image_path)) {
+      n_supra <- sum(.suprathreshold_mask(
+        as.numeric(stat_maps[[i]]),
+        threshold = eff_threshold,
+        tail = eff_tail
+      ), na.rm = TRUE)
+      if (n_supra == 0L) {
+        # A panel cached under empty = "warning" must still abort under a later
+        # empty = "error" request (the PNG carries no policy of its own).
+        msg <- paste0(
+          "No finite suprathreshold voxels for threshold ", eff_threshold,
+          " and tail '", eff_tail, "'."
+        )
+        if (identical(eff_empty, "error")) {
+          stop(msg, call. = FALSE)
+        }
+        warning(msg, call. = FALSE)
+      }
       panels[[map_id]]$surface_image <- normalizePath(image_path, mustWork = TRUE)
       panels[[map_id]]$surface <- list(
         threshold = eff_threshold,
         tail = eff_tail,
         cap = eff_cap,
-        n_suprathreshold = sum(.suprathreshold_mask(
-          as.numeric(stat_maps[[i]]),
-          threshold = eff_threshold,
-          tail = eff_tail
-        ), na.rm = TRUE),
+        n_suprathreshold = n_supra,
         surface_space = NA_character_,
         diagnostics = list(cache_hit = TRUE)
       )
@@ -618,11 +642,7 @@ render_montage_report <- function(manifest,
     }
 
     base_args$output_file <- image_path
-    # Report-level empty policy; a caller's surface_args$empty still wins.
-    # Set after the style key so this non-visual control never busts the cache.
-    if (is.null(base_args$empty)) {
-      base_args$empty <- empty
-    }
+    base_args$empty <- eff_empty
     result <- do.call(surf_montage, base_args)
     panels[[map_id]]$surface_image <- result$image
     panels[[map_id]]$surface <- list(
@@ -841,7 +861,7 @@ render_montage_report <- function(manifest,
     "Wrote Quarto source to '", output_file, "'\n",
     "  and report data to '", sidecar_path, "'.\n",
     "This '.qmd' format does not render. To produce the report run:\n",
-    "  quarto render \"", basename(output_file), "\"  (from '",
+    "  quarto render ", shQuote(basename(output_file)), "  (from '",
     dirname(output_file), "')."
   )
 

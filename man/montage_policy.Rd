@@ -90,7 +90,10 @@ bh_threshold <- function(pvals, df, q = 0.05) {
   pvals <- sort(pvals[is.finite(pvals)])
   m <- length(pvals)
   ok <- pvals <= (seq_len(m) / m) * q
-  if (!any(ok)) return(Inf)               # nothing survives -> empty map
+  # No survivors: a finite threshold above any statistic, so the map renders
+  # as an empty panel under render_montage_report(empty = "warning"). Avoid
+  # Inf, which the finite-positive threshold check would reject.
+  if (!any(ok)) return(.Machine$double.xmax)
   stats::qt(1 - pvals[max(which(ok))] / 2, df = df)  # critical |t|
 }
 manifest$threshold <- mapply(bh_threshold, map_pvalues, manifest$df, q = 0.05)

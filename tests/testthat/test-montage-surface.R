@@ -101,6 +101,36 @@ test_that("surf_montage rejects invalid inputs and empty overlays", {
   )
 })
 
+test_that("surf_montage renders a base panel for an all-zero map under empty='warning' (#8)", {
+  inputs <- make_toy_cluster_report_inputs()
+  zero_vol <- neuroim2::NeuroVol(
+    array(0, dim(inputs$stat_map)), neuroim2::space(inputs$stat_map)
+  )
+  captured <- new.env(parent = emptyenv())
+  plot_fun <- function(..., overlay_lim) {
+    captured$overlay_lim <- overlay_lim
+    ggplot2::ggplot(data.frame(x = 1, y = 1), ggplot2::aes(x, y)) +
+      ggplot2::geom_point()
+  }
+  out <- tempfile("surface-empty-", fileext = ".png")
+
+  expect_warning(
+    result <- surf_montage(
+      stat = zero_vol, surfatlas = make_toy_surfatlas(), output_file = out,
+      threshold = 3, empty = "warning", plot_fun = plot_fun,
+      width = 320, height = 220, res = 72
+    ),
+    "No finite suprathreshold voxels"
+  )
+
+  expect_s3_class(result, "surf_montage_result")
+  expect_true(file.exists(result$image))
+  expect_equal(result$n_suprathreshold, 0)
+  # The default cap for an empty overlay must stay positive so overlay_lim is
+  # finite and the base panel renders (not NA, which would break plot_brain).
+  expect_true(all(is.finite(captured$overlay_lim)))
+})
+
 test_that("surf_montage delegates projection to plot_brain without a hook", {
   inputs <- make_toy_cluster_report_inputs()
   captured <- new.env(parent = emptyenv())
