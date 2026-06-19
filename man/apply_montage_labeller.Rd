@@ -8,7 +8,8 @@ apply_montage_labeller(
   manifest,
   labeller = NULL,
   entity_cols = NULL,
-  check_files = FALSE
+  check_files = FALSE,
+  empty = c("error", "warning")
 )
 }
 \arguments{
@@ -20,6 +21,11 @@ apply_montage_labeller(
 function labeller. Defaults to all columns in the row.}
 
 \item{check_files}{Logical; passed to [validate_manifest()] after labelling.}
+
+\item{empty}{Action when overlay QC finds a map with no suprathreshold
+voxels: `"error"` (default) or `"warning"`. Forwarded to
+[validate_manifest()] so the labeller path honors the same empty-map policy
+as the rest of the report pipeline.}
 }
 \value{
 The labelled and validated manifest.

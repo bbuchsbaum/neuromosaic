@@ -10,20 +10,26 @@
 #' @param entity_cols Optional character vector of manifest columns passed to a
 #'   function labeller. Defaults to all columns in the row.
 #' @param check_files Logical; passed to [validate_manifest()] after labelling.
+#' @param empty Action when overlay QC finds a map with no suprathreshold
+#'   voxels: `"error"` (default) or `"warning"`. Forwarded to
+#'   [validate_manifest()] so the labeller path honors the same empty-map policy
+#'   as the rest of the report pipeline.
 #'
 #' @return The labelled and validated manifest.
 #' @export
 apply_montage_labeller <- function(manifest,
                                    labeller = NULL,
                                    entity_cols = NULL,
-                                   check_files = FALSE) {
+                                   check_files = FALSE,
+                                   empty = c("error", "warning")) {
   if (!is.data.frame(manifest)) {
     stop("'manifest' must be a data frame.", call. = FALSE)
   }
+  empty <- match.arg(empty)
   manifest <- as.data.frame(manifest, stringsAsFactors = FALSE)
 
   if (is.null(labeller)) {
-    return(validate_manifest(manifest, check_files = check_files))
+    return(validate_manifest(manifest, check_files = check_files, empty = empty))
   }
   if (is.function(labeller)) {
     manifest <- .apply_function_labeller(manifest, labeller, entity_cols)
@@ -34,7 +40,7 @@ apply_montage_labeller <- function(manifest,
          call. = FALSE)
   }
 
-  validate_manifest(manifest, check_files = check_files)
+  validate_manifest(manifest, check_files = check_files, empty = empty)
 }
 
 .apply_function_labeller <- function(manifest, labeller, entity_cols) {

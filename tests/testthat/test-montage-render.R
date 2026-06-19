@@ -678,3 +678,108 @@ test_that("render_montage_report validates latex_engine (#12)", {
     "latex_engine"
   )
 })
+
+test_that("render_montage_report renders an all-zero map under default empty='warning' (#8)", {
+  # The FDR pre-masking workflow produces a literally all-zero map when nothing
+  # survives; its derived cap is 0, which must not abort under empty = "warning".
+  inputs <- make_toy_cluster_report_inputs()
+  tmpdir <- tempfile("montage-allzero-")
+  dir.create(tmpdir, recursive = TRUE)
+  zero_vol <- neuroim2::NeuroVol(
+    array(0, dim(inputs$stat_map)), neuroim2::space(inputs$stat_map)
+  )
+  stat_path <- file.path(tmpdir, "contrast-null_model-m1_stat-z.nii.gz")
+  neuroim2::write_vol(zero_vol, stat_path)
+  manifest <- data.frame(
+    map_id = "all_zero", path = stat_path, stat_kind = "z", signed = TRUE,
+    threshold = 3, contrast = "null", model = "m1", label = "All zero",
+    stringsAsFactors = FALSE
+  )
+  out <- file.path(tmpdir, "allzero.qmd")
+
+  w <- capture_warnings(
+    r <- suppressMessages(render_montage_report(
+      manifest, output_file = out, bg = inputs$stat_map, render_peaks = FALSE,
+      image_width = 360, image_height = 260, image_res = 72
+    ))
+  )
+  expect_true(any(grepl("suprathreshold", w)))
+  expect_true(file.exists(r))
+  rd <- readRDS(sub("\\.qmd$", "_report-data.rds", r))
+  expect_equal(rd$panels$all_zero$volume$n_suprathreshold, 0)
+})
+
+test_that("render_montage_report empty policy reaches the labeller path (#8)", {
+  inputs <- make_toy_cluster_report_inputs()
+  tmpdir <- tempfile("montage-labeller-empty-")
+  dir.create(tmpdir, recursive = TRUE)
+  manifest <- data.frame(
+    map_id = "faces_m1", stat_kind = "z", signed = TRUE, threshold = 1e6,
+    contrast = "faces", stringsAsFactors = FALSE
+  )
+  # An in-memory stat_map list-column makes validate_manifest run overlay QC via
+  # apply_montage_labeller(); empty = "warning" must reach that call too.
+  manifest$stat_map <- I(list(inputs$stat_map))
+  out <- file.path(tmpdir, "labeller.qmd")
+
+  w <- capture_warnings(
+    r <- suppressMessages(render_montage_report(
+      manifest, output_file = out,
+      labeller = function(entities) {
+        list(title = paste("Contrast", entities$contrast))
+      }
+    ))
+  )
+  expect_true(any(grepl("suprathreshold", w)))
+  expect_true(file.exists(r))
+})
+
+test_that("render_montage_report surface cache honors a later empty='error' (#8)", {
+  skip_if_not(
+    exists("local_mocked_bindings", envir = asNamespace("testthat"), inherits = FALSE),
+    "testthat::local_mocked_bindings() is required for this test"
+  )
+  inputs <- make_toy_cluster_report_inputs()
+  tmpdir <- tempfile("montage-surface-empty-cache-")
+  dir.create(tmpdir, recursive = TRUE)
+  stat_path <- file.path(tmpdir, "contrast-faces_model-m1_stat-z.nii.gz")
+  neuroim2::write_vol(inputs$stat_map, stat_path)
+  manifest <- data.frame(
+    map_id = "faces_m1", path = stat_path, stat_kind = "z", signed = TRUE,
+    threshold = 1e6,                       # nothing survives -> empty panel
+    contrast = "faces", model = "m1", label = "Faces M1",
+    stringsAsFactors = FALSE
+  )
+
+  testthat::local_mocked_bindings(
+    surf_montage = function(stat, surfatlas, output_file, ...) {
+      writeLines("surface placeholder", output_file)
+      structure(
+        list(image = normalizePath(output_file, mustWork = FALSE),
+             threshold = 1e6, tail = "two_sided", signed = TRUE, cap = 1,
+             n_suprathreshold = 0L, surface_space = "fsLR-32k",
+             diagnostics = list(cache_hit = FALSE)),
+        class = "surf_montage_result"
+      )
+    },
+    .package = "neuromosaic"
+  )
+
+  args <- list(
+    manifest = manifest, surfatlas = make_toy_surfatlas(),
+    image_dir = file.path(tmpdir, "images"),
+    image_width = 320, image_height = 220, image_res = 72
+  )
+  # Warning mode caches the empty panel PNG.
+  suppressWarnings(suppressMessages(do.call(render_montage_report, c(
+    args, list(output_file = file.path(tmpdir, "a.qmd"), empty = "warning")
+  ))))
+  # A later strict request must still abort, even though the PNG is cached and
+  # `empty` is excluded from the cache key.
+  expect_error(
+    suppressMessages(do.call(render_montage_report, c(
+      args, list(output_file = file.path(tmpdir, "b.qmd"), empty = "error")
+    ))),
+    "suprathreshold"
+  )
+})

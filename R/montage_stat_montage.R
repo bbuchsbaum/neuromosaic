@@ -155,7 +155,11 @@ stat_montage <- function(bg,
 .stat_montage_default_cap <- function(values, signed) {
   finite <- values[is.finite(values)]
   if (length(finite) == 0L) {
-    return(NA_real_)
+    # No finite overlay values (e.g. an empty/all-zero map rendered with
+    # empty = "warning"). Return a benign positive cap so the overlay color
+    # limits stay finite and the base panel renders, rather than NA which would
+    # poison overlay_lim and reject the cosmetic (empty) scale downstream.
+    return(1)
   }
   if (isTRUE(signed)) {
     return(max(abs(finite), na.rm = TRUE))
