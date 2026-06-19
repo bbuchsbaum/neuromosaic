@@ -8,6 +8,7 @@ render_montage_report(
   manifest,
   output_file = "montage_report.html",
   template = NULL,
+  latex_engine = "xelatex",
   title = "Montage Report",
   layout = NULL,
   labeller = NULL,
@@ -21,6 +22,7 @@ render_montage_report(
   render_volume = !is.null(bg),
   render_surface = !is.null(surfatlas),
   render_peaks = !is.null(atlas),
+  empty = c("warning", "error"),
   image_dir = NULL,
   cache_dir = NULL,
   materialize_recipes = TRUE,
@@ -38,13 +40,19 @@ render_montage_report(
 )
 }
 \arguments{
-\item{manifest}{A render manifest data frame, one row per statistical map.}
+\item{manifest}{A render manifest data frame, one row per statistical map.
+See Details for the required columns.}
 
 \item{output_file}{Path for the rendered output. Extension determines format
-(`.html`, `.pdf`, or `.qmd`).}
+(`.html`, `.pdf`, or `.qmd`); see Details. `.html` is the portable default.}
 
 \item{template}{Path to a custom Rmd/Qmd template. `NULL` uses the bundled
 montage template matching `output_file`.}
+
+\item{latex_engine}{LaTeX engine used for `.pdf` output, passed to
+[rmarkdown::pdf_document()]. Defaults to `"xelatex"`. Set to `"pdflatex"`
+(or another installed engine) on systems without a XeTeX toolchain.
+Ignored for `.html` and `.qmd` output.}
 
 \item{title}{Report title used by the bundled templates.}
 
@@ -94,6 +102,13 @@ supplied?}
 \item{render_peaks}{Logical; generate per-panel atlas peak tables when
 `atlas` is supplied?}
 
+\item{empty}{Action when a map has no suprathreshold voxels. The report-level
+default is `"warning"`: an empty contrast renders its base panel with no
+overlay and a warning, instead of aborting the whole report. Use `"error"`
+to restore the strict per-map behavior. (This differs from the
+[surf_montage()]/[stat_montage()] default of `"error"`, which is kept for
+direct callers.)}
+
 \item{image_dir}{Optional directory for generated montage PNGs.}
 
 \item{cache_dir}{Optional directory for materialized derived maps.}
@@ -130,4 +145,36 @@ Renders a montage report from a validated render manifest. This contract is
 intentionally separate from [render_cluster_report()]: HTML/PDF outputs use a
 montage R Markdown template with `params$report_data`, while `.qmd` output
 writes a Quarto source file plus a companion `_report-data.rds` sidecar.
+}
+\details{
+The minimal recipe is `build_manifest()` -> `render_montage_report(manifest,
+output_file, surfatlas = )`. Surface panels are generated when a `surfatlas`
+is supplied (`render_surface = !is.null(surfatlas)`); volume panels when a
+`bg` is supplied (`render_volume = !is.null(bg)`). See
+`vignette("montage-report", package = "neuromosaic")` for a worked example.
+
+**Manifest contract.** Every row describes one statistical map. The required
+columns are `map_id` (unique stable key), `stat_kind` (one of `t`, `z`,
+`beta`, `cope`), `signed` (a *logical*: does the statistic have positive and
+negative semantics?), and `label` (the human-facing panel title). `df` is
+additionally required for `stat_kind = "t"` rows whenever the threshold is
+derived from a p-value rather than supplied directly. See
+[montage_manifest_schema()] for the full column list and
+[build_manifest()]/[validate_manifest()] for construction and checks.
+
+**Reserved passthrough arguments.** `volume_args` and `surface_args` forward
+styling to [stat_montage()] and [surf_montage()], but renderer-managed
+arguments are reserved and cannot be overridden: `volume_args` reserves
+`bg`, `stat`, and `draw`; `surface_args` reserves `stat`, `surfatlas`,
+`output_file`, `plot_fun`, and `projection`. Passing a reserved name is an
+error.
+
+**Output format and portability.** The extension of `output_file` selects
+the format. `.html` (the default) is the most portable: it has no external
+toolchain dependency. `.pdf` renders through LaTeX and therefore needs a TeX
+installation providing `latex_engine` (default `"xelatex"`, common on
+workstations but often absent on minimal HPC nodes); use the `latex_engine`
+argument to switch engines (e.g. `"pdflatex"`). `.qmd` does **not** render:
+it writes the Quarto source plus a `_report-data.rds` sidecar and emits a
+message telling you to run `quarto render` yourself.
 }

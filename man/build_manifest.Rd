@@ -57,3 +57,20 @@ Key-value BIDS entities become columns, and a `stat-` entity (`t`, `z`,
 `signed = TRUE`. Other required fields, notably `label`, still come from a
 `labeller`, `overrides`, or an explicit `source`.
 }
+\examples{
+# Minimal explicit manifest. Required columns: map_id, stat_kind, signed
+# (a logical), and label; df is also needed for t-stat p->threshold.
+manifest <- build_manifest(
+  source = data.frame(
+    map_id = c("faces_gt_houses", "houses_gt_faces"),
+    path = c("faces.nii.gz", "houses.nii.gz"),
+    stat_kind = "t",
+    df = 24,
+    signed = TRUE,
+    label = c("Faces > Houses", "Houses > Faces"),
+    stringsAsFactors = FALSE
+  ),
+  check_files = FALSE
+)
+montage_manifest_schema() # the full column contract
+}

@@ -139,6 +139,15 @@ test_that("validate_manifest overlay QC catches empty maps and grid mismatch", {
     "No finite suprathreshold voxels"
   )
 
+  # empty = "warning" downgrades the abort so one empty map does not fail the
+  # whole manifest (#8).
+  expect_warning(
+    out <- validate_manifest(empty, background = inputs$stat_map,
+                             load_maps = TRUE, empty = "warning"),
+    "No finite suprathreshold voxels"
+  )
+  expect_s3_class(out, "data.frame")
+
   mismatch_space <- neuroim2::NeuroSpace(
     dim = c(6, 6, 6),
     spacing = c(2, 2, 2),

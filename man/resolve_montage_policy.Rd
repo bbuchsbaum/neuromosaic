@@ -4,12 +4,21 @@
 \alias{resolve_montage_policy}
 \title{Resolve Montage Policy Defaults Against a Manifest}
 \usage{
-resolve_montage_policy(manifest, policy = montage_policy())
+resolve_montage_policy(
+  manifest,
+  policy = montage_policy(),
+  empty = c("error", "warning")
+)
 }
 \arguments{
 \item{manifest}{A render manifest data frame.}
 
 \item{policy}{A `montage_policy` object.}
+
+\item{empty}{Action when overlay QC finds a map with no suprathreshold
+voxels: `"error"` (default) or `"warning"`. Forwarded to
+[validate_manifest()]; only relevant when a `stat_map` list-column triggers
+overlay checks.}
 }
 \value{
 The manifest with `effective_threshold`, `effective_tail`,

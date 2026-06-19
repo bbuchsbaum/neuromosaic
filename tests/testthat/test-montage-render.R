@@ -605,3 +605,76 @@ test_that("surface cache key changes when surface_args change", {
     basename(rd2$panels$faces_m1$surface_image)
   ))
 })
+
+test_that("render_montage_report tolerates an empty contrast by default (#8)", {
+  inputs <- make_toy_cluster_report_inputs()
+  tmpdir <- tempfile("montage-empty-")
+  dir.create(tmpdir, recursive = TRUE)
+  stat_path <- file.path(tmpdir, "contrast-null_model-m1_stat-z.nii.gz")
+  neuroim2::write_vol(inputs$stat_map, stat_path)
+  manifest <- data.frame(
+    map_id = "null_map", path = stat_path, stat_kind = "z", signed = TRUE,
+    threshold = 1e6,                       # nothing survives -> empty panel
+    contrast = "null", model = "m1", label = "Null contrast",
+    stringsAsFactors = FALSE
+  )
+  out <- file.path(tmpdir, "empty.qmd")
+
+  # Report-level default empty = "warning": warns, but still builds the bundle
+  # and renders the base panel instead of aborting the whole report.
+  w <- capture_warnings(
+    r <- suppressMessages(render_montage_report(
+      manifest, output_file = out, bg = inputs$stat_map, render_peaks = FALSE,
+      image_width = 360, image_height = 260, image_res = 72
+    ))
+  )
+  expect_true(any(grepl("suprathreshold", w)))
+  expect_true(file.exists(r))
+  rd <- readRDS(sub("\\.qmd$", "_report-data.rds", r))
+  expect_equal(rd$panels$null_map$volume$n_suprathreshold, 0)
+
+  # empty = "error" restores the strict per-map abort.
+  expect_error(
+    suppressMessages(suppressWarnings(render_montage_report(
+      manifest, output_file = out, bg = inputs$stat_map, render_peaks = FALSE,
+      empty = "error",
+      image_width = 360, image_height = 260, image_res = 72
+    ))),
+    "suprathreshold"
+  )
+})
+
+test_that("render_montage_report announces qmd source instead of rendering (#10)", {
+  manifest <- make_montage_render_manifest()
+  qmd_out <- tempfile("montage-report-", fileext = ".qmd")
+
+  expect_message(
+    render_montage_report(
+      manifest, output_file = qmd_out, layout = c("contrast", "model")
+    ),
+    "quarto render"
+  )
+})
+
+test_that("montage pdf output honors a custom latex_engine (#12)", {
+  skip_if_not_installed("rmarkdown")
+
+  pdf_format <- neuromosaic:::.montage_rmarkdown_output_format("pdf", "pdflatex")
+  expect_equal(pdf_format$pandoc$latex_engine, "pdflatex")
+  # Default is unchanged.
+  expect_equal(
+    neuromosaic:::.montage_rmarkdown_output_format("pdf")$pandoc$latex_engine,
+    "xelatex"
+  )
+})
+
+test_that("render_montage_report validates latex_engine (#12)", {
+  manifest <- make_montage_render_manifest()
+  expect_error(
+    render_montage_report(
+      manifest, tempfile("montage-report-", fileext = ".pdf"),
+      latex_engine = c("a", "b")
+    ),
+    "latex_engine"
+  )
+})

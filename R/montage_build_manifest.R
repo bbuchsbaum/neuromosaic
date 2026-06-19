@@ -33,6 +33,22 @@
 #'   [apply_montage_labeller()].
 #'
 #' @return A render manifest data frame.
+#' @examples
+#' # Minimal explicit manifest. Required columns: map_id, stat_kind, signed
+#' # (a logical), and label; df is also needed for t-stat p->threshold.
+#' manifest <- build_manifest(
+#'   source = data.frame(
+#'     map_id = c("faces_gt_houses", "houses_gt_faces"),
+#'     path = c("faces.nii.gz", "houses.nii.gz"),
+#'     stat_kind = "t",
+#'     df = 24,
+#'     signed = TRUE,
+#'     label = c("Faces > Houses", "Houses > Faces"),
+#'     stringsAsFactors = FALSE
+#'   ),
+#'   check_files = FALSE
+#' )
+#' montage_manifest_schema() # the full column contract
 #' @export
 build_manifest <- function(source = NULL,
                            pattern = NULL,
