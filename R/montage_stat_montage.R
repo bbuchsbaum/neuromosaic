@@ -230,6 +230,13 @@ stat_montage <- function(bg,
     }
   }, logical(1))
   z <- which(has_supra)
+  if (length(z) == 0L) {
+    # No suprathreshold slices (e.g. an empty contrast rendered with
+    # empty = "warning"): fall back to evenly spaced slices so the base montage
+    # still renders rather than failing on an empty slice set.
+    n <- dims[[along]]
+    return(unique(round(seq(1, n, length.out = min(max_slices, n)))))
+  }
   if (length(z) <= max_slices) {
     return(z)
   }

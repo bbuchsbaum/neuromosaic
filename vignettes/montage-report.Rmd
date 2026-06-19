@@ -1,0 +1,233 @@
+---
+title: "Surface Montage Reports from ROI/Parcel Statistical Maps"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Surface Montage Reports from ROI/Parcel Statistical Maps}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+You have a set of second-level statistical maps — say per-parcel *t*-statistics
+from a Schaefer-400/17 ROI cross-decoding analysis — and you want a single
+report that shows each contrast on an inflated cortical surface, with consistent
+thresholding and color scales. The *montage report* path does this. Its minimal
+recipe is two calls:
+
+```r
+manifest <- build_manifest(source = ...)
+render_montage_report(manifest, "report.html", surfatlas = atlas)
+```
+
+Everything else is policy and styling. This vignette walks the whole path:
+the manifest contract, `montage_policy()`, surface rendering, output formats,
+and the parcel/FDR wrinkles you hit with ROI data.
+
+```{r library}
+library(neuromosaic)
+```
+
+## The render manifest
+
+A render manifest is a data frame with **one row per statistical map**. It is
+the single source of truth the report consumes; there is no hidden state.
+`montage_manifest_schema()` returns the full column contract:
+
+```{r schema}
+schema <- montage_manifest_schema()
+knitr::kable(schema[schema$required, c("field", "type", "role")],
+             row.names = FALSE)
+```
+
+So the required columns are:
+
+- **`map_id`** — a unique, stable key. It anchors caches, figure files, and
+  table joins, so distinct maps must never share one.
+- **`stat_kind`** — the statistic family, one of `t`, `z`, `beta`, `cope`.
+- **`signed`** — a **logical** (note: not a string). Does the statistic carry
+  positive *and* negative meaning? `TRUE` gives a symmetric diverging color
+  scale; `FALSE` a one-sided scale.
+- **`label`** — the human-facing panel title.
+
+One more column is *conditionally* required: **`df`**. When a `t` map's
+threshold is derived from a p-value (rather than supplied directly), the
+degrees of freedom are needed for the p→*t* conversion. Supply `df`, or give an
+explicit numeric `threshold`, for every `t` row.
+
+The remaining schema columns (`path`, `recipe`, `p`, `threshold`, `tail`,
+`level`, `n`, `description`, ...) are optional overrides; see
+`?montage_manifest_schema`.
+
+### Building one
+
+For ROI/atlas work the filenames rarely follow BIDS conventions, so the
+clearest route is an explicit `source` data frame where you control every
+column:
+
+```{r build}
+manifest <- build_manifest(
+  source = data.frame(
+    map_id    = c("faces_gt_houses", "houses_gt_faces", "null_contrast"),
+    path      = c("faces.nii.gz", "houses.nii.gz", "null.nii.gz"),
+    stat_kind = "t",
+    df        = 24,
+    signed    = TRUE,
+    label     = c("Faces > Houses", "Houses > Faces", "A null contrast"),
+    p         = 0.001,
+    stringsAsFactors = FALSE
+  ),
+  check_files = FALSE   # skip on-disk existence checks for this example
+)
+manifest[, c("map_id", "stat_kind", "signed", "df", "label")]
+```
+
+`build_manifest()` can also discover maps from a `pattern` glob or a path
+vector and parse BIDS entities (`contrast-faces_model-m1_stat-z.nii.gz`); see
+`?build_manifest`. However the maps are sourced, `validate_manifest()` enforces
+the contract above before rendering.
+
+## Thresholding and color policy
+
+`montage_policy()` is the declarative knob set shared by every panel: default
+p-value (and the p→threshold rule), tail, cluster connectivity, and the color
+cap strategy. Per-map manifest columns override the policy where present.
+
+```{r policy}
+policy <- montage_policy(
+  p    = 0.001,        # used when a row has no `threshold`/`p`
+  tail = "two_sided"
+)
+policy$threshold      # NULL -> uses the built-in p->z/t rule
+```
+
+The built-in p→threshold rule covers `z` (via `qnorm`) and `t` (via `qt`, using
+`df`). It is **uncorrected**.
+
+### FDR / q-value thresholding
+
+There is no `q =` option. FDR is data-dependent — the cutoff depends on a
+map's whole p-value distribution — and the policy `threshold` function only
+sees `(stat_kind, df, p, tail)`, not the voxel/parcel values, so it cannot
+compute it. The supported pattern is to **precompute the FDR-critical
+statistic value per map and put it in the manifest `threshold` column**, which
+overrides the policy for that row. That is cleaner than zeroing
+non-significant parcels in the volume and forcing a tiny `threshold` to bypass
+the policy.
+
+```{r fdr, eval = FALSE}
+# Critical |t| at a Benjamini-Hochberg q from a map's p-values:
+bh_threshold <- function(pvals, df, q = 0.05) {
+  pvals <- sort(pvals[is.finite(pvals)])
+  m <- length(pvals)
+  ok <- pvals <= (seq_len(m) / m) * q
+  if (!any(ok)) return(Inf)                 # nothing survives -> empty map
+  stats::qt(1 - pvals[max(which(ok))] / 2, df = df)
+}
+
+# map_pvalues: a list with one p-value vector per manifest row
+manifest$threshold <- mapply(bh_threshold, map_pvalues, manifest$df, q = 0.05)
+```
+
+A row whose `threshold` is `Inf` (nothing survives) becomes an empty panel —
+handled gracefully by default, as described next.
+
+## Rendering surface montages
+
+Surface panels switch on **when you pass a `surfatlas`** (internally
+`render_surface = !is.null(surfatlas)`). `neuroatlas::get_schaefer_surfatlas()`
+gives you a matching atlas:
+
+```{r render, eval = FALSE}
+atlas <- neuroatlas::get_schaefer_surfatlas(parcels = 400, networks = 17)
+
+render_montage_report(
+  manifest,
+  output_file = "montage_report.html",
+  surfatlas   = atlas,
+  policy      = policy,
+  image_dir   = "montage_images",   # where panel PNGs are written
+  cache_dir   = "montage_cache"     # reused across re-renders
+)
+```
+
+`image_dir` collects the generated PNGs; `cache_dir` lets repeated renders reuse
+materialized maps and cached surface panels (keyed by map hash, threshold, and
+cap) so iterating on labels or layout is cheap. Supply a `bg` volume as well to
+additionally generate volume montages, and an `atlas` to add per-panel peak
+tables.
+
+### Styling: `volume_args` / `surface_args` (and what's reserved)
+
+Forward styling to the underlying `stat_montage()` / `surf_montage()` calls
+through `volume_args` and `surface_args`:
+
+```{r styling, eval = FALSE}
+render_montage_report(
+  manifest, "report.html", surfatlas = atlas,
+  surface_args = list(overlay_alpha = 0.9, views = c("lateral", "medial"))
+)
+```
+
+Some arguments are **renderer-managed and reserved** — passing them is an
+error, because the report sets them per panel:
+
+- `volume_args` reserves `bg`, `stat`, `draw`.
+- `surface_args` reserves `stat`, `surfatlas`, `output_file`, `plot_fun`,
+  `projection`.
+
+Note these lists are merged with `modifyList()`, so passing `cap = NULL`
+*removes* the derived default rather than forcing it; omit an argument to keep
+the policy/robust default.
+
+### Empty contrasts don't kill the report
+
+In a group report it is common for one contrast (e.g. a null between-group
+effect) to have no suprathreshold parcels. At the report level the default is
+`empty = "warning"`: such a contrast renders its base surface with no overlay
+and emits a warning, instead of aborting the whole run. Pass `empty = "error"`
+to restore strict per-map behavior. (The lower-level `surf_montage()` /
+`stat_montage()` keep their own `empty = "error"` default for direct callers.)
+
+## Output formats and portability
+
+The extension of `output_file` selects the format:
+
+- **`.html`** — the portable default. No external toolchain required.
+- **`.pdf`** — renders through LaTeX, so it needs a TeX installation. The
+  engine defaults to `latex_engine = "xelatex"` (common on workstations, often
+  absent on minimal HPC nodes). Switch engines when needed:
+
+  ```{r pdf, eval = FALSE}
+  render_montage_report(manifest, "report.pdf", surfatlas = atlas,
+                        latex_engine = "pdflatex")
+  ```
+
+- **`.qmd`** — does **not** render. It writes the Quarto source plus a
+  `_report-data.rds` sidecar and prints a message telling you to run
+  `quarto render` yourself. Use this when you want to hand-edit the report
+  source before producing the final document.
+
+If you are unsure whether your environment can produce a PDF, render `.html`
+first; it always works.
+
+## Recap
+
+```r
+manifest <- build_manifest(source = roi_table)        # the contract
+policy   <- montage_policy(p = 0.001, tail = "two_sided")
+atlas    <- neuroatlas::get_schaefer_surfatlas(400, 17)
+render_montage_report(manifest, "report.html",        # surfatlas -> surfaces
+                      surfatlas = atlas, policy = policy,
+                      image_dir = "img", cache_dir = "cache")
+```
+
+See `?build_manifest`, `?montage_policy`, and `?render_montage_report` for the
+complete argument reference.

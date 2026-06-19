@@ -43,9 +43,14 @@
 #' study-specific rules without changing the render engine.
 #'
 #' @param p Default p-value used when a manifest row has no `p` or `threshold`.
-#' @param threshold Optional numeric threshold or function. Functions receive
-#'   `stat_kind`, `df`, `p`, and `tail` vectors and must return numeric
-#'   thresholds.
+#' @param threshold Optional numeric threshold or function. A function receives
+#'   `stat_kind`, `df`, `p`, and `tail` vectors (one element per map) and must
+#'   return a numeric threshold per map, expressed in the statistic's own units
+#'   (e.g. a critical t or z value); the engine keeps voxels with `|stat|`
+#'   at or above it. A manifest `threshold` column overrides this per row. The
+#'   function sees only those scalar policy fields, not the map values, so
+#'   data-dependent corrections such as FDR must be precomputed per map and
+#'   supplied through the manifest `threshold` column (see Details).
 #' @param tail Default cluster tail policy.
 #' @param connectivity Default cluster connectivity policy.
 #' @param min_cluster_size Default minimum cluster size.
@@ -63,7 +68,40 @@
 #' @param layout Character vector of manifest columns used for nested sections.
 #' @param layout_fun Optional custom layout function for non-nested layouts.
 #'
+#' @details
+#' # FDR / q-value thresholding
+#'
+#' There is no built-in `q =` option: the built-in p-to-threshold rule
+#' (`stat_kind` `"z"`/`"t"`) is uncorrected. FDR is data-dependent — the cutoff
+#' depends on the whole p-value distribution of a map — and the policy
+#' `threshold` function only sees `(stat_kind, df, p, tail)`, not the map
+#' values, so it cannot compute it. The supported pattern is to precompute the
+#' FDR-critical statistic value for each map upstream and put it in the manifest
+#' `threshold` column, which overrides the policy for that row. This is cleaner
+#' than zeroing non-significant voxels in the volume and forcing a tiny
+#' `threshold` to bypass the policy. See the example below.
+#'
 #' @return A `montage_policy` list.
+#' @examples
+#' policy <- montage_policy(p = 0.001, tail = "two_sided")
+#'
+#' # Fixed study-wide rule via a custom function (no map data needed):
+#' z_at <- function(stat_kind, df, p, tail) rep(stats::qnorm(0.999), length(p))
+#' montage_policy(threshold = z_at)
+#'
+#' \dontrun{
+#' # FDR (q < 0.05): precompute a per-map critical |t| from each map's p-values
+#' # and supply it through the manifest `threshold` column.
+#' bh_threshold <- function(pvals, df, q = 0.05) {
+#'   pvals <- sort(pvals[is.finite(pvals)])
+#'   m <- length(pvals)
+#'   ok <- pvals <= (seq_len(m) / m) * q
+#'   if (!any(ok)) return(Inf)               # nothing survives -> empty map
+#'   stats::qt(1 - pvals[max(which(ok))] / 2, df = df)  # critical |t|
+#' }
+#' manifest$threshold <- mapply(bh_threshold, map_pvalues, manifest$df, q = 0.05)
+#' render_montage_report(manifest, "report.html", surfatlas = atlas)
+#' }
 #' @export
 montage_policy <- function(p = 0.005,
                            threshold = NULL,
@@ -150,16 +188,22 @@ montage_policy <- function(p = 0.005,
 #'
 #' @param manifest A render manifest data frame.
 #' @param policy A `montage_policy` object.
+#' @param empty Action when overlay QC finds a map with no suprathreshold
+#'   voxels: `"error"` (default) or `"warning"`. Forwarded to
+#'   [validate_manifest()]; only relevant when a `stat_map` list-column triggers
+#'   overlay checks.
 #'
 #' @return The manifest with `effective_threshold`, `effective_tail`,
 #'   `effective_connectivity`, `effective_min_cluster_size`, and `cap_key`
 #'   columns added.
 #' @export
-resolve_montage_policy <- function(manifest, policy = montage_policy()) {
+resolve_montage_policy <- function(manifest, policy = montage_policy(),
+                                   empty = c("error", "warning")) {
   if (!inherits(policy, "montage_policy")) {
     stop("'policy' must be created by montage_policy().", call. = FALSE)
   }
-  manifest <- validate_manifest(manifest, check_files = FALSE)
+  empty <- match.arg(empty)
+  manifest <- validate_manifest(manifest, check_files = FALSE, empty = empty)
   .check_policy_columns(manifest, policy$cap_within, "cap_within")
   .check_policy_columns(manifest, policy$layout, "layout")
 

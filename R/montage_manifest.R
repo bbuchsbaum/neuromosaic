@@ -78,6 +78,10 @@ montage_manifest_schema <- function() {
 #' @param default_p Default p-value used to derive thresholds when a row has no
 #'   explicit `threshold` or `p`.
 #' @param default_tail Default tail used when the manifest omits `tail`.
+#' @param empty Action taken during overlay QC when a map has no suprathreshold
+#'   voxels: `"error"` (default) aborts; `"warning"` warns and continues so a
+#'   single empty contrast does not fail the whole manifest. Only relevant when
+#'   overlay checks run (see `check_overlays`).
 #'
 #' @return The validated manifest as a data frame, with simple logical and
 #'   numeric policy columns normalized where present.
@@ -90,8 +94,10 @@ validate_manifest <- function(manifest,
                                 "stat_map" %in% names(manifest),
                               default_p = 0.005,
                               default_tail = c("two_sided", "positive",
-                                               "negative")) {
+                                               "negative"),
+                              empty = c("error", "warning")) {
   default_tail <- match.arg(default_tail)
+  empty <- match.arg(empty)
   if (!is.data.frame(manifest)) {
     stop("'manifest' must be a data frame.", call. = FALSE)
   }
@@ -114,7 +120,8 @@ validate_manifest <- function(manifest,
       background = background,
       load_maps = load_maps,
       default_p = default_p,
-      default_tail = default_tail
+      default_tail = default_tail,
+      empty = empty
     )
   }
 
@@ -357,7 +364,8 @@ validate_manifest <- function(manifest,
                                         background,
                                         load_maps,
                                         default_p,
-                                        default_tail) {
+                                        default_tail,
+                                        empty = "error") {
   background_space <- .montage_background_space(background)
 
   for (i in seq_len(nrow(manifest))) {
@@ -392,11 +400,15 @@ validate_manifest <- function(manifest,
     supra <- .suprathreshold_mask(values, threshold = threshold, tail = tail)
 
     if (!any(supra, na.rm = TRUE)) {
-      stop(
+      msg <- paste0(
         "No finite suprathreshold voxels for map_id '",
-        manifest$map_id[[i]], "'.",
-        call. = FALSE
+        manifest$map_id[[i]], "'."
       )
+      if (identical(empty, "warning")) {
+        warning(msg, call. = FALSE)
+      } else {
+        stop(msg, call. = FALSE)
+      }
     }
   }
 

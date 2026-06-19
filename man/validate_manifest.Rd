@@ -11,7 +11,8 @@ validate_manifest(
   check_files = TRUE,
   check_overlays = load_maps || "stat_map" \%in\% names(manifest),
   default_p = 0.005,
-  default_tail = c("two_sided", "positive", "negative")
+  default_tail = c("two_sided", "positive", "negative"),
+  empty = c("error", "warning")
 )
 }
 \arguments{
@@ -32,6 +33,11 @@ when `load_maps = TRUE` or a `stat_map` list-column is present.}
 explicit `threshold` or `p`.}
 
 \item{default_tail}{Default tail used when the manifest omits `tail`.}
+
+\item{empty}{Action taken during overlay QC when a map has no suprathreshold
+voxels: `"error"` (default) aborts; `"warning"` warns and continues so a
+single empty contrast does not fail the whole manifest. Only relevant when
+overlay checks run (see `check_overlays`).}
 }
 \value{
 The validated manifest as a data frame, with simple logical and

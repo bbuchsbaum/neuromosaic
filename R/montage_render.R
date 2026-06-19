@@ -5,11 +5,48 @@
 #' montage R Markdown template with `params$report_data`, while `.qmd` output
 #' writes a Quarto source file plus a companion `_report-data.rds` sidecar.
 #'
+#' @details
+#' The minimal recipe is `build_manifest()` -> `render_montage_report(manifest,
+#' output_file, surfatlas = )`. Surface panels are generated when a `surfatlas`
+#' is supplied (`render_surface = !is.null(surfatlas)`); volume panels when a
+#' `bg` is supplied (`render_volume = !is.null(bg)`). See
+#' `vignette("montage-report", package = "neuromosaic")` for a worked example.
+#'
+#' **Manifest contract.** Every row describes one statistical map. The required
+#' columns are `map_id` (unique stable key), `stat_kind` (one of `t`, `z`,
+#' `beta`, `cope`), `signed` (a *logical*: does the statistic have positive and
+#' negative semantics?), and `label` (the human-facing panel title). `df` is
+#' additionally required for `stat_kind = "t"` rows whenever the threshold is
+#' derived from a p-value rather than supplied directly. See
+#' [montage_manifest_schema()] for the full column list and
+#' [build_manifest()]/[validate_manifest()] for construction and checks.
+#'
+#' **Reserved passthrough arguments.** `volume_args` and `surface_args` forward
+#' styling to [stat_montage()] and [surf_montage()], but renderer-managed
+#' arguments are reserved and cannot be overridden: `volume_args` reserves
+#' `bg`, `stat`, and `draw`; `surface_args` reserves `stat`, `surfatlas`,
+#' `output_file`, `plot_fun`, and `projection`. Passing a reserved name is an
+#' error.
+#'
+#' **Output format and portability.** The extension of `output_file` selects
+#' the format. `.html` (the default) is the most portable: it has no external
+#' toolchain dependency. `.pdf` renders through LaTeX and therefore needs a TeX
+#' installation providing `latex_engine` (default `"xelatex"`, common on
+#' workstations but often absent on minimal HPC nodes); use the `latex_engine`
+#' argument to switch engines (e.g. `"pdflatex"`). `.qmd` does **not** render:
+#' it writes the Quarto source plus a `_report-data.rds` sidecar and emits a
+#' message telling you to run `quarto render` yourself.
+#'
 #' @param manifest A render manifest data frame, one row per statistical map.
+#'   See Details for the required columns.
 #' @param output_file Path for the rendered output. Extension determines format
-#'   (`.html`, `.pdf`, or `.qmd`).
+#'   (`.html`, `.pdf`, or `.qmd`); see Details. `.html` is the portable default.
 #' @param template Path to a custom Rmd/Qmd template. `NULL` uses the bundled
 #'   montage template matching `output_file`.
+#' @param latex_engine LaTeX engine used for `.pdf` output, passed to
+#'   [rmarkdown::pdf_document()]. Defaults to `"xelatex"`. Set to `"pdflatex"`
+#'   (or another installed engine) on systems without a XeTeX toolchain.
+#'   Ignored for `.html` and `.qmd` output.
 #' @param title Report title used by the bundled templates.
 #' @param layout Optional character vector naming manifest columns used for
 #'   nested report sections. Overrides `policy$layout` when supplied.
@@ -45,6 +82,12 @@
 #'   `surfatlas` is supplied?
 #' @param render_peaks Logical; generate per-panel atlas peak tables when
 #'   `atlas` is supplied?
+#' @param empty Action when a map has no suprathreshold voxels. The report-level
+#'   default is `"warning"`: an empty contrast renders its base panel with no
+#'   overlay and a warning, instead of aborting the whole report. Use `"error"`
+#'   to restore the strict per-map behavior. (This differs from the
+#'   [surf_montage()]/[stat_montage()] default of `"error"`, which is kept for
+#'   direct callers.)
 #' @param image_dir Optional directory for generated montage PNGs.
 #' @param cache_dir Optional directory for materialized derived maps.
 #' @param materialize_recipes Logical; materialize recipe-backed manifest rows
@@ -67,6 +110,7 @@
 render_montage_report <- function(manifest,
                                   output_file = "montage_report.html",
                                   template = NULL,
+                                  latex_engine = "xelatex",
                                   title = "Montage Report",
                                   layout = NULL,
                                   labeller = NULL,
@@ -80,6 +124,7 @@ render_montage_report <- function(manifest,
                                   render_volume = !is.null(bg),
                                   render_surface = !is.null(surfatlas),
                                   render_peaks = !is.null(atlas),
+                                  empty = c("warning", "error"),
                                   image_dir = NULL,
                                   cache_dir = NULL,
                                   materialize_recipes = TRUE,
@@ -104,6 +149,12 @@ render_montage_report <- function(manifest,
     c("stat", "surfatlas", "output_file", "plot_fun", "projection"),
     "surface_args"
   )
+
+  empty <- match.arg(empty)
+  if (!is.character(latex_engine) || length(latex_engine) != 1L ||
+      is.na(latex_engine) || !nzchar(latex_engine)) {
+    stop("'latex_engine' must be a single non-empty string.", call. = FALSE)
+  }
 
   ext <- tolower(tools::file_ext(output_file))
   if (!ext %in% c("html", "pdf", "qmd")) {
@@ -164,6 +215,7 @@ render_montage_report <- function(manifest,
     render_volume = render_volume,
     render_surface = render_surface,
     render_peaks = render_peaks,
+    empty = empty,
     image_dir = image_dir,
     cache_dir = cache_dir,
     materialize_recipes = materialize_recipes,
@@ -191,7 +243,7 @@ render_montage_report <- function(manifest,
     stop("Package 'rmarkdown' is required to render reports.", call. = FALSE)
   }
 
-  output_format <- .montage_rmarkdown_output_format(ext)
+  output_format <- .montage_rmarkdown_output_format(ext, latex_engine)
   withr::with_dir(output_dir, {
     rmarkdown::render(
       input = template,
@@ -211,7 +263,7 @@ render_montage_report <- function(manifest,
   invisible(normalizePath(output_file, mustWork = FALSE))
 }
 
-.montage_rmarkdown_output_format <- function(ext) {
+.montage_rmarkdown_output_format <- function(ext, latex_engine = "xelatex") {
   if (identical(ext, "html")) {
     return(rmarkdown::html_document(
       toc = TRUE,
@@ -225,7 +277,7 @@ render_montage_report <- function(manifest,
       toc = TRUE,
       toc_depth = 3,
       number_sections = TRUE,
-      latex_engine = "xelatex",
+      latex_engine = latex_engine,
       fig_caption = TRUE
     ))
   }
@@ -247,6 +299,7 @@ render_montage_report <- function(manifest,
                                          render_volume,
                                          render_surface,
                                          render_peaks,
+                                         empty = "error",
                                          image_dir,
                                          cache_dir,
                                          materialize_recipes,
@@ -288,7 +341,8 @@ render_montage_report <- function(manifest,
     manifest <- validate_manifest(
       manifest,
       check_files = check_files,
-      load_maps = load_maps
+      load_maps = load_maps,
+      empty = empty
     )
   } else {
     manifest <- as.data.frame(manifest, stringsAsFactors = FALSE)
@@ -300,7 +354,7 @@ render_montage_report <- function(manifest,
          call. = FALSE)
   }
   policy$layout <- layout
-  manifest <- resolve_montage_policy(manifest, policy = policy)
+  manifest <- resolve_montage_policy(manifest, policy = policy, empty = empty)
   missing_layout <- setdiff(layout, names(manifest))
   if (length(missing_layout) > 0L) {
     stop(
@@ -332,7 +386,8 @@ render_montage_report <- function(manifest,
       height = image_height,
       res = image_res,
       policy = policy,
-      volume_args = volume_args
+      volume_args = volume_args,
+      empty = empty
     )
   }
   if (isTRUE(render_surface)) {
@@ -346,7 +401,8 @@ render_montage_report <- function(manifest,
       height = image_height,
       res = image_res,
       policy = policy,
-      surface_args = surface_args
+      surface_args = surface_args,
+      empty = empty
     )
   }
 
@@ -431,7 +487,8 @@ render_montage_report <- function(manifest,
                                           height,
                                           res,
                                           policy = NULL,
-                                          volume_args = list()) {
+                                          volume_args = list(),
+                                          empty = "error") {
   if (is.null(bg)) {
     stop("'bg' is required when render_volume = TRUE.", call. = FALSE)
   }
@@ -457,7 +514,8 @@ render_montage_report <- function(manifest,
       cap = if (is.finite(cap_value)) cap_value else NULL,
       title = manifest$label[[i]],
       subtitle = .montage_panel_subtitle(manifest[i, , drop = FALSE]),
-      draw = TRUE
+      draw = TRUE,
+      empty = empty
     )
     call_args <- utils::modifyList(base_args, volume_args)
     grDevices::png(
@@ -494,7 +552,8 @@ render_montage_report <- function(manifest,
                                            height,
                                            res,
                                            policy = NULL,
-                                           surface_args = list()) {
+                                           surface_args = list(),
+                                           empty = "error") {
   if (is.null(surfatlas)) {
     stop("'surfatlas' is required when render_surface = TRUE.", call. = FALSE)
   }
@@ -559,6 +618,11 @@ render_montage_report <- function(manifest,
     }
 
     base_args$output_file <- image_path
+    # Report-level empty policy; a caller's surface_args$empty still wins.
+    # Set after the style key so this non-visual control never busts the cache.
+    if (is.null(base_args$empty)) {
+      base_args$empty <- empty
+    }
     result <- do.call(surf_montage, base_args)
     panels[[map_id]]$surface_image <- result$image
     panels[[map_id]]$surface <- list(
@@ -729,7 +793,7 @@ render_montage_report <- function(manifest,
 # excluded from the (potentially large) hashed payload.
 .montage_surface_style_key <- function(base_args, surfatlas) {
   payload <- base_args[setdiff(
-    names(base_args), c("stat", "surfatlas", "output_file")
+    names(base_args), c("stat", "surfatlas", "output_file", "empty")
   )]
   payload$.surfatlas <- surfatlas$name %||% surfatlas$surface_space %||%
     NA_character_
@@ -770,6 +834,16 @@ render_montage_report <- function(manifest,
     lines <- c(note_lines, lines)
   }
   writeLines(lines, output_file)
+
+  # `.qmd` output writes source only; it does not render. Say so explicitly so
+  # the empty-handed return is not mistaken for a silent failure (issue #10).
+  message(
+    "Wrote Quarto source to '", output_file, "'\n",
+    "  and report data to '", sidecar_path, "'.\n",
+    "This '.qmd' format does not render. To produce the report run:\n",
+    "  quarto render \"", basename(output_file), "\"  (from '",
+    dirname(output_file), "')."
+  )
 
   invisible(normalizePath(output_file, mustWork = FALSE))
 }
