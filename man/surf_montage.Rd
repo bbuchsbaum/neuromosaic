@@ -55,10 +55,15 @@ surf_montage(
 
 \item{surface}{Surface geometry name for `plot_brain()`.}
 
-\item{surface_space, density_override, resolution_override}{Surface asset
-overrides passed through the shared projection layer.}
+\item{surface_space}{Surface-space metadata used when `surfatlas` does not
+define `surface_space`. The default rendering path uses the atlas geometry
+resolved by [neuroatlas::plot_brain()].}
 
-\item{fun, sampling}{Projection controls passed to `neurosurf::vol_to_surf()`.}
+\item{density_override, resolution_override}{Deprecated manual-projection
+controls. They are ignored by the default `plot_brain()` path.}
+
+\item{fun, sampling}{Projection controls forwarded to
+[neuroatlas::plot_brain()] as `overlay_fun` and `overlay_sampling`.}
 
 \item{overlay_alpha}{Surface overlay alpha.}
 
@@ -72,7 +77,8 @@ overrides passed through the shared projection layer.}
 
 \item{plot_fun}{Advanced/testing hook. Defaults to `neuroatlas::plot_brain`.}
 
-\item{projection}{Advanced/testing hook for a precomputed projection payload.}
+\item{projection}{Deprecated advanced/testing hook for a precomputed
+projection payload.}
 
 \item{empty}{Action when no suprathreshold voxels are present.}
 }
@@ -81,8 +87,8 @@ A `surf_montage_result` list containing the PNG path, projection,
   diagnostics, and render metadata.
 }
 \description{
-Projects a thresholded statistic volume onto a surface atlas using the
-existing `ce_overlay.R` projection layer and writes a surface montage PNG.
-The projection layer reuses `.overlay_geom_cache`; this function does not add
-a second asset cache.
+Renders a statistic volume as a surface overlay by passing the volume to
+[neuroatlas::plot_brain()], which performs volume-to-surface projection
+against the supplied surface atlas. The older precomputed projection hook is
+retained only for compatibility and testing, and is deprecated.
 }

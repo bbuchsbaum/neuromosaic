@@ -1,9 +1,9 @@
 #' Render a Statistic Surface Montage
 #'
-#' Projects a thresholded statistic volume onto a surface atlas using the
-#' existing `ce_overlay.R` projection layer and writes a surface montage PNG.
-#' The projection layer reuses `.overlay_geom_cache`; this function does not add
-#' a second asset cache.
+#' Renders a statistic volume as a surface overlay by passing the volume to
+#' [neuroatlas::plot_brain()], which performs volume-to-surface projection
+#' against the supplied surface atlas. The older precomputed projection hook is
+#' retained only for compatibility and testing, and is deprecated.
 #'
 #' @param stat Statistic `NeuroVol` or file path.
 #' @param surfatlas Surface atlas with `lh_atlas`/`rh_atlas` geometry.
@@ -15,16 +15,21 @@
 #' @param views Surface views passed to `neuroatlas::plot_brain()`.
 #' @param hemis Hemispheres passed to `neuroatlas::plot_brain()`.
 #' @param surface Surface geometry name for `plot_brain()`.
-#' @param surface_space,density_override,resolution_override Surface asset
-#'   overrides passed through the shared projection layer.
-#' @param fun,sampling Projection controls passed to `neurosurf::vol_to_surf()`.
+#' @param surface_space Surface-space metadata used when `surfatlas` does not
+#'   define `surface_space`. The default rendering path uses the atlas geometry
+#'   resolved by [neuroatlas::plot_brain()].
+#' @param density_override,resolution_override Deprecated manual-projection
+#'   controls. They are ignored by the default `plot_brain()` path.
+#' @param fun,sampling Projection controls forwarded to
+#'   [neuroatlas::plot_brain()] as `overlay_fun` and `overlay_sampling`.
 #' @param overlay_alpha Surface overlay alpha.
 #' @param palette Base parcel palette.
 #' @param overlay_palette Overlay palette.
 #' @param width,height,res PNG device settings.
 #' @param title,subtitle,caption Plot annotations.
 #' @param plot_fun Advanced/testing hook. Defaults to `neuroatlas::plot_brain`.
-#' @param projection Advanced/testing hook for a precomputed projection payload.
+#' @param projection Deprecated advanced/testing hook for a precomputed
+#'   projection payload.
 #' @param empty Action when no suprathreshold voxels are present.
 #'
 #' @return A `surf_montage_result` list containing the PNG path, projection,
@@ -107,6 +112,12 @@ surf_montage <- function(stat,
   # fsaverage atlas the vertex counts disagreed and every vertex collapsed to
   # NA, so the panel rendered blank regardless of map intensity (issue #5). The
   # `projection` argument keeps the manual path available as a testing hook.
+  if (!is.null(density_override) || !is.null(resolution_override)) {
+    .warn_manual_surface_projection_deprecated(
+      "Manual surface density/resolution controls"
+    )
+  }
+
   if (is.null(projection)) {
     # Hand plot_brain the continuous statistic and let it project, then
     # threshold the projected vertex values (overlay_threshold) and clamp the
@@ -134,6 +145,9 @@ surf_montage <- function(stat,
       cluster_voxels_nonzero = n_supra
     )
   } else {
+    .warn_manual_surface_projection_deprecated(
+      "`projection` precomputed surface overlay hook"
+    )
     diagnostics <- .overlay_projection_diagnostics(
       cluster_vol = display_vol,
       projection = projection,

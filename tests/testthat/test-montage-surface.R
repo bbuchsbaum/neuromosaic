@@ -26,17 +26,20 @@ test_that("surf_montage writes PNG with supplied projection and clipped cap", {
       ggplot2::geom_point()
   }
 
-  result <- surf_montage(
-    stat = inputs$stat_map,
-    surfatlas = make_toy_surfatlas(),
-    output_file = output_file,
-    threshold = 3,
-    cap = 4,
-    projection = projection,
-    plot_fun = plot_fun,
-    width = 320,
-    height = 220,
-    res = 72
+  expect_warning(
+    result <- surf_montage(
+      stat = inputs$stat_map,
+      surfatlas = make_toy_surfatlas(),
+      output_file = output_file,
+      threshold = 3,
+      cap = 4,
+      projection = projection,
+      plot_fun = plot_fun,
+      width = 320,
+      height = 220,
+      res = 72
+    ),
+    "deprecated"
   )
 
   expect_s3_class(result, "surf_montage_result")

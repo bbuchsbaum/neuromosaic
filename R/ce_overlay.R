@@ -1,3 +1,14 @@
+.warn_manual_surface_projection_deprecated <- function(context) {
+  warning(
+    paste0(
+      context, " is deprecated and will be removed in a future release. ",
+      "Pass `NeuroVol` overlays to `neuroatlas::plot_brain()` so projection ",
+      "uses the surface atlas geometry."
+    ),
+    call. = FALSE
+  )
+}
+
 .build_cluster_overlay_volume <- function(stat_map,
                                           cluster_voxels,
                                           selected_cluster_ids = NULL) {
@@ -32,6 +43,10 @@
                                      sampling = c("midpoint",
                                                   "normal_line",
                                                   "thickness")) {
+  .warn_manual_surface_projection_deprecated(
+    ".project_cluster_overlay() manual surface projection"
+  )
+
   fun <- match.arg(fun)
   sampling <- match.arg(sampling)
 
