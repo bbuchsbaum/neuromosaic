@@ -355,7 +355,19 @@ render_montage_report <- function(manifest,
          call. = FALSE)
   }
   policy$layout <- layout
-  manifest <- resolve_montage_policy(manifest, policy = policy, empty = empty)
+  policy_stat_maps <- if (.montage_policy_uses_fdr(manifest, policy)) {
+    lapply(seq_len(nrow(manifest)), function(i) {
+      .montage_manifest_stat_source(manifest, i)
+    })
+  } else {
+    NULL
+  }
+  manifest <- resolve_montage_policy(
+    manifest,
+    policy = policy,
+    empty = empty,
+    stat_maps = policy_stat_maps
+  )
   missing_layout <- setdiff(layout, names(manifest))
   if (length(missing_layout) > 0L) {
     stop(

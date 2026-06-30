@@ -18,20 +18,20 @@ montage_manifest_schema <- function() {
     field = c(
       "map_id", "path", "recipe", "space", "template", "mask",
       "stat_kind", "df", "units", "signed",
-      "p", "threshold", "tail", "connectivity", "min_cluster_size",
+      "p", "q", "threshold", "tail", "connectivity", "min_cluster_size",
       "level", "label", "description", "n", "subjects"
     ),
     required = c(
       TRUE, FALSE, FALSE, FALSE, FALSE, FALSE,
       TRUE, FALSE, FALSE, TRUE,
-      FALSE, FALSE, FALSE, FALSE, FALSE,
+      FALSE, FALSE, FALSE, FALSE, FALSE, FALSE,
       FALSE, TRUE, FALSE, FALSE, FALSE
     ),
     type = c(
       "character", "character", "function/list", "character", "character",
       "character",
       "character", "numeric", "character", "logical",
-      "numeric", "numeric", "character", "character", "integer",
+      "numeric", "numeric", "numeric", "character", "character", "integer",
       "character", "character", "character", "integer", "character/list"
     ),
     role = c(
@@ -46,6 +46,7 @@ montage_manifest_schema <- function() {
       "colorbar units",
       "whether the statistic has positive and negative semantics",
       "per-map p-value override",
+      "per-map Benjamini-Hochberg FDR q-value override",
       "per-map numeric threshold override",
       "cluster tail policy",
       "cluster connectivity policy",
@@ -151,7 +152,7 @@ validate_manifest <- function(manifest,
   }
   manifest$signed <- .coerce_manifest_logical(manifest$signed, "signed")
 
-  for (field in c("df", "p", "threshold", "min_cluster_size", "n")) {
+  for (field in c("df", "p", "q", "threshold", "min_cluster_size", "n")) {
     if (field %in% names(manifest)) {
       manifest[[field]] <- .coerce_manifest_numeric(manifest[[field]], field)
     }
@@ -267,6 +268,18 @@ validate_manifest <- function(manifest,
     if (any(bad)) {
       stop(
         "Manifest column 'p' must be between 0 and 1 for map_id: ",
+        paste(manifest$map_id[bad], collapse = ", "),
+        call. = FALSE
+      )
+    }
+  }
+
+  if ("q" %in% names(manifest)) {
+    bad <- !.missing_numeric(manifest$q) &
+      (!is.finite(manifest$q) | manifest$q <= 0 | manifest$q >= 1)
+    if (any(bad)) {
+      stop(
+        "Manifest column 'q' must be between 0 and 1 for map_id: ",
         paste(manifest$map_id[bad], collapse = ", "),
         call. = FALSE
       )

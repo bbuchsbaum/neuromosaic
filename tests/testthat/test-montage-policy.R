@@ -36,6 +36,8 @@ test_that("montage_policy constructs validated default policy objects", {
 
 test_that("montage_policy validates constructor inputs", {
   expect_error(montage_policy(p = 2), "between 0 and 1")
+  expect_error(montage_policy(q = 2), "between 0 and 1")
+  expect_error(montage_policy(q = 0.05, threshold = 3), "cannot be combined")
   expect_error(montage_policy(min_cluster_size = 0), "positive integer")
   expect_error(montage_policy(cap_within = 1), "character vector")
   expect_error(montage_policy(layout_fun = "not-a-function"), "function")
@@ -101,6 +103,44 @@ test_that("montage_policy supports custom threshold functions", {
   out <- resolve_montage_policy(manifest, policy)
 
   expect_identical(out$effective_threshold, c(42, 42))
+})
+
+test_that("montage_policy resolves FDR q thresholds from map values (#9)", {
+  manifest <- data.frame(
+    map_id = "z_map",
+    path = "z-map.nii.gz",
+    stat_kind = "z",
+    signed = TRUE,
+    label = "Z map",
+    stringsAsFactors = FALSE
+  )
+
+  out <- resolve_montage_policy(
+    manifest,
+    montage_policy(q = 0.05),
+    stat_maps = list(c(0, 1, 2, 3, 4))
+  )
+
+  expect_equal(out$effective_threshold[[1]], 3, tolerance = 1e-12)
+  expect_equal(out$effective_q[[1]], 0.05)
+})
+
+test_that("FDR q thresholding requires map values and supports row overrides (#9)", {
+  manifest <- make_policy_manifest()
+  manifest$q <- c(0.05, NA)
+
+  expect_error(
+    resolve_montage_policy(manifest, montage_policy()),
+    "requires statistic map values"
+  )
+
+  manifest$threshold <- c(7, NA)
+  out <- resolve_montage_policy(
+    manifest,
+    montage_policy(),
+    stat_maps = list(c(0, 1, 2), c(0, 1, 3))
+  )
+  expect_equal(out$effective_threshold[[1]], 7)
 })
 
 test_that("resolve_montage_policy validates declared cap and layout columns", {

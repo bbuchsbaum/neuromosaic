@@ -6,6 +6,7 @@
 \usage{
 montage_policy(
   p = 0.005,
+  q = NULL,
   threshold = NULL,
   tail = c("two_sided", "positive", "negative"),
   connectivity = c("18-connect", "26-connect", "6-connect"),
@@ -21,14 +22,16 @@ montage_policy(
 \arguments{
 \item{p}{Default p-value used when a manifest row has no `p` or `threshold`.}
 
+\item{q}{Optional Benjamini-Hochberg FDR q-value. When supplied, rows without
+an explicit `threshold` use the map's finite statistic values to derive a
+q-controlled critical statistic. A manifest `q` column can override this per
+row. Currently supported for `stat_kind` `"z"` and `"t"`.}
+
 \item{threshold}{Optional numeric threshold or function. A function receives
 `stat_kind`, `df`, `p`, and `tail` vectors (one element per map) and must
 return a numeric threshold per map, expressed in the statistic's own units
 (e.g. a critical t or z value); the engine keeps voxels with `|stat|`
-at or above it. A manifest `threshold` column overrides this per row. The
-function sees only those scalar policy fields, not the map values, so
-data-dependent corrections such as FDR must be precomputed per map and
-supplied through the manifest `threshold` column (see Details).}
+at or above it. A manifest `threshold` column overrides this per row.}
 
 \item{tail}{Default cluster tail policy.}
 
@@ -66,15 +69,13 @@ study-specific rules without changing the render engine.
 \details{
 # FDR / q-value thresholding
 
-There is no built-in `q =` option: the built-in p-to-threshold rule
-(`stat_kind` `"z"`/`"t"`) is uncorrected. FDR is data-dependent — the cutoff
-depends on the whole p-value distribution of a map — and the policy
-`threshold` function only sees `(stat_kind, df, p, tail)`, not the map
-values, so it cannot compute it. The supported pattern is to precompute the
-FDR-critical statistic value for each map upstream and put it in the manifest
-`threshold` column, which overrides the policy for that row. This is cleaner
-than zeroing non-significant voxels in the volume and forcing a tiny
-`threshold` to bypass the policy. See the example below.
+`q` performs Benjamini-Hochberg FDR thresholding per map over finite statistic
+values. The resolved threshold is written to `effective_threshold`, so the
+same cutoff is used for volume panels, surface panels, and peak tables.
+Explicit manifest `threshold` values still win for those rows. Maps with no
+FDR survivors receive a finite threshold above ordinary observed values and
+therefore render as empty panels under `render_montage_report(empty =
+"warning")`.
 }
 \examples{
 policy <- montage_policy(p = 0.001, tail = "two_sided")
@@ -84,19 +85,11 @@ z_at <- function(stat_kind, df, p, tail) rep(stats::qnorm(0.999), length(p))
 montage_policy(threshold = z_at)
 
 \dontrun{
-# FDR (q < 0.05): precompute a per-map critical |t| from each map's p-values
-# and supply it through the manifest `threshold` column.
-bh_threshold <- function(pvals, df, q = 0.05) {
-  pvals <- sort(pvals[is.finite(pvals)])
-  m <- length(pvals)
-  ok <- pvals <= (seq_len(m) / m) * q
-  # No survivors: a finite threshold above any statistic, so the map renders
-  # as an empty panel under render_montage_report(empty = "warning"). Avoid
-  # Inf, which the finite-positive threshold check would reject.
-  if (!any(ok)) return(.Machine$double.xmax)
-  stats::qt(1 - pvals[max(which(ok))] / 2, df = df)  # critical |t|
-}
-manifest$threshold <- mapply(bh_threshold, map_pvalues, manifest$df, q = 0.05)
-render_montage_report(manifest, "report.html", surfatlas = atlas)
+render_montage_report(
+  manifest,
+  "report.html",
+  policy = montage_policy(q = 0.05),
+  surfatlas = atlas
+)
 }
 }

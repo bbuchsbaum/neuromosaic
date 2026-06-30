@@ -7,7 +7,8 @@
 resolve_montage_policy(
   manifest,
   policy = montage_policy(),
-  empty = c("error", "warning")
+  empty = c("error", "warning"),
+  stat_maps = NULL
 )
 }
 \arguments{
@@ -19,6 +20,10 @@ resolve_montage_policy(
 voxels: `"error"` (default) or `"warning"`. Forwarded to
 [validate_manifest()]; only relevant when a `stat_map` list-column triggers
 overlay checks.}
+
+\item{stat_maps}{Optional list of statistic maps used to resolve FDR `q`
+thresholds. Required when `policy$q` or a manifest `q` column applies to
+any row without an explicit `threshold`.}
 }
 \value{
 The manifest with `effective_threshold`, `effective_tail`,

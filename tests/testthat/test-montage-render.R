@@ -656,6 +656,31 @@ test_that("render_montage_report announces qmd source instead of rendering (#10)
   )
 })
 
+test_that("render_montage_report applies FDR q thresholds before rendering (#9)", {
+  sp <- neuroim2::NeuroSpace(dim = c(1, 1, 5), spacing = c(1, 1, 1))
+  stat <- neuroim2::NeuroVol(array(c(0, 1, 2, 3, 4), dim = c(1, 1, 5)), sp)
+  manifest <- data.frame(
+    map_id = "z_fdr",
+    stat_kind = "z",
+    signed = TRUE,
+    label = "Z FDR",
+    stringsAsFactors = FALSE
+  )
+  manifest$stat_map <- I(list(stat))
+  out <- tempfile("montage-fdr-", fileext = ".qmd")
+
+  result <- suppressMessages(render_montage_report(
+    manifest,
+    output_file = out,
+    policy = montage_policy(q = 0.05),
+    render_peaks = FALSE
+  ))
+  rd <- readRDS(sub("\\.qmd$", "_report-data.rds", result))
+
+  expect_equal(rd$manifest$effective_threshold[[1]], 3, tolerance = 1e-12)
+  expect_equal(rd$manifest$effective_q[[1]], 0.05)
+})
+
 test_that("montage pdf output honors a custom latex_engine (#12)", {
   skip_if_not_installed("rmarkdown")
 

@@ -43,14 +43,15 @@
 #' study-specific rules without changing the render engine.
 #'
 #' @param p Default p-value used when a manifest row has no `p` or `threshold`.
+#' @param q Optional Benjamini-Hochberg FDR q-value. When supplied, rows without
+#'   an explicit `threshold` use the map's finite statistic values to derive a
+#'   q-controlled critical statistic. A manifest `q` column can override this per
+#'   row. Currently supported for `stat_kind` `"z"` and `"t"`.
 #' @param threshold Optional numeric threshold or function. A function receives
 #'   `stat_kind`, `df`, `p`, and `tail` vectors (one element per map) and must
 #'   return a numeric threshold per map, expressed in the statistic's own units
 #'   (e.g. a critical t or z value); the engine keeps voxels with `|stat|`
-#'   at or above it. A manifest `threshold` column overrides this per row. The
-#'   function sees only those scalar policy fields, not the map values, so
-#'   data-dependent corrections such as FDR must be precomputed per map and
-#'   supplied through the manifest `threshold` column (see Details).
+#'   at or above it. A manifest `threshold` column overrides this per row.
 #' @param tail Default cluster tail policy.
 #' @param connectivity Default cluster connectivity policy.
 #' @param min_cluster_size Default minimum cluster size.
@@ -71,15 +72,13 @@
 #' @details
 #' # FDR / q-value thresholding
 #'
-#' There is no built-in `q =` option: the built-in p-to-threshold rule
-#' (`stat_kind` `"z"`/`"t"`) is uncorrected. FDR is data-dependent — the cutoff
-#' depends on the whole p-value distribution of a map — and the policy
-#' `threshold` function only sees `(stat_kind, df, p, tail)`, not the map
-#' values, so it cannot compute it. The supported pattern is to precompute the
-#' FDR-critical statistic value for each map upstream and put it in the manifest
-#' `threshold` column, which overrides the policy for that row. This is cleaner
-#' than zeroing non-significant voxels in the volume and forcing a tiny
-#' `threshold` to bypass the policy. See the example below.
+#' `q` performs Benjamini-Hochberg FDR thresholding per map over finite statistic
+#' values. The resolved threshold is written to `effective_threshold`, so the
+#' same cutoff is used for volume panels, surface panels, and peak tables.
+#' Explicit manifest `threshold` values still win for those rows. Maps with no
+#' FDR survivors receive a finite threshold above ordinary observed values and
+#' therefore render as empty panels under `render_montage_report(empty =
+#' "warning")`.
 #'
 #' @return A `montage_policy` list.
 #' @examples
@@ -90,23 +89,16 @@
 #' montage_policy(threshold = z_at)
 #'
 #' \dontrun{
-#' # FDR (q < 0.05): precompute a per-map critical |t| from each map's p-values
-#' # and supply it through the manifest `threshold` column.
-#' bh_threshold <- function(pvals, df, q = 0.05) {
-#'   pvals <- sort(pvals[is.finite(pvals)])
-#'   m <- length(pvals)
-#'   ok <- pvals <= (seq_len(m) / m) * q
-#'   # No survivors: a finite threshold above any statistic, so the map renders
-#'   # as an empty panel under render_montage_report(empty = "warning"). Avoid
-#'   # Inf, which the finite-positive threshold check would reject.
-#'   if (!any(ok)) return(.Machine$double.xmax)
-#'   stats::qt(1 - pvals[max(which(ok))] / 2, df = df)  # critical |t|
-#' }
-#' manifest$threshold <- mapply(bh_threshold, map_pvalues, manifest$df, q = 0.05)
-#' render_montage_report(manifest, "report.html", surfatlas = atlas)
+#' render_montage_report(
+#'   manifest,
+#'   "report.html",
+#'   policy = montage_policy(q = 0.05),
+#'   surfatlas = atlas
+#' )
 #' }
 #' @export
 montage_policy <- function(p = 0.005,
+                           q = NULL,
                            threshold = NULL,
                            tail = c("two_sided", "positive", "negative"),
                            connectivity = c("18-connect", "26-connect",
@@ -124,6 +116,13 @@ montage_policy <- function(p = 0.005,
   if (!is.numeric(p) || length(p) != 1L || !is.finite(p) ||
       p <= 0 || p >= 1) {
     stop("'p' must be a single number between 0 and 1.", call. = FALSE)
+  }
+  if (!is.null(q) && (!is.numeric(q) || length(q) != 1L || !is.finite(q) ||
+                      q <= 0 || q >= 1)) {
+    stop("'q' must be NULL or a single number between 0 and 1.", call. = FALSE)
+  }
+  if (!is.null(q) && !is.null(threshold)) {
+    stop("'q' cannot be combined with a policy-level 'threshold'.", call. = FALSE)
   }
   if (!is.numeric(min_cluster_size) || length(min_cluster_size) != 1L ||
       !is.finite(min_cluster_size) || min_cluster_size < 1 ||
@@ -168,6 +167,7 @@ montage_policy <- function(p = 0.005,
   structure(
     list(
       p = p,
+      q = q,
       threshold = threshold,
       threshold_fun = threshold_fun,
       tail = tail,
@@ -195,13 +195,17 @@ montage_policy <- function(p = 0.005,
 #'   voxels: `"error"` (default) or `"warning"`. Forwarded to
 #'   [validate_manifest()]; only relevant when a `stat_map` list-column triggers
 #'   overlay checks.
+#' @param stat_maps Optional list of statistic maps used to resolve FDR `q`
+#'   thresholds. Required when `policy$q` or a manifest `q` column applies to
+#'   any row without an explicit `threshold`.
 #'
 #' @return The manifest with `effective_threshold`, `effective_tail`,
 #'   `effective_connectivity`, `effective_min_cluster_size`, and `cap_key`
 #'   columns added.
 #' @export
 resolve_montage_policy <- function(manifest, policy = montage_policy(),
-                                   empty = c("error", "warning")) {
+                                   empty = c("error", "warning"),
+                                   stat_maps = NULL) {
   if (!inherits(policy, "montage_policy")) {
     stop("'policy' must be created by montage_policy().", call. = FALSE)
   }
@@ -223,6 +227,7 @@ resolve_montage_policy <- function(manifest, policy = montage_policy(),
     policy$min_cluster_size
   )
   p <- .policy_column_or_default(manifest, "p", policy$p)
+  q <- .policy_column_or_default(manifest, "q", policy$q %||% NA_real_)
   df <- if ("df" %in% names(manifest)) manifest$df else rep(NA_real_, n)
 
   threshold <- rep(NA_real_, n)
@@ -241,13 +246,151 @@ resolve_montage_policy <- function(manifest, policy = montage_policy(),
     )
   }
 
+  fdr_rows <- !has_threshold & !is.na(q)
+  if (any(fdr_rows)) {
+    threshold[fdr_rows] <- .montage_fdr_thresholds(
+      manifest = manifest,
+      stat_maps = stat_maps,
+      rows = which(fdr_rows),
+      q = q,
+      tail = tail
+    )
+  }
+
   manifest$effective_threshold <- threshold
+  manifest$effective_q <- q
   manifest$effective_tail <- tail
   manifest$effective_connectivity <- connectivity
   manifest$effective_min_cluster_size <- as.integer(min_cluster_size)
   manifest$cap_key <- .policy_cap_key(manifest, policy$cap_within)
   attr(manifest, "montage_policy") <- policy
   manifest
+}
+
+.montage_policy_uses_fdr <- function(manifest, policy) {
+  if (!is.null(policy$q)) {
+    return(TRUE)
+  }
+  "q" %in% names(manifest) && any(!.missing_numeric(manifest$q))
+}
+
+.montage_fdr_thresholds <- function(manifest, stat_maps, rows, q, tail) {
+  if (is.null(stat_maps)) {
+    stop(
+      "FDR q thresholding requires statistic map values. Supply `stat_maps` ",
+      "to resolve_montage_policy() or render through render_montage_report().",
+      call. = FALSE
+    )
+  }
+  if (!is.list(stat_maps) || length(stat_maps) != nrow(manifest)) {
+    stop("'stat_maps' must be a list with one entry per manifest row.", call. = FALSE)
+  }
+
+  vapply(rows, function(i) {
+    .montage_fdr_threshold_one(
+      values = as.numeric(stat_maps[[i]]),
+      stat_kind = manifest$stat_kind[[i]],
+      df = if ("df" %in% names(manifest)) manifest$df[[i]] else NA_real_,
+      q = q[[i]],
+      tail = tail[[i]],
+      map_id = manifest$map_id[[i]]
+    )
+  }, numeric(1))
+}
+
+.montage_fdr_threshold_one <- function(values, stat_kind, df, q, tail, map_id) {
+  if (!is.numeric(q) || length(q) != 1L || !is.finite(q) || q <= 0 || q >= 1) {
+    stop("'q' must be between 0 and 1 for map_id '", map_id, "'.", call. = FALSE)
+  }
+
+  stat_kind <- tolower(as.character(stat_kind))
+  if (!stat_kind %in% c("z", "t")) {
+    stop(
+      "FDR q thresholding currently supports stat_kind 'z' and 't' only; ",
+      "supply an explicit threshold for map_id '", map_id, "'.",
+      call. = FALSE
+    )
+  }
+  if (identical(stat_kind, "t") &&
+      (is.na(df) || !is.finite(df) || df <= 0)) {
+    stop(
+      "FDR q thresholding for stat_kind 't' requires positive finite df for ",
+      "map_id '", map_id, "'.",
+      call. = FALSE
+    )
+  }
+
+  finite <- is.finite(values)
+  values <- values[finite]
+  if (length(values) == 0L) {
+    return(.Machine$double.xmax)
+  }
+
+  pvals <- .montage_stat_p_values(values, stat_kind = stat_kind, df = df,
+                                  tail = tail)
+  keep <- is.finite(pvals)
+  pvals <- pvals[keep]
+  values <- values[keep]
+  if (length(pvals) == 0L) {
+    return(.Machine$double.xmax)
+  }
+
+  ord <- order(pvals)
+  p_sorted <- pvals[ord]
+  ok <- p_sorted <= (seq_along(p_sorted) / length(p_sorted)) * q
+  if (!any(ok)) {
+    return(.Machine$double.xmax)
+  }
+
+  pcrit <- p_sorted[max(which(ok))]
+  threshold <- .montage_p_to_stat_threshold(
+    p = pcrit, stat_kind = stat_kind, df = df, tail = tail
+  )
+  if (is.finite(threshold) && threshold > 0) {
+    return(threshold)
+  }
+
+  accepted <- pvals <= pcrit
+  .montage_observed_threshold(values[accepted], tail = tail)
+}
+
+.montage_stat_p_values <- function(values, stat_kind, df, tail) {
+  p <- if (identical(stat_kind, "z")) {
+    if (identical(tail, "positive")) {
+      stats::pnorm(values, lower.tail = FALSE)
+    } else if (identical(tail, "negative")) {
+      stats::pnorm(values)
+    } else {
+      2 * stats::pnorm(abs(values), lower.tail = FALSE)
+    }
+  } else if (identical(tail, "positive")) {
+    stats::pt(values, df = df, lower.tail = FALSE)
+  } else if (identical(tail, "negative")) {
+    stats::pt(values, df = df)
+  } else {
+    2 * stats::pt(abs(values), df = df, lower.tail = FALSE)
+  }
+  pmax(0, pmin(1, p))
+}
+
+.montage_p_to_stat_threshold <- function(p, stat_kind, df, tail) {
+  upper_prob <- if (identical(tail, "two_sided")) 1 - p / 2 else 1 - p
+  if (identical(stat_kind, "z")) {
+    return(stats::qnorm(upper_prob))
+  }
+  stats::qt(upper_prob, df = df)
+}
+
+.montage_observed_threshold <- function(values, tail) {
+  if (length(values) == 0L) {
+    return(.Machine$double.xmax)
+  }
+  threshold <- if (identical(tail, "positive")) {
+    min(values[values > 0], na.rm = TRUE)
+  } else {
+    min(abs(values), na.rm = TRUE)
+  }
+  if (is.finite(threshold) && threshold > 0) threshold else .Machine$double.xmax
 }
 
 .policy_column_or_default <- function(manifest, field, default) {
