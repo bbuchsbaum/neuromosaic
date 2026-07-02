@@ -51,6 +51,25 @@
 #' @param layout Optional character vector naming manifest columns used for
 #'   nested report sections. Overrides `policy$layout` when supplied.
 #' @param labeller Optional labeller passed to [apply_montage_labeller()].
+#' @param intro Optional report-level preamble rendered once before the maps: a
+#'   markdown character scalar, or a character vector collapsed with blank lines.
+#'   Use it to frame the whole report (what the contrasts are, how to read them)
+#'   beyond the individual panel labels.
+#' @param section_notes Optional data frame of section-level narrative for
+#'   layout-grouped reports. Alongside a `text` column (the markdown narrative),
+#'   name a subset of the `layout` columns to identify the section: a row that
+#'   fixes the first *k* layout columns (leaving deeper layout columns `NA`) has
+#'   its text emitted under that section's heading. For example, with
+#'   `layout = c("model", "contrast")`, a row `model = "m1", contrast = NA`
+#'   annotates the whole `m1` section, while `model = "m1", contrast = "faces"`
+#'   annotates the subsection. Every named column must be a layout column, each
+#'   layout path must match at least one map, and paths must be unique (typos
+#'   error out).
+#' @param interludes Optional data frame of free-standing narrative placed
+#'   between panels rather than inside a panel's `description`. Columns: `map_id`
+#'   (an existing manifest map), `text` (markdown), and optional `position`
+#'   (`"before"` or `"after"`, default `"before"`) selecting the side of that
+#'   panel. Multiple rows for the same anchor render in row order.
 #' @param policy A [montage_policy()] object.
 #' @param bg Optional background `NeuroVol` or path. When supplied, volume
 #'   montage PNGs are generated with [stat_montage()].
@@ -114,6 +133,9 @@ render_montage_report <- function(manifest,
                                   title = "Montage Report",
                                   layout = NULL,
                                   labeller = NULL,
+                                  intro = NULL,
+                                  section_notes = NULL,
+                                  interludes = NULL,
                                   policy = NULL,
                                   bg = NULL,
                                   surfatlas = NULL,
@@ -205,6 +227,9 @@ render_montage_report <- function(manifest,
     title = title,
     layout = layout,
     labeller = labeller,
+    intro = intro,
+    section_notes = section_notes,
+    interludes = interludes,
     policy = policy,
     bg = bg,
     surfatlas = surfatlas,
@@ -289,6 +314,9 @@ render_montage_report <- function(manifest,
                                          title,
                                          layout,
                                          labeller,
+                                         intro = NULL,
+                                         section_notes = NULL,
+                                         interludes = NULL,
                                          policy,
                                          bg,
                                          surfatlas,
@@ -378,6 +406,13 @@ render_montage_report <- function(manifest,
   }
 
   map_ids <- as.character(manifest$map_id)
+  narratives <- .validate_montage_narratives(
+    intro = intro,
+    section_notes = section_notes,
+    interludes = interludes,
+    layout = layout,
+    manifest = manifest
+  )
   panels <- .normalize_montage_panels(panels, map_ids)
   qc <- .montage_qc_summary(manifest)
   panels <- .attach_montage_qc(panels, qc)
@@ -423,6 +458,9 @@ render_montage_report <- function(manifest,
     manifest = manifest,
     panels = panels,
     qc = qc,
+    intro = narratives$intro,
+    section_notes = narratives$section_notes,
+    interludes = narratives$interludes,
     params = list(
       title = title,
       layout = layout,
@@ -490,6 +528,205 @@ render_montage_report <- function(manifest,
     )
   }
   args
+}
+
+# Validate and normalize the report narrative inputs (intro / section_notes /
+# interludes) against the resolved manifest and layout. Returns a list with the
+# three normalized components (any of which may be NULL). Structural or
+# referential errors (unknown layout columns, unknown map_ids, non-matching
+# section paths) abort so authoring typos surface immediately rather than
+# silently dropping narrative text.
+.validate_montage_narratives <- function(intro, section_notes, interludes,
+                                          layout, manifest) {
+  list(
+    intro = .validate_montage_intro(intro),
+    section_notes = .validate_montage_section_notes(section_notes, layout,
+                                                    manifest),
+    interludes = .validate_montage_interludes(interludes, manifest)
+  )
+}
+
+.validate_montage_intro <- function(intro) {
+  if (is.null(intro)) {
+    return(NULL)
+  }
+  if (!is.character(intro)) {
+    stop("'intro' must be NULL or a character vector.", call. = FALSE)
+  }
+  if (anyNA(intro)) {
+    stop("'intro' must not contain NA.", call. = FALSE)
+  }
+  intro <- paste(intro, collapse = "\n\n")
+  if (!nzchar(trimws(intro))) {
+    return(NULL)
+  }
+  intro
+}
+
+.validate_montage_section_notes <- function(section_notes, layout, manifest) {
+  if (is.null(section_notes)) {
+    return(NULL)
+  }
+  if (!is.data.frame(section_notes)) {
+    stop("'section_notes' must be NULL or a data frame.", call. = FALSE)
+  }
+  section_notes <- as.data.frame(section_notes, stringsAsFactors = FALSE)
+  if (nrow(section_notes) == 0L) {
+    return(NULL)
+  }
+  if (!"text" %in% names(section_notes)) {
+    stop("'section_notes' must contain a 'text' column.", call. = FALSE)
+  }
+  key_cols <- setdiff(names(section_notes), "text")
+  unknown <- setdiff(key_cols, layout)
+  if (length(unknown) > 0L) {
+    stop(
+      "'section_notes' column(s) are not layout columns: ",
+      paste(unknown, collapse = ", "),
+      ". Layout is: ",
+      if (length(layout) == 0L) "(none)" else paste(layout, collapse = ", "),
+      ".",
+      call. = FALSE
+    )
+  }
+  if (length(intersect(key_cols, layout)) == 0L) {
+    stop(
+      "'section_notes' must name at least one layout column ",
+      "to identify the section.",
+      call. = FALSE
+    )
+  }
+
+  text <- as.character(section_notes$text)
+  if (any(is.na(text) | !nzchar(trimws(text)))) {
+    stop("'section_notes$text' must be non-empty for every row.",
+         call. = FALSE)
+  }
+
+  # Normalize key cells to character and treat blanks (e.g. empty CSV cells for
+  # deeper layout levels) as NA, so the same frame matches identically whether it
+  # came from R or from a CSV read.
+  for (col in key_cols) {
+    values <- as.character(section_notes[[col]])
+    values[is.na(values) | !nzchar(trimws(values))] <- NA_character_
+    section_notes[[col]] <- values
+  }
+
+  ordered_keys <- intersect(layout, key_cols)
+  paths <- character(nrow(section_notes))
+  for (i in seq_len(nrow(section_notes))) {
+    depth <- 0L
+    for (col in ordered_keys) {
+      value <- section_notes[[col]][[i]]
+      specified <- !is.na(value) && nzchar(trimws(as.character(value)))
+      if (specified) {
+        if (depth != match(col, ordered_keys) - 1L) {
+          stop(
+            "'section_notes' row ", i, " skips a layout level before '", col,
+            "'. Set the leading layout column(s) or leave deeper ones NA.",
+            call. = FALSE
+          )
+        }
+        depth <- match(col, ordered_keys)
+      }
+    }
+    if (depth == 0L) {
+      stop(
+        "'section_notes' row ", i, " does not fix any layout value.",
+        call. = FALSE
+      )
+    }
+    used <- ordered_keys[seq_len(depth)]
+    path_values <- vapply(used, function(col) {
+      as.character(section_notes[[col]][[i]])
+    }, character(1))
+    if (!.montage_section_path_exists(manifest, used, path_values)) {
+      stop(
+        "'section_notes' row ", i, " does not match any map: ",
+        paste(paste0(used, "=", path_values), collapse = ", "), ".",
+        call. = FALSE
+      )
+    }
+    paths[[i]] <- paste(used, path_values, sep = "=", collapse = "\r")
+  }
+  if (anyDuplicated(paths)) {
+    stop("'section_notes' has duplicate section path(s).", call. = FALSE)
+  }
+
+  section_notes
+}
+
+# TRUE when at least one manifest row matches the layout path (columns `cols`
+# fixed to `values`, in order).
+.montage_section_path_exists <- function(manifest, cols, values) {
+  if (length(cols) == 0L) {
+    return(FALSE)
+  }
+  keep <- rep(TRUE, nrow(manifest))
+  for (j in seq_along(cols)) {
+    col <- cols[[j]]
+    if (!col %in% names(manifest)) {
+      return(FALSE)
+    }
+    keep <- keep & !is.na(manifest[[col]]) &
+      as.character(manifest[[col]]) == values[[j]]
+  }
+  any(keep)
+}
+
+.validate_montage_interludes <- function(interludes, manifest) {
+  if (is.null(interludes)) {
+    return(NULL)
+  }
+  if (!is.data.frame(interludes)) {
+    stop("'interludes' must be NULL or a data frame.", call. = FALSE)
+  }
+  interludes <- as.data.frame(interludes, stringsAsFactors = FALSE)
+  if (nrow(interludes) == 0L) {
+    return(NULL)
+  }
+  missing <- setdiff(c("map_id", "text"), names(interludes))
+  if (length(missing) > 0L) {
+    stop(
+      "'interludes' must contain column(s): ",
+      paste(missing, collapse = ", "), ".",
+      call. = FALSE
+    )
+  }
+
+  text <- as.character(interludes$text)
+  if (any(is.na(text) | !nzchar(trimws(text)))) {
+    stop("'interludes$text' must be non-empty for every row.", call. = FALSE)
+  }
+
+  if ("position" %in% names(interludes)) {
+    position <- trimws(tolower(as.character(interludes$position)))
+    position[is.na(position) | !nzchar(position)] <- "before"
+    bad <- !position %in% c("before", "after")
+    if (any(bad)) {
+      stop(
+        "'interludes$position' must be 'before' or 'after'; bad value(s): ",
+        paste(unique(as.character(interludes$position)[bad]), collapse = ", "),
+        ".",
+        call. = FALSE
+      )
+    }
+    interludes$position <- position
+  } else {
+    interludes$position <- rep("before", nrow(interludes))
+  }
+
+  map_ids <- as.character(manifest$map_id)
+  unknown <- setdiff(unique(as.character(interludes$map_id)), map_ids)
+  if (length(unknown) > 0L) {
+    stop(
+      "'interludes$map_id' value(s) are not in the manifest: ",
+      paste(unknown, collapse = ", "), ".",
+      call. = FALSE
+    )
+  }
+
+  interludes
 }
 
 .render_montage_volume_panels <- function(manifest,

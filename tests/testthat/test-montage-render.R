@@ -681,6 +681,116 @@ test_that("render_montage_report applies FDR q thresholds before rendering (#9)"
   expect_equal(rd$manifest$effective_q[[1]], 0.05)
 })
 
+test_that("render_montage_report threads narrative into report data", {
+  manifest <- make_montage_render_manifest()
+  qmd_out <- tempfile("montage-report-", fileext = ".qmd")
+
+  section_notes <- data.frame(
+    contrast = "contrast-a",
+    model = NA_character_,
+    text = "Contrast A across two models.",
+    stringsAsFactors = FALSE
+  )
+  interludes <- data.frame(
+    map_id = "contrast_a_model_2",
+    position = "before",
+    text = "Compare model 2 against model 1 above.",
+    stringsAsFactors = FALSE
+  )
+
+  result <- suppressMessages(render_montage_report(
+    manifest,
+    output_file = qmd_out,
+    layout = c("contrast", "model"),
+    intro = "This report shows contrast A.",
+    section_notes = section_notes,
+    interludes = interludes
+  ))
+  rd <- readRDS(sub("\\.qmd$", "_report-data.rds", result))
+
+  expect_identical(rd$intro, "This report shows contrast A.")
+  expect_identical(rd$section_notes$text, "Contrast A across two models.")
+  expect_true(is.na(rd$section_notes$model))
+  expect_identical(rd$interludes$map_id, "contrast_a_model_2")
+  expect_identical(rd$interludes$position, "before")
+})
+
+test_that("render_montage_report validates narrative inputs", {
+  manifest <- make_montage_render_manifest()
+  qmd_out <- tempfile("montage-report-", fileext = ".qmd")
+  base <- list(
+    manifest = manifest,
+    output_file = qmd_out,
+    layout = c("contrast", "model")
+  )
+
+  expect_error(
+    do.call(render_montage_report, c(base, list(
+      interludes = data.frame(map_id = "nope", text = "x",
+                              stringsAsFactors = FALSE)
+    ))),
+    "not in the manifest"
+  )
+  expect_error(
+    do.call(render_montage_report, c(base, list(
+      interludes = data.frame(map_id = "contrast_a_model_1", text = "x",
+                              position = "sideways", stringsAsFactors = FALSE)
+    ))),
+    "before"
+  )
+  expect_error(
+    do.call(render_montage_report, c(base, list(
+      section_notes = data.frame(bogus = "x", text = "y",
+                                 stringsAsFactors = FALSE)
+    ))),
+    "not layout columns"
+  )
+  expect_error(
+    do.call(render_montage_report, c(base, list(
+      section_notes = data.frame(contrast = "no-such", text = "y",
+                                 stringsAsFactors = FALSE)
+    ))),
+    "does not match any map"
+  )
+  expect_error(
+    do.call(render_montage_report, c(base, list(
+      section_notes = data.frame(contrast = "contrast-a",
+                                 stringsAsFactors = FALSE)
+    ))),
+    "must contain a 'text' column"
+  )
+})
+
+test_that("render_montage_report emits narrative into rendered HTML", {
+  skip_if_not_installed("rmarkdown")
+  skip_if_not(rmarkdown::pandoc_available(), "pandoc is required for render tests")
+
+  manifest <- make_montage_render_manifest()
+  html_out <- tempfile("montage-report-", fileext = ".html")
+
+  result <- render_montage_report(
+    manifest,
+    output_file = html_out,
+    layout = c("contrast", "model"),
+    intro = "PREAMBLE_MARKER text.",
+    section_notes = data.frame(
+      contrast = "contrast-a", model = NA_character_,
+      text = "SECTION_MARKER text.", stringsAsFactors = FALSE
+    ),
+    interludes = data.frame(
+      map_id = "contrast_a_model_2", position = "before",
+      text = "INTERLUDE_MARKER text.", stringsAsFactors = FALSE
+    ),
+    quiet = TRUE
+  )
+
+  html <- paste(readLines(result, warn = FALSE), collapse = "\n")
+  expect_match(html, "PREAMBLE_MARKER")
+  expect_match(html, "SECTION_MARKER")
+  expect_match(html, "INTERLUDE_MARKER")
+  expect_match(html, "nm-interlude", fixed = TRUE)
+})
+
 test_that("montage pdf output honors a custom latex_engine (#12)", {
   skip_if_not_installed("rmarkdown")
 

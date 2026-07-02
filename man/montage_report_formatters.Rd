@@ -7,7 +7,10 @@
 montage_report_formatters(
   manifest = NULL,
   layout = character(),
-  is_html = FALSE
+  is_html = FALSE,
+  intro = NULL,
+  section_notes = NULL,
+  interludes = NULL
 )
 }
 \arguments{
@@ -17,6 +20,19 @@ montage_report_formatters(
 
 \item{is_html}{Logical; emit images as base64 HTML tags when `TRUE`, otherwise
 emit markdown image links.}
+
+\item{intro}{Optional report-level preamble. A markdown character scalar (or
+vector collapsed with blank lines) emitted once before the maps by
+`emit_intro()`.}
+
+\item{section_notes}{Optional data frame of section-level narrative keyed by
+`layout` column values plus a `text` column. A row that sets the first *k*
+layout columns (leaving deeper ones `NA`) has its text emitted under that
+section's heading. See [render_montage_report()] for the contract.}
+
+\item{interludes}{Optional data frame of free-standing inter-map narrative
+with columns `map_id`, `text`, and optional `position` (`"before"` or
+`"after"`), emitted around the named panel by `emit_interludes()`.}
 }
 \value{
 A named list of formatter and emitter functions.

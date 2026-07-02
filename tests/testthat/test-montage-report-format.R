@@ -151,6 +151,101 @@ test_that("montage_report_formatters suppresses redundant panel QC", {
   expect_match(msg, "sub-01, sub-02", fixed = TRUE)
 })
 
+test_that("emit_intro renders report-level preamble in both output modes", {
+  none <- montage_report_formatters()
+  expect_identical(capture.output(none$emit_intro()), character(0))
+
+  html <- montage_report_formatters(intro = "Read me **first**.", is_html = TRUE)
+  html_out <- paste(capture.output(html$emit_intro()), collapse = "\n")
+  expect_match(html_out, "::: {.nm-intro}", fixed = TRUE)
+  expect_match(html_out, "Read me **first**.", fixed = TRUE)
+
+  md <- montage_report_formatters(intro = c("Line one.", "Line two."))
+  md_out <- paste(capture.output(md$emit_intro()), collapse = "\n")
+  expect_match(md_out, "Line one.", fixed = TRUE)
+  expect_match(md_out, "Line two.", fixed = TRUE)
+  expect_false(grepl("nm-intro", md_out, fixed = TRUE))
+})
+
+test_that("section notes render under headings (markdown) and breadcrumb (HTML)", {
+  manifest <- data.frame(
+    map_id = c("faces_m1", "faces_m2"),
+    label = c("Faces M1", "Faces M2"),
+    contrast = "faces",
+    model = c("m1", "m2"),
+    stringsAsFactors = FALSE
+  )
+  section_notes <- data.frame(
+    contrast = c("faces", "faces"),
+    model = c(NA, "m1"),
+    text = c("Faces framing.", "Model 1 detail."),
+    stringsAsFactors = FALSE
+  )
+
+  md <- montage_report_formatters(
+    manifest = manifest,
+    layout = c("contrast", "model"),
+    section_notes = section_notes
+  )
+  first <- paste(capture.output(md$emit_panel_heading(1, "Faces M1")), collapse = "\n")
+  expect_match(first, "## faces", fixed = TRUE)
+  expect_match(first, "Faces framing.", fixed = TRUE)
+  expect_match(first, "Model 1 detail.", fixed = TRUE)
+
+  # The contrast note fires once; entering model m2 has no note of its own.
+  second <- paste(capture.output(md$emit_panel_heading(2, "Faces M2")), collapse = "\n")
+  expect_false(grepl("Faces framing.", second, fixed = TRUE))
+  expect_false(grepl("Model 1 detail.", second, fixed = TRUE))
+
+  html <- montage_report_formatters(
+    manifest = manifest,
+    layout = c("contrast", "model"),
+    section_notes = section_notes,
+    is_html = TRUE
+  )
+  html_first <- paste(
+    capture.output(html$emit_panel_heading(1, "Faces M1")),
+    collapse = "\n"
+  )
+  expect_match(html_first, "::: {.nm-section-note}", fixed = TRUE)
+  expect_match(html_first, "Faces framing.", fixed = TRUE)
+  expect_match(html_first, "Model 1 detail.", fixed = TRUE)
+  html_second <- paste(
+    capture.output(html$emit_panel_heading(2, "Faces M2")),
+    collapse = "\n"
+  )
+  expect_false(grepl("Faces framing.", html_second, fixed = TRUE))
+})
+
+test_that("emit_interludes filters by map_id and position", {
+  interludes <- data.frame(
+    map_id = c("faces_m1", "faces_m1", "faces_m2"),
+    position = c("before", "after", "before"),
+    text = c("Intro to M1.", "Recap of M1.", "Now M2."),
+    stringsAsFactors = FALSE
+  )
+  fmt <- montage_report_formatters(interludes = interludes, is_html = TRUE)
+
+  before <- paste(capture.output(fmt$emit_interludes("faces_m1", "before")), collapse = "\n")
+  expect_match(before, "::: {.nm-interlude}", fixed = TRUE)
+  expect_match(before, "Intro to M1.", fixed = TRUE)
+  expect_false(grepl("Recap of M1.", before, fixed = TRUE))
+
+  after <- paste(capture.output(fmt$emit_interludes("faces_m1", "after")), collapse = "\n")
+  expect_match(after, "Recap of M1.", fixed = TRUE)
+
+  # No interlude for this anchor/position emits nothing.
+  expect_identical(
+    capture.output(fmt$emit_interludes("faces_m2", "after")),
+    character(0)
+  )
+
+  md <- montage_report_formatters(interludes = interludes)
+  md_before <- paste(capture.output(md$emit_interludes("faces_m2", "before")), collapse = "\n")
+  expect_match(md_before, "Now M2.", fixed = TRUE)
+  expect_false(grepl("nm-interlude", md_before, fixed = TRUE))
+})
+
 test_that("montage report templates use the shared formatter factory", {
   rmd <- system.file("templates", "montage_report.Rmd", package = "neuromosaic")
   qmd <- system.file("templates", "montage_report.qmd", package = "neuromosaic")
@@ -163,6 +258,10 @@ test_that("montage report templates use the shared formatter factory", {
   expect_match(qmd_text, "emit_report_overview", fixed = TRUE)
   expect_match(rmd_text, "emit_panel_heading", fixed = TRUE)
   expect_match(qmd_text, "emit_panel_heading", fixed = TRUE)
+  expect_match(rmd_text, "emit_intro", fixed = TRUE)
+  expect_match(qmd_text, "emit_intro", fixed = TRUE)
+  expect_match(rmd_text, "emit_interludes", fixed = TRUE)
+  expect_match(qmd_text, "emit_interludes", fixed = TRUE)
   expect_match(qmd_text, "#| results: asis", fixed = TRUE)
   expect_false(grepl("format_peak_table <-", rmd_text, fixed = TRUE))
   expect_false(grepl("format_peak_table <-", qmd_text, fixed = TRUE))

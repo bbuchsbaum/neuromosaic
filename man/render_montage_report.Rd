@@ -12,6 +12,9 @@ render_montage_report(
   title = "Montage Report",
   layout = NULL,
   labeller = NULL,
+  intro = NULL,
+  section_notes = NULL,
+  interludes = NULL,
   policy = NULL,
   bg = NULL,
   surfatlas = NULL,
@@ -60,6 +63,28 @@ Ignored for `.html` and `.qmd` output.}
 nested report sections. Overrides `policy$layout` when supplied.}
 
 \item{labeller}{Optional labeller passed to [apply_montage_labeller()].}
+
+\item{intro}{Optional report-level preamble rendered once before the maps: a
+markdown character scalar, or a character vector collapsed with blank lines.
+Use it to frame the whole report (what the contrasts are, how to read them)
+beyond the individual panel labels.}
+
+\item{section_notes}{Optional data frame of section-level narrative for
+layout-grouped reports. Alongside a `text` column (the markdown narrative),
+name a subset of the `layout` columns to identify the section: a row that
+fixes the first *k* layout columns (leaving deeper layout columns `NA`) has
+its text emitted under that section's heading. For example, with
+`layout = c("model", "contrast")`, a row `model = "m1", contrast = NA`
+annotates the whole `m1` section, while `model = "m1", contrast = "faces"`
+annotates the subsection. Every named column must be a layout column, each
+layout path must match at least one map, and paths must be unique (typos
+error out).}
+
+\item{interludes}{Optional data frame of free-standing narrative placed
+between panels rather than inside a panel's `description`. Columns: `map_id`
+(an existing manifest map), `text` (markdown), and optional `position`
+(`"before"` or `"after"`, default `"before"`) selecting the side of that
+panel. Multiple rows for the same anchor render in row order.}
 
 \item{policy}{A [montage_policy()] object.}
 

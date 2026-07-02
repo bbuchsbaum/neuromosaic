@@ -9,13 +9,31 @@
 #' @param layout Optional character vector of layout columns.
 #' @param is_html Logical; emit images as base64 HTML tags when `TRUE`, otherwise
 #'   emit markdown image links.
+#' @param intro Optional report-level preamble. A markdown character scalar (or
+#'   vector collapsed with blank lines) emitted once before the maps by
+#'   `emit_intro()`.
+#' @param section_notes Optional data frame of section-level narrative keyed by
+#'   `layout` column values plus a `text` column. A row that sets the first *k*
+#'   layout columns (leaving deeper ones `NA`) has its text emitted under that
+#'   section's heading. See [render_montage_report()] for the contract.
+#' @param interludes Optional data frame of free-standing inter-map narrative
+#'   with columns `map_id`, `text`, and optional `position` (`"before"` or
+#'   `"after"`), emitted around the named panel by `emit_interludes()`.
 #'
 #' @return A named list of formatter and emitter functions.
 #' @export
 montage_report_formatters <- function(manifest = NULL,
                                       layout = character(),
-                                      is_html = FALSE) {
+                                      is_html = FALSE,
+                                      intro = NULL,
+                                      section_notes = NULL,
+                                      interludes = NULL) {
   layout_state <- new.env(parent = emptyenv())
+  # Section-note change detection for the HTML path is tracked separately from
+  # `layout_state` (which drives markdown/PDF headings) so the two never share
+  # state; only one branch runs per render, but keeping them distinct avoids any
+  # cross-talk if a custom template calls both emitters.
+  section_state <- new.env(parent = emptyenv())
   layout <- layout %||% character()
   if (is.null(manifest)) {
     manifest <- data.frame()
@@ -29,6 +47,11 @@ montage_report_formatters <- function(manifest = NULL,
     format_peak_table = .montage_report_format_peak_table,
     emit_report_styles = function() {
       .montage_report_emit_styles(is_html = isTRUE(is_html))
+    },
+    emit_intro = function() {
+      .montage_report_emit_narrative_block(
+        intro, "nm-intro", is_html = isTRUE(is_html)
+      )
     },
     emit_report_overview = function() {
       .montage_report_emit_report_overview(
@@ -52,6 +75,11 @@ montage_report_formatters <- function(manifest = NULL,
     emit_panel_qc = function(qc_row) {
       .montage_report_emit_panel_qc(qc_row, is_html = isTRUE(is_html))
     },
+    emit_interludes = function(map_id, position) {
+      .montage_report_emit_interludes(
+        interludes, map_id, position, is_html = isTRUE(is_html)
+      )
+    },
     emit_panel_heading = function(i, label) {
       .montage_report_emit_panel_heading(
         i = i,
@@ -59,7 +87,9 @@ montage_report_formatters <- function(manifest = NULL,
         manifest = manifest,
         layout = layout,
         layout_state = layout_state,
-        is_html = isTRUE(is_html)
+        is_html = isTRUE(is_html),
+        section_notes = section_notes,
+        section_state = section_state
       )
     },
     emit_layout_headings = function(i) {
@@ -67,10 +97,129 @@ montage_report_formatters <- function(manifest = NULL,
         i = i,
         manifest = manifest,
         layout = layout,
-        layout_state = layout_state
+        layout_state = layout_state,
+        section_notes = section_notes
       )
     }
   )
+}
+
+# Emit an author-provided markdown narrative block. `text` may be a character
+# vector (collapsed with blank lines). In HTML we wrap the block in a pandoc
+# fenced div so the class is available for styling *and* the inner markdown is
+# still parsed; in PDF/markdown we emit the raw markdown (an unknown fenced-div
+# class would otherwise be dropped by pandoc's LaTeX writer). Mirrors the
+# convention used for per-panel `description` text: author markdown, emitted
+# verbatim, never HTML-escaped.
+.montage_report_emit_narrative_block <- function(text, class, is_html) {
+  if (is.null(text) || length(text) == 0L) {
+    return(invisible(NULL))
+  }
+  text <- paste(text[!is.na(text)], collapse = "\n\n")
+  if (!nzchar(trimws(text))) {
+    return(invisible(NULL))
+  }
+  if (isTRUE(is_html)) {
+    cat("\n::: {.", class, "}\n\n", text, "\n\n:::\n\n", sep = "")
+  } else {
+    cat("\n", text, "\n\n", sep = "")
+  }
+  invisible(NULL)
+}
+
+# Look up the section-level narrative attached to the section node identified by
+# `path_values` (a named character vector for layout[seq_len(depth)]). A note row
+# matches when it fixes exactly those leading layout columns to those values and
+# leaves every deeper layout column NA. Returns the text or NULL.
+.montage_report_section_note <- function(section_notes, layout, path_values) {
+  if (is.null(section_notes) || !is.data.frame(section_notes) ||
+      nrow(section_notes) == 0L || !"text" %in% names(section_notes) ||
+      length(path_values) == 0L) {
+    return(NULL)
+  }
+  cols <- names(path_values)
+  keep <- rep(TRUE, nrow(section_notes))
+  for (col in cols) {
+    if (!col %in% names(section_notes)) {
+      return(NULL)
+    }
+    keep <- keep & !is.na(section_notes[[col]]) &
+      as.character(section_notes[[col]]) == path_values[[col]]
+  }
+  for (col in setdiff(layout, cols)) {
+    if (col %in% names(section_notes)) {
+      keep <- keep & is.na(section_notes[[col]])
+    }
+  }
+  hit <- which(keep)
+  if (length(hit) == 0L) {
+    return(NULL)
+  }
+  text <- section_notes$text[[hit[[1]]]]
+  if (is.na(text) || !nzchar(trimws(as.character(text)))) {
+    return(NULL)
+  }
+  as.character(text)
+}
+
+# Emit HTML section-level narrative when a layout section is newly entered.
+# HTML reports carry no per-section headings (each panel shows a breadcrumb), so
+# section change detection lives here rather than in the heading emitter.
+.montage_report_emit_html_section_notes <- function(i,
+                                                    manifest,
+                                                    layout,
+                                                    section_notes,
+                                                    section_state) {
+  if (is.null(section_notes) || length(layout) == 0L ||
+      !is.data.frame(manifest) || nrow(manifest) == 0L) {
+    return(invisible(NULL))
+  }
+  changed <- FALSE
+  path <- character(0)
+  for (field in layout) {
+    if (!field %in% names(manifest)) {
+      next
+    }
+    value <- as.character(manifest[[field]][[i]])
+    if (is.na(value) || !nzchar(value)) {
+      next
+    }
+    path[[field]] <- value
+    previous <- section_state[[field]]
+    if (changed || is.null(previous) || !identical(previous, value)) {
+      changed <- TRUE
+      note <- .montage_report_section_note(section_notes, layout, path)
+      if (!is.null(note)) {
+        .montage_report_emit_narrative_block(note, "nm-section-note",
+                                             is_html = TRUE)
+      }
+    }
+    section_state[[field]] <- value
+  }
+  invisible(NULL)
+}
+
+# Emit any free-standing inter-map narrative anchored to `map_id` at the given
+# `position` ("before" or "after" the panel). Multiple blocks for the same
+# anchor render in row order.
+.montage_report_emit_interludes <- function(interludes, map_id, position,
+                                            is_html) {
+  if (is.null(interludes) || !is.data.frame(interludes) ||
+      nrow(interludes) == 0L || !all(c("map_id", "text") %in% names(interludes))) {
+    return(invisible(NULL))
+  }
+  pos <- if ("position" %in% names(interludes)) {
+    as.character(interludes$position)
+  } else {
+    rep("before", nrow(interludes))
+  }
+  hit <- which(as.character(interludes$map_id) == map_id & pos == position)
+  for (h in hit) {
+    .montage_report_emit_narrative_block(
+      interludes$text[[h]], "nm-interlude", is_html = is_html
+    )
+  }
+  invisible(NULL)
 }
 
 .montage_report_fmt_val <- function(v) {
@@ -193,6 +342,9 @@ montage_report_formatters <- function(manifest = NULL,
     ".nm-caution{border-left:4px solid #d97706;background:#fff7ed;border-radius:4px;color:#743a04;margin:0.75rem 0 1rem;padding:0.65rem 0.8rem;}\n",
     ".nm-caution strong{margin-right:0.4rem;}\n",
     ".nm-peak-table{font-size:0.92rem;}\n",
+    ".nm-intro{color:#243447;font-size:1.02rem;line-height:1.55;margin:0.4rem 0 1.5rem;}\n",
+    ".nm-section-note{border-left:4px solid #2f6f73;background:#f2f7f7;border-radius:4px;color:#2b3d4f;margin:0.35rem 0 1.3rem;padding:0.65rem 0.9rem;}\n",
+    ".nm-interlude{border-left:4px solid #94a1b2;background:#f7f9fc;border-radius:4px;color:#31414f;margin:1.1rem 0;padding:0.65rem 0.9rem;}\n",
     "@media print{.nm-report-overview{display:block}.nm-overview-card{margin-bottom:0.5rem}}\n",
     "</style>\n\n",
     sep = ""
@@ -503,8 +655,19 @@ montage_report_formatters <- function(manifest = NULL,
                                                manifest,
                                                layout,
                                                layout_state,
-                                               is_html) {
+                                               is_html,
+                                               section_notes = NULL,
+                                               section_state = NULL) {
   if (isTRUE(is_html)) {
+    if (!is.null(section_state)) {
+      .montage_report_emit_html_section_notes(
+        i = i,
+        manifest = manifest,
+        layout = layout,
+        section_notes = section_notes,
+        section_state = section_state
+      )
+    }
     row <- manifest[i, , drop = FALSE]
     layout_values <- .montage_report_layout_values(row, layout)
     cat("\n\n<div class=\"nm-panel-heading\">\n", sep = "")
@@ -529,7 +692,8 @@ montage_report_formatters <- function(manifest = NULL,
     i = i,
     manifest = manifest,
     layout = layout,
-    layout_state = layout_state
+    layout_state = layout_state,
+    section_notes = section_notes
   )
   panel_hashes <- paste(rep("#", min(length(layout) + 2L, 6L)), collapse = "")
   cat("\n\n", panel_hashes, " ", label, "\n\n", sep = "")
@@ -539,11 +703,13 @@ montage_report_formatters <- function(manifest = NULL,
 .montage_report_emit_layout_headings <- function(i,
                                                  manifest,
                                                  layout,
-                                                 layout_state) {
+                                                 layout_state,
+                                                 section_notes = NULL) {
   if (length(layout) == 0L || !is.data.frame(manifest) || nrow(manifest) == 0L) {
     return(invisible(NULL))
   }
   changed <- FALSE
+  path <- character(0)
   for (depth in seq_along(layout)) {
     field <- layout[[depth]]
     if (!field %in% names(manifest)) {
@@ -553,11 +719,17 @@ montage_report_formatters <- function(manifest = NULL,
     if (is.na(value) || !nzchar(value)) {
       next
     }
+    path[[field]] <- value
     previous <- layout_state[[field]]
     if (changed || is.null(previous) || !identical(previous, value)) {
       changed <- TRUE
       hashes <- paste(rep("#", min(depth + 1L, 6L)), collapse = "")
       cat("\n\n", hashes, " ", value, "\n\n", sep = "")
+      note <- .montage_report_section_note(section_notes, layout, path)
+      if (!is.null(note)) {
+        .montage_report_emit_narrative_block(note, "nm-section-note",
+                                             is_html = FALSE)
+      }
     }
     layout_state[[field]] <- value
   }

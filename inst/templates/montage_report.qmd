@@ -27,7 +27,10 @@ qc <- rd$qc %||% data.frame()
 fmt <- neuromosaic::montage_report_formatters(
   manifest = manifest,
   layout = layout,
-  is_html = is_html
+  is_html = is_html,
+  intro = rd$intro,
+  section_notes = rd$section_notes,
+  interludes = rd$interludes
 )
 ```
 
@@ -36,6 +39,7 @@ fmt <- neuromosaic::montage_report_formatters(
 ```{r}
 #| results: asis
 fmt$emit_report_styles()
+fmt$emit_intro()
 fmt$emit_report_overview()
 fmt$emit_qc_summary(qc)
 ```
@@ -53,6 +57,7 @@ if (nrow(manifest) == 0L) {
     label <- as.character(row$label[[1]])
     panel <- panels[[map_id]] %||% list()
 
+    fmt$emit_interludes(map_id, "before")
     fmt$emit_panel_heading(i, label)
     if ("description" %in% names(row) &&
         !is.na(row$description[[1]]) &&
@@ -68,6 +73,7 @@ if (nrow(manifest) == 0L) {
     fmt$emit_panel_image(surface_image, paste(label, "surface montage"))
 
     fmt$emit_table(panel$table)
+    fmt$emit_interludes(map_id, "after")
   }
 }
 ```

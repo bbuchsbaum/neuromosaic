@@ -132,3 +132,8 @@ Built-in CLI atlas specs currently include:
 - `.qmd` output writes a Quarto source file and a companion
   `_report-data.rds` file for later rendering/customization.
 - PDF output requires a working Pandoc and LaTeX installation.
+
+<!-- albersdown:theme-note:start -->
+## Albers theme
+This package uses the albersdown theme. Existing vignette theme hooks are replaced so `albers.css` and local `albers.js` render consistently on CRAN and GitHub Pages. The defaults are configured via `params$family` and `params$preset` (family = 'red', preset = 'homage'). The pkgdown site uses `template: { package: albersdown }` together with generated `pkgdown/extra.css` and `pkgdown/extra.js` so the theme is linked and activated on site pages.
+<!-- albersdown:theme-note:end -->

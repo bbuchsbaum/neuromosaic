@@ -1,3 +1,4 @@
 url: https://bbuchsbaum.github.io/neuromosaic/
 template:
   bootstrap: 5
+  package: albersdown

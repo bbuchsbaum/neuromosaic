@@ -211,6 +211,13 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     manifest <- .cli_apply_render_labels(manifest, labels_path)
   }
 
+  intro_path <- .cli_opt_scalar(opts, "intro", NULL)
+  intro <- .cli_read_intro(intro_path)
+  section_notes_path <- .cli_opt_scalar(opts, "section_notes", NULL)
+  section_notes <- .cli_read_narrative_table(section_notes_path, "section-notes")
+  interludes_path <- .cli_opt_scalar(opts, "interludes", NULL)
+  interludes <- .cli_read_narrative_table(interludes_path, "interludes")
+
   layout <- .cli_parse_layout(.cli_opt_scalar(opts, "layout", NULL))
   default_p <- .cli_opt_numeric(opts, "p", 0.005)
   validate_maps <- isTRUE(.cli_opt_flag(opts, "validate", FALSE))
@@ -252,6 +259,9 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
       template = .cli_opt_scalar(opts, "template", NULL),
       title = .cli_opt_scalar(opts, "title", "Montage Report"),
       layout = layout,
+      intro = intro,
+      section_notes = section_notes,
+      interludes = interludes,
       policy = policy,
       bg = background,
       surfatlas = surfatlas,
@@ -443,6 +453,37 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
   }
 
   manifest
+}
+
+.cli_read_intro <- function(path) {
+  if (is.null(path) || !nzchar(path)) {
+    return(NULL)
+  }
+  if (!file.exists(path)) {
+    .cli_abort(
+      paste0("Intro file not found: ", path),
+      class = "neuromosaic_error_cli_invalid_manifest"
+    )
+  }
+  intro <- paste(readLines(path, warn = FALSE), collapse = "\n")
+  if (!nzchar(trimws(intro))) {
+    return(NULL)
+  }
+  intro
+}
+
+.cli_read_narrative_table <- function(path, label) {
+  if (is.null(path) || !nzchar(path)) {
+    return(NULL)
+  }
+  table <- .cli_read_render_manifest(path)
+  if (!"text" %in% names(table)) {
+    .cli_abort(
+      paste0("The --", label, " table must contain a 'text' column."),
+      class = "neuromosaic_error_cli_invalid_manifest"
+    )
+  }
+  table
 }
 
 .cli_parse_layout <- function(layout) {
@@ -1449,6 +1490,9 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     "                                 Precompute recipe-backed rows to disk, default on\n",
     "  --overwrite-recipes             Recompute derived maps even when cache files exist\n",
     "  --labels <file>                Optional CSV/TSV keyed by map_id with label/description columns\n",
+    "  --intro <file>                 Optional markdown file rendered as a report-level preamble\n",
+    "  --section-notes <file>         Optional CSV/TSV of section narrative: layout column(s) + text\n",
+    "  --interludes <file>            Optional CSV/TSV of inter-map narrative: map_id, text, position\n",
     "  --layout <a/b/c>               Nested report layout columns, e.g. contrast/model/variant\n",
     "  --cap-within <a/b>             Manifest columns that share a color cap\n",
     "  --background <file>            Optional background image for validate-time grid QC\n",

@@ -409,6 +409,55 @@ test_that("cli_main can source montage labels from a sidecar table", {
   expect_identical(spec$args$manifest$description, "Label-table description.")
 })
 
+test_that("cli_main sources montage narrative from intro/section/interlude files", {
+  fixture <- make_cli_montage_fixture()
+
+  intro_path <- file.path(fixture$root, "intro.md")
+  writeLines(c("Report **preamble**.", "", "Second paragraph."), intro_path)
+
+  section_path <- file.path(fixture$root, "section-notes.csv")
+  utils::write.csv(
+    data.frame(
+      contrast = "contrast-a",
+      model = "",
+      text = "Contrast A framing.",
+      stringsAsFactors = FALSE
+    ),
+    section_path,
+    row.names = FALSE
+  )
+
+  interlude_path <- file.path(fixture$root, "interludes.csv")
+  utils::write.csv(
+    data.frame(
+      map_id = "contrast_a_model_1",
+      position = "after",
+      text = "Closing note.",
+      stringsAsFactors = FALSE
+    ),
+    interlude_path,
+    row.names = FALSE
+  )
+
+  spec <- cli_main(
+    c(
+      "report",
+      "--style", "montage",
+      "--render-manifest", fixture$manifest_path,
+      "--layout", "contrast/model",
+      "--intro", intro_path,
+      "--section-notes", section_path,
+      "--interludes", interlude_path
+    ),
+    execute = FALSE
+  )
+
+  expect_match(spec$args$intro, "Report **preamble**.", fixed = TRUE)
+  expect_identical(spec$args$section_notes$text, "Contrast A framing.")
+  expect_identical(spec$args$interludes$map_id, "contrast_a_model_1")
+  expect_identical(spec$args$interludes$position, "after")
+})
+
 test_that("cli_main reads YAML config files and allows CLI overrides", {
   fixture <- make_cli_fixture()
   config_path <- file.path(fixture$root, "report.yml")
