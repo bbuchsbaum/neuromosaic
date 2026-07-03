@@ -26,7 +26,7 @@ test_that("montage_manifest_schema carries cluster-report parity fields", {
   expect_true(all(c(
     "map_id", "path", "recipe", "stat_kind", "df", "units", "signed",
     "p", "threshold", "tail", "connectivity", "min_cluster_size",
-    "space", "template", "mask", "label", "n", "subjects"
+    "space", "template", "mask", "parcel_values", "label", "n", "subjects"
   ) %in% schema$field))
   expect_true(schema$required[schema$field == "map_id"])
   expect_true(schema$required[schema$field == "label"])
@@ -43,6 +43,30 @@ test_that("validate_manifest accepts and normalizes a valid TSV-style manifest",
   expect_equal(out$df, 31)
   expect_equal(out$min_cluster_size, 10)
   expect_equal(out$n, 27)
+})
+
+test_that("validate_manifest accepts parcel_values as a surface source (#7)", {
+  manifest <- data.frame(
+    map_id = "roi_stats",
+    stat_kind = "z",
+    signed = TRUE,
+    threshold = 3,
+    label = "ROI statistics",
+    stringsAsFactors = FALSE
+  )
+  manifest$parcel_values <- I(list(c(`1` = 0, `2` = 4.2)))
+
+  out <- validate_manifest(manifest, check_files = FALSE)
+
+  expect_s3_class(out, "data.frame")
+  expect_equal(out$parcel_values[[1]], c(`1` = 0, `2` = 4.2))
+
+  empty <- manifest
+  empty$threshold <- 100
+  expect_error(
+    validate_manifest(empty, check_files = FALSE),
+    "suprathreshold parcels"
+  )
 })
 
 test_that("validate_manifest enforces required identity and source fields", {

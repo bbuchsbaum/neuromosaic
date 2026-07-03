@@ -190,7 +190,15 @@ materialize_montage_recipes <- function(manifest,
       stat_map <- if (is.list(col)) col[[i]] else col[i]
       if (methods::is(stat_map, "NeuroVol")) {
         manifest$map_hash[[i]] <- .montage_neurovol_hash(stat_map)
+        next
       }
+    }
+
+    if ("parcel_values" %in% names(manifest) &&
+        !.missing_column_values(manifest$parcel_values)[[i]]) {
+      manifest$map_hash[[i]] <- .montage_numeric_hash(
+        .manifest_row_parcel_values(manifest, i)
+      )
     }
   }
 
@@ -203,6 +211,19 @@ materialize_montage_recipes <- function(manifest,
   saveRDS(
     list(
       space = .neuro_space_signature(neuroim2::space(x)),
+      values = as.numeric(x)
+    ),
+    tmp
+  )
+  unname(tools::md5sum(tmp))
+}
+
+.montage_numeric_hash <- function(x) {
+  tmp <- tempfile("neuromosaic-values-hash-", fileext = ".rds")
+  on.exit(unlink(tmp), add = TRUE)
+  saveRDS(
+    list(
+      names = names(x),
       values = as.numeric(x)
     ),
     tmp

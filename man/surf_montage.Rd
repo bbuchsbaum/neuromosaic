@@ -5,7 +5,7 @@
 \title{Render a Statistic Surface Montage}
 \usage{
 surf_montage(
-  stat,
+  stat = NULL,
   surfatlas,
   output_file,
   threshold,
@@ -31,11 +31,13 @@ surf_montage(
   caption = NULL,
   plot_fun = NULL,
   projection = NULL,
-  empty = c("error", "warning")
+  empty = c("error", "warning"),
+  vals = NULL
 )
 }
 \arguments{
-\item{stat}{Statistic `NeuroVol` or file path.}
+\item{stat}{Statistic `NeuroVol` or file path. Leave `NULL` when using
+parcel-valued `vals`.}
 
 \item{surfatlas}{Surface atlas with `lh_atlas`/`rh_atlas` geometry.}
 
@@ -81,6 +83,10 @@ controls. They are ignored by the default `plot_brain()` path.}
 projection payload.}
 
 \item{empty}{Action when no suprathreshold voxels are present.}
+
+\item{vals}{Optional numeric vector of per-parcel statistic values. Named
+vectors are matched to `surfatlas$ids`; unnamed vectors must be in
+`surfatlas$ids` order.}
 }
 \value{
 A `surf_montage_result` list containing the PNG path, projection,
@@ -89,6 +95,8 @@ A `surf_montage_result` list containing the PNG path, projection,
 \description{
 Renders a statistic volume as a surface overlay by passing the volume to
 [neuroatlas::plot_brain()], which performs volume-to-surface projection
-against the supplied surface atlas. The older precomputed projection hook is
+against the supplied surface atlas. Alternatively, pass parcel-valued
+statistics in `vals` to render directly with `plot_brain(vals = )` without
+a volume-to-surface projection. The older precomputed projection hook is
 retained only for compatibility and testing, and is deprecated.
 }

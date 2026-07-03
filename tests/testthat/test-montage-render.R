@@ -198,6 +198,71 @@ test_that("render_montage_report adds surface panels with the shared cap", {
   expect_gt(panel$surface$n_suprathreshold, 0)
 })
 
+test_that("render_montage_report forwards parcel_values to surface vals (#7)", {
+  skip_if_not(
+    exists("local_mocked_bindings", envir = asNamespace("testthat"), inherits = FALSE),
+    "testthat::local_mocked_bindings() is required for this test"
+  )
+
+  tmpdir <- tempfile("montage-render-parcels-")
+  dir.create(tmpdir, recursive = TRUE)
+  manifest <- data.frame(
+    map_id = "roi_stats",
+    stat_kind = "z",
+    units = "z",
+    signed = TRUE,
+    threshold = 3,
+    label = "ROI statistics",
+    stringsAsFactors = FALSE
+  )
+  manifest$parcel_values <- I(list(c(`1` = 4.2, `2` = -5.1)))
+  captured <- new.env(parent = emptyenv())
+
+  testthat::local_mocked_bindings(
+    surf_montage = function(stat = NULL, surfatlas, output_file, threshold, tail,
+                            signed, cap, vals = NULL, width, height, res, title,
+                            subtitle, ...) {
+      captured$stat <- stat
+      captured$vals <- vals
+      writeLines("surface placeholder", output_file)
+      structure(
+        list(
+          image = normalizePath(output_file, mustWork = FALSE),
+          threshold = threshold,
+          tail = tail,
+          signed = signed,
+          cap = cap,
+          n_suprathreshold = sum(abs(vals) >= threshold, na.rm = TRUE),
+          surface_space = "fsLR-32k",
+          diagnostics = list(projection = "parcel_values")
+        ),
+        class = "surf_montage_result"
+      )
+    },
+    .package = "neuromosaic"
+  )
+
+  result <- render_montage_report(
+    manifest,
+    output_file = file.path(tmpdir, "parcel-surface.qmd"),
+    surfatlas = make_toy_surfatlas(),
+    image_width = 700,
+    image_height = 500,
+    image_res = 72
+  )
+
+  sidecar <- sub("\\.qmd$", "_report-data.rds", result)
+  rd <- readRDS(sidecar)
+  panel <- rd$panels$roi_stats
+
+  expect_null(captured$stat)
+  expect_equal(captured$vals, manifest$parcel_values[[1]])
+  expect_true(file.exists(panel$surface_image))
+  expect_false("volume_image" %in% names(panel))
+  expect_identical(panel$surface$diagnostics$projection, "parcel_values")
+  expect_false(is.na(rd$manifest$map_hash[[1]]))
+})
+
 test_that("render_montage_report reuses cached surface panels by map hash", {
   skip_if_not(
     exists("local_mocked_bindings", envir = asNamespace("testthat"), inherits = FALSE),
@@ -546,6 +611,11 @@ test_that("render_montage_report forwards volume_args and validates passthrough"
   expect_error(
     render_montage_report(manifest, output_file = out, bg = inputs$stat_map,
                           render_peaks = FALSE, surface_args = list(stat = 1)),
+    "cannot be forwarded"
+  )
+  expect_error(
+    render_montage_report(manifest, output_file = out, bg = inputs$stat_map,
+                          render_peaks = FALSE, surface_args = list(vals = 1)),
     "cannot be forwarded"
   )
 })

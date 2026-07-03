@@ -17,12 +17,14 @@ montage_manifest_schema <- function() {
   data.frame(
     field = c(
       "map_id", "path", "recipe", "space", "template", "mask",
+      "parcel_values",
       "stat_kind", "df", "units", "signed",
       "p", "q", "threshold", "tail", "connectivity", "min_cluster_size",
       "level", "label", "description", "n", "subjects"
     ),
     required = c(
       TRUE, FALSE, FALSE, FALSE, FALSE, FALSE,
+      FALSE,
       TRUE, FALSE, FALSE, TRUE,
       FALSE, FALSE, FALSE, FALSE, FALSE, FALSE,
       FALSE, TRUE, FALSE, FALSE, FALSE
@@ -30,6 +32,7 @@ montage_manifest_schema <- function() {
     type = c(
       "character", "character", "function/list", "character", "character",
       "character",
+      "numeric/list",
       "character", "numeric", "character", "logical",
       "numeric", "numeric", "numeric", "character", "character", "integer",
       "character", "character", "character", "integer", "character/list"
@@ -41,6 +44,7 @@ montage_manifest_schema <- function() {
       "declared map space",
       "template/background identity",
       "optional analysis mask",
+      "per-parcel statistic vector for direct surface rendering",
       "statistic family such as t, z, beta, or cope",
       "degrees of freedom for p-to-threshold conversion",
       "colorbar units",
@@ -65,8 +69,8 @@ montage_manifest_schema <- function() {
 #'
 #' Validates the storage-agnostic render manifest consumed by the montage report
 #' engine. Structural checks always run. Overlay checks run when `load_maps` is
-#' `TRUE`, when a `stat_map` list-column is present, or when `check_overlays` is
-#' explicitly set to `TRUE`.
+#' `TRUE`, when a non-missing `stat_map` or `parcel_values` list-column is
+#' present, or when `check_overlays` is explicitly set to `TRUE`.
 #'
 #' @param manifest A data frame with one row per renderable statistical map.
 #' @param background Optional background `NeuroVol`, `NeuroSpace`, or path used
@@ -75,7 +79,8 @@ montage_manifest_schema <- function() {
 #'   non-empty overlay checks.
 #' @param check_files Logical; require non-missing `path` values to exist.
 #' @param check_overlays Logical; run map-level QC checks. Defaults to `TRUE`
-#'   when `load_maps = TRUE` or a `stat_map` list-column is present.
+#'   when `load_maps = TRUE` or a non-missing `stat_map`/`parcel_values`
+#'   list-column is present.
 #' @param default_p Default p-value used to derive thresholds when a row has no
 #'   explicit `threshold` or `p`.
 #' @param default_tail Default tail used when the manifest omits `tail`.
@@ -92,7 +97,8 @@ validate_manifest <- function(manifest,
                               load_maps = FALSE,
                               check_files = TRUE,
                               check_overlays = load_maps ||
-                                "stat_map" %in% names(manifest),
+                                .manifest_has_nonmissing_column(manifest, "stat_map") ||
+                                .manifest_has_nonmissing_column(manifest, "parcel_values"),
                               default_p = 0.005,
                               default_tail = c("two_sided", "positive",
                                                "negative"),
@@ -127,6 +133,13 @@ validate_manifest <- function(manifest,
   }
 
   manifest
+}
+
+.manifest_has_nonmissing_column <- function(manifest, field) {
+  if (is.null(names(manifest)) || !field %in% names(manifest)) {
+    return(FALSE)
+  }
+  any(!.missing_column_values(manifest[[field]]))
 }
 
 .validate_manifest_required_columns <- function(manifest) {
@@ -204,12 +217,17 @@ validate_manifest <- function(manifest,
   } else {
     rep(FALSE, nrow(manifest))
   }
+  has_parcel_values <- if ("parcel_values" %in% names(manifest)) {
+    !.missing_column_values(manifest$parcel_values)
+  } else {
+    rep(FALSE, nrow(manifest))
+  }
 
-  if (any(!has_path & !has_recipe & !has_stat_map)) {
-    rows <- which(!has_path & !has_recipe & !has_stat_map)
+  if (any(!has_path & !has_recipe & !has_stat_map & !has_parcel_values)) {
+    rows <- which(!has_path & !has_recipe & !has_stat_map & !has_parcel_values)
     stop(
       "Each render manifest row must define 'path' or 'recipe' ",
-      "(or an in-memory 'stat_map' for validation). Missing row(s): ",
+      "(or an in-memory 'stat_map'/'parcel_values' source). Missing row(s): ",
       paste(rows, collapse = ", "),
       call. = FALSE
     )
@@ -382,16 +400,23 @@ validate_manifest <- function(manifest,
   background_space <- .montage_background_space(background)
 
   for (i in seq_len(nrow(manifest))) {
-    stat_map <- .manifest_row_stat_map(manifest, i, load_maps = load_maps)
-    if (!methods::is(stat_map, "NeuroVol")) {
-      stop(
-        "Overlay QC requires a NeuroVol for map_id '", manifest$map_id[[i]],
-        "'. Supply a path with load_maps=TRUE or a 'stat_map' list-column.",
-        call. = FALSE
-      )
+    parcel_values <- .manifest_row_parcel_values(manifest, i, required = FALSE)
+    if (!is.null(parcel_values)) {
+      values <- parcel_values
+    } else {
+      stat_map <- .manifest_row_stat_map(manifest, i, load_maps = load_maps)
+      if (!methods::is(stat_map, "NeuroVol")) {
+        stop(
+          "Overlay QC requires a NeuroVol or parcel values for map_id '",
+          manifest$map_id[[i]], "'. Supply a path with load_maps=TRUE, ",
+          "a 'stat_map' list-column, or a 'parcel_values' list-column.",
+          call. = FALSE
+        )
+      }
+      values <- as.numeric(stat_map)
     }
 
-    if (!is.null(background_space)) {
+    if (is.null(parcel_values) && !is.null(background_space)) {
       stat_space <- neuroim2::space(stat_map)
       if (!.same_neuro_space(background_space, stat_space)) {
         stop(
@@ -409,12 +434,13 @@ validate_manifest <- function(manifest,
       default_tail = default_tail
     )
     tail <- .manifest_row_tail(manifest, i, default_tail)
-    values <- as.numeric(stat_map)
     supra <- .suprathreshold_mask(values, threshold = threshold, tail = tail)
 
     if (!any(supra, na.rm = TRUE)) {
       msg <- paste0(
-        "No finite suprathreshold voxels for map_id '",
+        "No finite suprathreshold ",
+        if (is.null(parcel_values)) "voxels" else "parcels",
+        " for map_id '",
         manifest$map_id[[i]], "'."
       )
       if (identical(empty, "warning")) {
@@ -455,6 +481,26 @@ validate_manifest <- function(manifest,
   }
 
   NULL
+}
+
+.manifest_row_parcel_values <- function(manifest, row, required = TRUE) {
+  if (!"parcel_values" %in% names(manifest) ||
+      .missing_column_values(manifest$parcel_values)[[row]]) {
+    if (isTRUE(required)) {
+      stop(
+        "Missing 'parcel_values' for map_id '", manifest$map_id[[row]], "'.",
+        call. = FALSE
+      )
+    }
+    return(NULL)
+  }
+  col <- manifest$parcel_values
+  values <- if (is.list(col)) col[[row]] else col[row]
+  .coerce_parcel_value_vector(
+    values,
+    "parcel_values",
+    map_id = manifest$map_id[[row]]
+  )
 }
 
 .manifest_row_threshold <- function(manifest, row, default_p, default_tail) {

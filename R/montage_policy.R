@@ -195,9 +195,9 @@ montage_policy <- function(p = 0.005,
 #'   voxels: `"error"` (default) or `"warning"`. Forwarded to
 #'   [validate_manifest()]; only relevant when a `stat_map` list-column triggers
 #'   overlay checks.
-#' @param stat_maps Optional list of statistic maps used to resolve FDR `q`
-#'   thresholds. Required when `policy$q` or a manifest `q` column applies to
-#'   any row without an explicit `threshold`.
+#' @param stat_maps Optional list of statistic maps or numeric statistic
+#'   vectors used to resolve FDR `q` thresholds. Required when `policy$q` or a
+#'   manifest `q` column applies to any row without an explicit `threshold`.
 #'
 #' @return The manifest with `effective_threshold`, `effective_tail`,
 #'   `effective_connectivity`, `effective_min_cluster_size`, and `cap_key`

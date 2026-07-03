@@ -19,14 +19,17 @@
 #' additionally required for `stat_kind = "t"` rows whenever the threshold is
 #' derived from a p-value rather than supplied directly. See
 #' [montage_manifest_schema()] for the full column list and
-#' [build_manifest()]/[validate_manifest()] for construction and checks.
+#' [build_manifest()]/[validate_manifest()] for construction and checks. Surface
+#' reports may use an in-memory `parcel_values` list-column instead of a
+#' volumetric `path`/`stat_map`; those rows render directly through
+#' [surf_montage(vals = )] and do not support volume panels or peak tables.
 #'
 #' **Reserved passthrough arguments.** `volume_args` and `surface_args` forward
 #' styling to [stat_montage()] and [surf_montage()], but renderer-managed
 #' arguments are reserved and cannot be overridden: `volume_args` reserves
 #' `bg`, `stat`, and `draw`; `surface_args` reserves `stat`, `surfatlas`,
-#' `output_file`, `plot_fun`, and `projection`. Passing a reserved name is an
-#' error.
+#' `vals`, `output_file`, `plot_fun`, and `projection`. Passing a reserved name
+#' is an error.
 #'
 #' **Output format and portability.** The extension of `output_file` selects
 #' the format. `.html` (the default) is the most portable: it has no external
@@ -92,7 +95,7 @@
 #' @param surface_args Optional named list of styling arguments forwarded to
 #'   [surf_montage()] for every surface panel (e.g.
 #'   `list(overlay_alpha = 0.9, fun = "mode")`). Caller values win over the
-#'   defaults; `stat`, `surfatlas`, and `output_file` are managed by the
+#'   defaults; `stat`, `vals`, `surfatlas`, and `output_file` are managed by the
 #'   renderer. The same `modifyList`/`NULL` and analytical-override caveats as
 #'   `volume_args` apply.
 #' @param render_volume Logical; generate volume montage PNGs when `bg` is
@@ -168,7 +171,7 @@ render_montage_report <- function(manifest,
     surface_args, surf_montage,
     # `plot_fun`/`projection` are advanced/testing hooks (executable code), not
     # styling; keep them out of the report-level passthrough surface.
-    c("stat", "surfatlas", "output_file", "plot_fun", "projection"),
+    c("stat", "vals", "surfatlas", "output_file", "plot_fun", "projection"),
     "surface_args"
   )
 
@@ -385,7 +388,7 @@ render_montage_report <- function(manifest,
   policy$layout <- layout
   policy_stat_maps <- if (.montage_policy_uses_fdr(manifest, policy)) {
     lapply(seq_len(nrow(manifest)), function(i) {
-      .montage_manifest_stat_source(manifest, i)
+      .montage_manifest_stat_values(manifest, i)
     })
   } else {
     NULL
@@ -813,31 +816,37 @@ render_montage_report <- function(manifest,
   if (!dir.exists(image_dir)) {
     dir.create(image_dir, recursive = TRUE, showWarnings = FALSE)
   }
-  stat_maps <- lapply(seq_len(nrow(manifest)), function(i) {
-    .montage_manifest_stat_source(manifest, i)
+  surface_sources <- lapply(seq_len(nrow(manifest)), function(i) {
+    .montage_manifest_surface_source_args(manifest, i)
   })
-  caps <- .montage_shared_caps(manifest, stat_maps, policy = policy)
+  stat_values <- lapply(surface_sources, function(source) {
+    source$vals %||% source$stat
+  })
+  caps <- .montage_shared_caps(manifest, stat_values, policy = policy)
 
   for (i in seq_len(nrow(manifest))) {
     map_id <- as.character(manifest$map_id[[i]])
     group_cap <- caps[[manifest$cap_key[[i]]]]
+    source_args <- surface_sources[[i]]
     # surface_args (caller wins) can override threshold/tail/signed/cap; merge
     # before computing the cache key so it reflects the values actually rendered.
     base_args <- utils::modifyList(
-      list(
-        stat = stat_maps[[i]],
-        surfatlas = surfatlas,
-        threshold = manifest$effective_threshold[[i]],
-        tail = manifest$effective_tail[[i]],
-        signed = manifest$signed[[i]],
-        # See the volume renderer: a non-positive cap (empty cap group) is not a
-        # valid magnitude; pass NULL so surf_montage uses its benign default.
-        cap = if (is.finite(group_cap) && group_cap > 0) group_cap else NULL,
-        width = width,
-        height = height,
-        res = res,
-        title = manifest$label[[i]],
-        subtitle = .montage_panel_subtitle(manifest[i, , drop = FALSE])
+      c(
+        source_args,
+        list(
+          surfatlas = surfatlas,
+          threshold = manifest$effective_threshold[[i]],
+          tail = manifest$effective_tail[[i]],
+          signed = manifest$signed[[i]],
+          # See the volume renderer: a non-positive cap (empty cap group) is not
+          # a valid magnitude; pass NULL so surf_montage uses its benign default.
+          cap = if (is.finite(group_cap) && group_cap > 0) group_cap else NULL,
+          width = width,
+          height = height,
+          res = res,
+          title = manifest$label[[i]],
+          subtitle = .montage_panel_subtitle(manifest[i, , drop = FALSE])
+        )
       ),
       surface_args
     )
@@ -862,7 +871,7 @@ render_montage_report <- function(manifest,
 
     if (isTRUE(cache_surface) && file.exists(image_path)) {
       n_supra <- sum(.suprathreshold_mask(
-        as.numeric(stat_maps[[i]]),
+        as.numeric(stat_values[[i]]),
         threshold = eff_threshold,
         tail = eff_tail
       ), na.rm = TRUE)
@@ -924,11 +933,36 @@ render_montage_report <- function(manifest,
       manifest[row, , drop = FALSE]
     ))
   }
+  if ("parcel_values" %in% names(manifest) &&
+      !.missing_column_values(manifest$parcel_values)[[row]]) {
+    stop(
+      "Cannot render a volumetric montage for map_id '", manifest$map_id[[row]],
+      "' from 'parcel_values'. Provide 'path', 'recipe', or 'stat_map', ",
+      "or set render_volume/render_peaks to FALSE.",
+      call. = FALSE
+    )
+  }
   stop(
     "Cannot render volume montage for map_id '", manifest$map_id[[row]],
     "': no path, recipe, or stat_map is available.",
     call. = FALSE
   )
+}
+
+.montage_manifest_stat_values <- function(manifest, row) {
+  if ("parcel_values" %in% names(manifest) &&
+      !.missing_column_values(manifest$parcel_values)[[row]]) {
+    return(.manifest_row_parcel_values(manifest, row))
+  }
+  .montage_manifest_stat_source(manifest, row)
+}
+
+.montage_manifest_surface_source_args <- function(manifest, row) {
+  if ("parcel_values" %in% names(manifest) &&
+      !.missing_column_values(manifest$parcel_values)[[row]]) {
+    return(list(vals = .manifest_row_parcel_values(manifest, row)))
+  }
+  list(stat = .montage_manifest_stat_source(manifest, row))
 }
 
 .montage_shared_caps <- function(manifest, stat_maps, policy = NULL) {
@@ -1057,12 +1091,12 @@ render_montage_report <- function(manifest,
 
 # Stable digest of the render-affecting surface call arguments (tail, signed,
 # alpha, palette, sampling, views, hemis, device size, titles, ...) so the
-# surface PNG cache key changes whenever any of them does. The statistic volume
+# surface PNG cache key changes whenever any of them does. The statistic source
 # is covered by `map_hash`, and `surfatlas` by a cheap identity, so both are
 # excluded from the (potentially large) hashed payload.
 .montage_surface_style_key <- function(base_args, surfatlas) {
   payload <- base_args[setdiff(
-    names(base_args), c("stat", "surfatlas", "output_file", "empty")
+    names(base_args), c("stat", "vals", "surfatlas", "output_file", "empty")
   )]
   payload$.surfatlas <- surfatlas$name %||% surfatlas$surface_space %||%
     NA_character_

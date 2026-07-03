@@ -163,6 +163,61 @@ test_that("surf_montage delegates projection to plot_brain without a hook", {
   expect_gt(res$n_suprathreshold, 0)
 })
 
+test_that("surf_montage renders parcel-valued vals without projection (#7)", {
+  surfatlas <- make_toy_surfatlas()
+  captured <- new.env(parent = emptyenv())
+  plot_fun <- function(surfatlas, vals, lim, palette, ...) {
+    captured$vals <- vals
+    captured$lim <- lim
+    captured$palette <- palette
+    captured$has_overlay <- "overlay" %in% names(list(...))
+    ggplot2::ggplot(data.frame(x = 1, y = 1), ggplot2::aes(x, y)) +
+      ggplot2::geom_point()
+  }
+
+  res <- surf_montage(
+    vals = c(`1` = 4.5, `2` = -5.5),
+    surfatlas = surfatlas,
+    output_file = tempfile("surface-parcels-", fileext = ".png"),
+    threshold = 3,
+    cap = 6,
+    plot_fun = plot_fun,
+    width = 320,
+    height = 220,
+    res = 72
+  )
+
+  expect_equal(captured$vals, c(`1` = 4.5, `2` = -5.5))
+  expect_equal(captured$lim, c(-6, 6))
+  expect_identical(captured$palette, "vik")
+  expect_false(captured$has_overlay)
+  expect_identical(res$diagnostics$projection, "parcel_values")
+  expect_equal(res$n_suprathreshold, 2)
+  expect_equal(res$vals, captured$vals)
+
+  expect_error(
+    surf_montage(
+      stat = make_toy_cluster_report_inputs()$stat_map,
+      vals = c(1, 2),
+      surfatlas = surfatlas,
+      output_file = tempfile(fileext = ".png"),
+      threshold = 3,
+      plot_fun = plot_fun
+    ),
+    "exactly one"
+  )
+  expect_error(
+    surf_montage(
+      vals = c(1, 2, 3),
+      surfatlas = surfatlas,
+      output_file = tempfile(fileext = ".png"),
+      threshold = 3,
+      plot_fun = plot_fun
+    ),
+    "length 2"
+  )
+})
+
 test_that("surf_montage drops wrong-signed voxels for one-sided tails", {
   inputs <- make_toy_cluster_report_inputs()  # +4.5 cluster and -5.5 cluster
   captured <- new.env(parent = emptyenv())

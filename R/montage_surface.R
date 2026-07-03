@@ -2,10 +2,13 @@
 #'
 #' Renders a statistic volume as a surface overlay by passing the volume to
 #' [neuroatlas::plot_brain()], which performs volume-to-surface projection
-#' against the supplied surface atlas. The older precomputed projection hook is
+#' against the supplied surface atlas. Alternatively, pass parcel-valued
+#' statistics in `vals` to render directly with `plot_brain(vals = )` without
+#' a volume-to-surface projection. The older precomputed projection hook is
 #' retained only for compatibility and testing, and is deprecated.
 #'
-#' @param stat Statistic `NeuroVol` or file path.
+#' @param stat Statistic `NeuroVol` or file path. Leave `NULL` when using
+#'   parcel-valued `vals`.
 #' @param surfatlas Surface atlas with `lh_atlas`/`rh_atlas` geometry.
 #' @param output_file PNG output path.
 #' @param threshold Positive numeric overlay threshold.
@@ -31,11 +34,14 @@
 #' @param projection Deprecated advanced/testing hook for a precomputed
 #'   projection payload.
 #' @param empty Action when no suprathreshold voxels are present.
+#' @param vals Optional numeric vector of per-parcel statistic values. Named
+#'   vectors are matched to `surfatlas$ids`; unnamed vectors must be in
+#'   `surfatlas$ids` order.
 #'
 #' @return A `surf_montage_result` list containing the PNG path, projection,
 #'   diagnostics, and render metadata.
 #' @export
-surf_montage <- function(stat,
+surf_montage <- function(stat = NULL,
                          surfatlas,
                          output_file,
                          threshold,
@@ -61,12 +67,21 @@ surf_montage <- function(stat,
                          caption = NULL,
                          plot_fun = NULL,
                          projection = NULL,
-                         empty = c("error", "warning")) {
+                         empty = c("error", "warning"),
+                         vals = NULL) {
   tail <- match.arg(tail)
   fun <- match.arg(fun)
   sampling <- match.arg(sampling)
   empty <- match.arg(empty)
 
+  has_stat <- !is.null(stat)
+  has_vals <- !is.null(vals)
+  if (has_stat && has_vals) {
+    stop("Supply exactly one of 'stat' or 'vals', not both.", call. = FALSE)
+  }
+  if (!has_stat && !has_vals) {
+    stop("Supply either 'stat' or parcel-valued 'vals'.", call. = FALSE)
+  }
   if (!inherits(surfatlas, "surfatlas")) {
     stop("'surfatlas' must inherit from class 'surfatlas'.", call. = FALSE)
   }
@@ -82,14 +97,23 @@ surf_montage <- function(stat,
     stop("'cap' must be NULL or a positive number.", call. = FALSE)
   }
 
-  stat <- .load_overlay_neurovol(stat, "stat")
-  stat_arr <- as.array(stat)
-  supra <- .suprathreshold_mask(as.numeric(stat_arr), threshold = threshold,
-                                tail = tail)
+  if (has_vals && !is.null(projection)) {
+    stop("'projection' is only supported with volumetric 'stat'.", call. = FALSE)
+  }
+
+  values <- if (has_vals) {
+    .surface_parcel_values(vals, surfatlas)
+  } else {
+    stat <- .load_overlay_neurovol(stat, "stat")
+    as.numeric(as.array(stat))
+  }
+  supra <- .suprathreshold_mask(values, threshold = threshold, tail = tail)
   n_supra <- sum(supra, na.rm = TRUE)
   if (n_supra == 0L) {
     msg <- paste0(
-      "No finite suprathreshold voxels for threshold ", threshold,
+      "No finite suprathreshold ",
+      if (has_vals) "parcels" else "voxels",
+      " for threshold ", threshold,
       " and tail '", tail, "'."
     )
     if (identical(empty, "error")) {
@@ -98,68 +122,88 @@ surf_montage <- function(stat,
     warning(msg, call. = FALSE)
   }
 
-  supra_arr <- array(supra, dim = dim(stat_arr))
-  display_arr <- stat_arr
-  display_arr[!supra_arr] <- NA_real_
-  cap <- cap %||% .stat_montage_default_cap(display_arr, signed = signed)
-  display_arr <- .clip_montage_overlay(display_arr, cap = cap, signed = signed)
-  display_vol <- neuroim2::NeuroVol(display_arr, space = neuroim2::space(stat))
-
-  # Volume -> surface projection. By default delegate to neuroatlas::plot_brain,
-  # which resolves the anatomical geometry that matches the atlas's own surface
-  # space and handles the vol_to_surf sampling. The historical in-package
-  # projection (.project_cluster_overlay) forced an fsLR-32k geometry; on an
-  # fsaverage atlas the vertex counts disagreed and every vertex collapsed to
-  # NA, so the panel rendered blank regardless of map intensity (issue #5). The
-  # `projection` argument keeps the manual path available as a testing hook.
-  if (!is.null(density_override) || !is.null(resolution_override)) {
-    .warn_manual_surface_projection_deprecated(
-      "Manual surface density/resolution controls"
-    )
-  }
-
-  if (is.null(projection)) {
-    # Hand plot_brain the continuous statistic and let it project, then
-    # threshold the projected vertex values (overlay_threshold) and clamp the
-    # color scale (overlay_lim). Projecting continuous values and thresholding
-    # on the surface gives focal clusters; projecting a pre-masked volume
-    # over-dilates because every column touching a suprathreshold voxel lights.
-    # plot_brain has no tail channel and gates on |value|, so for a one-sided
-    # tail we must drop the wrong-signed voxels here or they would render.
-    overlay_arr <- stat_arr
-    if (identical(tail, "positive")) {
-      overlay_arr[stat_arr < 0] <- NA_real_
-    } else if (identical(tail, "negative")) {
-      overlay_arr[stat_arr > 0] <- NA_real_
-    }
-    overlay_payload <- neuroim2::NeuroVol(
-      overlay_arr, space = neuroim2::space(stat)
-    )
+  if (has_vals) {
+    display_vals <- values
+    display_vals[!supra] <- NA_real_
+    cap <- cap %||% .stat_montage_default_cap(display_vals, signed = signed)
+    display_vals <- .clip_montage_overlay(display_vals, cap = cap,
+                                          signed = signed)
+    plot_vals <- display_vals
+    overlay_payload <- NULL
     result_overlay <- NULL
     surface_space_out <- surfatlas$surface_space %||% surface_space
     diagnostics <- list(
-      projection = "plot_brain",
-      projection_fun = fun,
-      projection_sampling = sampling,
+      projection = "parcel_values",
       surface_space = surface_space_out,
-      cluster_voxels_nonzero = n_supra
+      n_parcels = length(values),
+      n_suprathreshold_parcels = n_supra
     )
   } else {
-    .warn_manual_surface_projection_deprecated(
-      "`projection` precomputed surface overlay hook"
-    )
-    diagnostics <- .overlay_projection_diagnostics(
-      cluster_vol = display_vol,
-      projection = projection,
-      threshold = threshold,
-      sampling = sampling,
-      fun = fun
-    )
-    overlay_payload <- .clip_surface_overlay(
-      projection$overlay, cap = cap, signed = signed
-    )
-    result_overlay <- overlay_payload
-    surface_space_out <- projection$meta$surface_space %||% surface_space
+    stat_arr <- as.array(stat)
+    supra_arr <- array(supra, dim = dim(stat_arr))
+    display_arr <- stat_arr
+    display_arr[!supra_arr] <- NA_real_
+    cap <- cap %||% .stat_montage_default_cap(display_arr, signed = signed)
+    display_arr <- .clip_montage_overlay(display_arr, cap = cap, signed = signed)
+    display_vol <- neuroim2::NeuroVol(display_arr, space = neuroim2::space(stat))
+
+    # Volume -> surface projection. By default delegate to neuroatlas::plot_brain,
+    # which resolves the anatomical geometry that matches the atlas's own surface
+    # space and handles the vol_to_surf sampling. The historical in-package
+    # projection (.project_cluster_overlay) forced an fsLR-32k geometry; on an
+    # fsaverage atlas the vertex counts disagreed and every vertex collapsed to
+    # NA, so the panel rendered blank regardless of map intensity (issue #5). The
+    # `projection` argument keeps the manual path available as a testing hook.
+    if (!is.null(density_override) || !is.null(resolution_override)) {
+      .warn_manual_surface_projection_deprecated(
+        "Manual surface density/resolution controls"
+      )
+    }
+
+    if (is.null(projection)) {
+      # Hand plot_brain the continuous statistic and let it project, then
+      # threshold the projected vertex values (overlay_threshold) and clamp the
+      # color scale (overlay_lim). Projecting continuous values and thresholding
+      # on the surface gives focal clusters; projecting a pre-masked volume
+      # over-dilates because every column touching a suprathreshold voxel lights.
+      # plot_brain has no tail channel and gates on |value|, so for a one-sided
+      # tail we must drop the wrong-signed voxels here or they would render.
+      overlay_arr <- stat_arr
+      if (identical(tail, "positive")) {
+        overlay_arr[stat_arr < 0] <- NA_real_
+      } else if (identical(tail, "negative")) {
+        overlay_arr[stat_arr > 0] <- NA_real_
+      }
+      overlay_payload <- neuroim2::NeuroVol(
+        overlay_arr, space = neuroim2::space(stat)
+      )
+      result_overlay <- NULL
+      surface_space_out <- surfatlas$surface_space %||% surface_space
+      diagnostics <- list(
+        projection = "plot_brain",
+        projection_fun = fun,
+        projection_sampling = sampling,
+        surface_space = surface_space_out,
+        cluster_voxels_nonzero = n_supra
+      )
+    } else {
+      .warn_manual_surface_projection_deprecated(
+        "`projection` precomputed surface overlay hook"
+      )
+      diagnostics <- .overlay_projection_diagnostics(
+        cluster_vol = display_vol,
+        projection = projection,
+        threshold = threshold,
+        sampling = sampling,
+        fun = fun
+      )
+      overlay_payload <- .clip_surface_overlay(
+        projection$overlay, cap = cap, signed = signed
+      )
+      result_overlay <- overlay_payload
+      surface_space_out <- projection$meta$surface_space %||% surface_space
+    }
+    plot_vals <- .surface_base_values(surfatlas)
   }
 
   output_dir <- dirname(output_file)
@@ -167,7 +211,6 @@ surf_montage <- function(stat,
     dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   }
   plot_fun <- plot_fun %||% neuroatlas::plot_brain
-  vals <- .surface_base_values(surfatlas)
   # Match the color limits to the rendered sign: symmetric for signed maps, and
   # for unsigned maps the half-range that holds the retained tail so negative
   # one-sided effects are not clamped to a [0, cap] scale.
@@ -181,28 +224,33 @@ surf_montage <- function(stat,
 
   grDevices::png(filename = output_file, width = width, height = height, res = res)
   tryCatch({
-    p <- plot_fun(
+    plot_args <- list(
       surfatlas = surfatlas,
-      vals = vals,
+      vals = plot_vals,
       views = views,
       hemis = hemis,
       surface = surface,
-      palette = palette,
-      lim = c(0, 0),
+      palette = if (has_vals) overlay_palette else palette,
+      lim = if (has_vals) overlay_lim else c(0, 0),
       interactive = FALSE,
-      overlay = overlay_payload,
-      overlay_threshold = max(abs(threshold), .Machine$double.eps),
-      overlay_alpha = overlay_alpha,
-      overlay_palette = overlay_palette,
-      overlay_lim = overlay_lim,
-      overlay_fun = fun,
-      overlay_sampling = sampling,
       colorbar = TRUE,
       colorbar_title = "Statistic",
       title = title,
       subtitle = subtitle,
       caption = caption
     )
+    if (!has_vals) {
+      plot_args <- c(plot_args, list(
+        overlay = overlay_payload,
+        overlay_threshold = max(abs(threshold), .Machine$double.eps),
+        overlay_alpha = overlay_alpha,
+        overlay_palette = overlay_palette,
+        overlay_lim = overlay_lim,
+        overlay_fun = fun,
+        overlay_sampling = sampling
+      ))
+    }
+    p <- do.call(plot_fun, plot_args)
     print(p)
   }, finally = grDevices::dev.off())
 
@@ -217,11 +265,71 @@ surf_montage <- function(stat,
       cap = cap,
       n_suprathreshold = n_supra,
       surface_space = surface_space_out,
+      vals = if (has_vals) plot_vals else NULL,
       views = views,
       hemis = hemis
     ),
     class = "surf_montage_result"
   )
+}
+
+.surface_parcel_values <- function(vals, surfatlas) {
+  values <- .coerce_parcel_value_vector(vals, "vals")
+  ids <- suppressWarnings(as.integer(surfatlas$ids))
+  ids <- ids[is.finite(ids)]
+  id_names <- as.character(ids)
+  value_names <- names(values)
+  has_names <- !is.null(value_names) && any(nzchar(trimws(value_names)))
+
+  if (has_names) {
+    if (any(is.na(value_names) | !nzchar(trimws(value_names)))) {
+      stop("All named 'vals' entries must have non-empty parcel ids.",
+           call. = FALSE)
+    }
+    if (anyDuplicated(value_names)) {
+      stop("'vals' names must be unique parcel ids.", call. = FALSE)
+    }
+    if (length(id_names) == 0L) {
+      return(values)
+    }
+    unknown <- setdiff(value_names, id_names)
+    if (length(unknown) > 0L) {
+      stop(
+        "'vals' contains parcel id(s) not present in 'surfatlas$ids': ",
+        paste(unknown, collapse = ", "),
+        call. = FALSE
+      )
+    }
+    out <- stats::setNames(rep(NA_real_, length(id_names)), id_names)
+    out[match(value_names, id_names)] <- values
+    return(out)
+  }
+
+  if (length(id_names) > 0L && length(values) != length(id_names)) {
+    stop(
+      "Unnamed 'vals' must have length ", length(id_names),
+      " to match 'surfatlas$ids'.",
+      call. = FALSE
+    )
+  }
+  if (length(id_names) > 0L) {
+    names(values) <- id_names
+  }
+  values
+}
+
+.coerce_parcel_value_vector <- function(values, field, map_id = NULL) {
+  if (!is.numeric(values)) {
+    where <- if (!is.null(map_id)) paste0(" for map_id '", map_id, "'") else ""
+    stop("'", field, "' must be a numeric vector", where, ".", call. = FALSE)
+  }
+  out <- as.numeric(values)
+  names(out) <- names(values)
+  if (length(out) == 0L) {
+    where <- if (!is.null(map_id)) paste0(" for map_id '", map_id, "'") else ""
+    stop("'", field, "' must not be empty", where, ".", call. = FALSE)
+  }
+  out
 }
 
 .surface_base_values <- function(surfatlas) {

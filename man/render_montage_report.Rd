@@ -114,7 +114,7 @@ peak tables, so the two can diverge.}
 \item{surface_args}{Optional named list of styling arguments forwarded to
 [surf_montage()] for every surface panel (e.g.
 `list(overlay_alpha = 0.9, fun = "mode")`). Caller values win over the
-defaults; `stat`, `surfatlas`, and `output_file` are managed by the
+defaults; `stat`, `vals`, `surfatlas`, and `output_file` are managed by the
 renderer. The same `modifyList`/`NULL` and analytical-override caveats as
 `volume_args` apply.}
 
@@ -185,14 +185,17 @@ negative semantics?), and `label` (the human-facing panel title). `df` is
 additionally required for `stat_kind = "t"` rows whenever the threshold is
 derived from a p-value rather than supplied directly. See
 [montage_manifest_schema()] for the full column list and
-[build_manifest()]/[validate_manifest()] for construction and checks.
+[build_manifest()]/[validate_manifest()] for construction and checks. Surface
+reports may use an in-memory `parcel_values` list-column instead of a
+volumetric `path`/`stat_map`; those rows render directly through
+[surf_montage(vals = )] and do not support volume panels or peak tables.
 
 **Reserved passthrough arguments.** `volume_args` and `surface_args` forward
 styling to [stat_montage()] and [surf_montage()], but renderer-managed
 arguments are reserved and cannot be overridden: `volume_args` reserves
 `bg`, `stat`, and `draw`; `surface_args` reserves `stat`, `surfatlas`,
-`output_file`, `plot_fun`, and `projection`. Passing a reserved name is an
-error.
+`vals`, `output_file`, `plot_fun`, and `projection`. Passing a reserved name
+is an error.
 
 **Output format and portability.** The extension of `output_file` selects
 the format. `.html` (the default) is the most portable: it has no external

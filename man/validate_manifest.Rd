@@ -9,7 +9,8 @@ validate_manifest(
   background = NULL,
   load_maps = FALSE,
   check_files = TRUE,
-  check_overlays = load_maps || "stat_map" \%in\% names(manifest),
+  check_overlays = load_maps || .manifest_has_nonmissing_column(manifest, "stat_map") ||
+    .manifest_has_nonmissing_column(manifest, "parcel_values"),
   default_p = 0.005,
   default_tail = c("two_sided", "positive", "negative"),
   empty = c("error", "warning")
@@ -27,7 +28,8 @@ non-empty overlay checks.}
 \item{check_files}{Logical; require non-missing `path` values to exist.}
 
 \item{check_overlays}{Logical; run map-level QC checks. Defaults to `TRUE`
-when `load_maps = TRUE` or a `stat_map` list-column is present.}
+when `load_maps = TRUE` or a non-missing `stat_map`/`parcel_values`
+list-column is present.}
 
 \item{default_p}{Default p-value used to derive thresholds when a row has no
 explicit `threshold` or `p`.}
@@ -46,6 +48,6 @@ The validated manifest as a data frame, with simple logical and
 \description{
 Validates the storage-agnostic render manifest consumed by the montage report
 engine. Structural checks always run. Overlay checks run when `load_maps` is
-`TRUE`, when a `stat_map` list-column is present, or when `check_overlays` is
-explicitly set to `TRUE`.
+`TRUE`, when a non-missing `stat_map` or `parcel_values` list-column is
+present, or when `check_overlays` is explicitly set to `TRUE`.
 }
