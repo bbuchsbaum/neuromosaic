@@ -126,6 +126,9 @@
 #' @param check_files Logical; passed to [validate_manifest()].
 #' @param load_maps Logical; passed to [validate_manifest()] for map-level QC.
 #' @param provenance Optional provenance list to include in the report bundle.
+#' @param surface_scene Optional `neurosurf::SurfaceScene` rendered once as the
+#'   report's shared lazy interactive viewer. Static per-panel surface figures
+#'   remain in the report as print and failure fallbacks.
 #'
 #' @return The path to the rendered report (invisibly).
 #' @export
@@ -163,7 +166,8 @@ render_montage_report <- function(manifest,
                                   validate = TRUE,
                                   check_files = TRUE,
                                   load_maps = FALSE,
-                                  provenance = NULL) {
+                                  provenance = NULL,
+                                  surface_scene = NULL) {
   volume_args <- .validate_montage_passthrough(
     volume_args, stat_montage, c("bg", "stat", "draw"), "volume_args"
   )
@@ -256,7 +260,8 @@ render_montage_report <- function(manifest,
     validate = validate,
     check_files = check_files,
     load_maps = load_maps,
-    provenance = provenance
+    provenance = provenance,
+    surface_scene = surface_scene
   )
 
   if (ext == "qmd") {
@@ -343,7 +348,12 @@ render_montage_report <- function(manifest,
                                          validate,
                                          check_files,
                                          load_maps,
-                                         provenance) {
+                                         provenance,
+                                         surface_scene = NULL) {
+  if (!is.null(surface_scene) && !methods::is(surface_scene, "SurfaceScene")) {
+    stop("'surface_scene' must be NULL or a neurosurf::SurfaceScene.",
+         call. = FALSE)
+  }
   policy <- policy %||% montage_policy(layout = layout %||% character())
   if (!inherits(policy, "montage_policy")) {
     stop("'policy' must be created by montage_policy().", call. = FALSE)
@@ -464,6 +474,7 @@ render_montage_report <- function(manifest,
     intro = narratives$intro,
     section_notes = narratives$section_notes,
     interludes = narratives$interludes,
+    surface_scene = surface_scene,
     params = list(
       title = title,
       layout = layout,

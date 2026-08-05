@@ -49,6 +49,21 @@ fmt$emit_report_overview()
 fmt$emit_qc_summary(qc)
 ```
 
+```{r interactive-surface, results='asis'}
+if (!is.null(rd$surface_scene)) {
+  cat("# Interactive surface\n\n")
+  if (is_html) {
+    neurosurf::surfwidget(
+      rd$surface_scene,
+      width = "100%",
+      height = "600px"
+    )
+  } else {
+    cat(rd$surface_scene@fallback, "\n\n")
+  }
+}
+```
+
 # Maps
 
 ```{r montage-panels, results='asis'}

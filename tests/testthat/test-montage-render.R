@@ -22,6 +22,32 @@ make_montage_render_manifest <- function() {
   )
 }
 
+make_montage_surface_scene <- function() {
+  vertices <- matrix(
+    c(0, 0, 0, 1, 0, 0, 0, 1, 0),
+    ncol = 3,
+    byrow = TRUE
+  )
+  left <- neurosurf::SurfaceGeometry(
+    vertices, matrix(c(0, 1, 2), nrow = 1), hemi = "lh"
+  )
+  right <- neurosurf::SurfaceGeometry(
+    vertices, matrix(c(0, 1, 2), nrow = 1), hemi = "rh"
+  )
+  neurosurf::surface_scene(
+    left,
+    right,
+    layers = list(neurosurf::surface_layer(
+      "effect",
+      list(left = c(1, 2, 3), right = c(3, 2, 1)),
+      limits = c(1, 3),
+      units = "z"
+    )),
+    fallback = "Static bilateral surface fallback.",
+    alt_text = "Toy bilateral cortical surface."
+  )
+}
+
 test_that("render_montage_report writes qmd source and sidecar data", {
   manifest <- make_montage_render_manifest()
   qmd_out <- tempfile("montage-report-", fileext = ".qmd")
@@ -48,6 +74,58 @@ test_that("render_montage_report writes qmd source and sidecar data", {
   expect_identical(rd$params$title, "Fixture Montage")
   expect_identical(rd$params$layout, c("contrast", "model"))
   expect_identical(names(rd$panels), manifest$map_id)
+})
+
+test_that("render_montage_report stores one shared SurfaceScene", {
+  scene <- make_montage_surface_scene()
+  manifest <- make_montage_render_manifest()
+  qmd_out <- tempfile("montage-report-scene-", fileext = ".qmd")
+
+  result <- render_montage_report(
+    manifest,
+    output_file = qmd_out,
+    surface_scene = scene
+  )
+
+  rd <- readRDS(sub("\\.qmd$", "_report-data.rds", result))
+  qmd <- paste(readLines(result, warn = FALSE), collapse = "\n")
+  expect_s4_class(rd$surface_scene, "SurfaceScene")
+  expect_identical(rd$surface_scene@id, scene@id)
+  expect_match(qmd, "neurosurf::surfwidget")
+  expect_length(gregexpr("neurosurf::surfwidget", qmd, fixed = TRUE)[[1]], 1L)
+})
+
+test_that("render_montage_report knits one shared SurfaceScene viewer", {
+  skip_if_not_installed("rmarkdown")
+  skip_if_not(rmarkdown::pandoc_available(), "pandoc is required for render tests")
+  html_out <- tempfile("montage-report-scene-", fileext = ".html")
+
+  result <- render_montage_report(
+    make_montage_render_manifest(),
+    output_file = html_out,
+    surface_scene = make_montage_surface_scene(),
+    quiet = TRUE
+  )
+
+  html <- paste(readLines(result, warn = FALSE), collapse = "\n")
+  widgets <- gregexpr(
+    'class="surfwidget html-widget"', html, fixed = TRUE
+  )[[1]]
+  expect_length(widgets[widgets >= 0L], 1L)
+  expect_match(html, "surfview.mountSurfView", fixed = TRUE)
+  expect_match(html, "Static bilateral surface fallback.", fixed = TRUE)
+})
+
+test_that("render_montage_report validates its shared SurfaceScene", {
+  expect_error(
+    render_montage_report(
+      make_montage_render_manifest(),
+      output_file = tempfile(fileext = ".qmd"),
+      surface_scene = list()
+    ),
+    "neurosurf::SurfaceScene",
+    fixed = TRUE
+  )
 })
 
 test_that("render_montage_report renders fixture HTML through Rmd template", {

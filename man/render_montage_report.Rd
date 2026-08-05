@@ -39,7 +39,8 @@ render_montage_report(
   validate = TRUE,
   check_files = TRUE,
   load_maps = FALSE,
-  provenance = NULL
+  provenance = NULL,
+  surface_scene = NULL
 )
 }
 \arguments{
@@ -161,6 +162,10 @@ volume and surface montage panels.}
 \item{load_maps}{Logical; passed to [validate_manifest()] for map-level QC.}
 
 \item{provenance}{Optional provenance list to include in the report bundle.}
+
+\item{surface_scene}{Optional `neurosurf::SurfaceScene` rendered once as the
+report's shared lazy interactive viewer. Static per-panel surface figures
+remain in the report as print and failure fallbacks.}
 }
 \value{
 The path to the rendered report (invisibly).
