@@ -54,6 +54,9 @@ test_that("surf_montage writes PNG with supplied projection and clipped cap", {
   expect_lte(max(abs(unlist(captured$overlay)), na.rm = TRUE), 4)
   expect_lte(max(abs(unlist(result$overlay)), na.rm = TRUE), 4)
   expect_s3_class(result$diagnostics$hemi, "data.frame")
+  expect_identical(result$render$style, "stat_publication")
+  expect_identical(result$render$colorbar_source, "overlay")
+  expect_identical(result$render$limits, c(-4, 4))
 })
 
 test_that("surf_montage rejects invalid inputs and empty overlays", {
@@ -161,6 +164,64 @@ test_that("surf_montage delegates projection to plot_brain without a hook", {
   expect_null(res$overlay)
   expect_equal(res$cap, 5)
   expect_gt(res$n_suprathreshold, 0)
+})
+
+test_that("continuous montage requests publication semantics and overlay legend", {
+  inputs <- make_toy_cluster_report_inputs()
+  captured <- new.env(parent = emptyenv())
+  plot_fun <- function(...) {
+    captured$args <- list(...)
+    ggplot2::ggplot(data.frame(x = 1, y = 1), ggplot2::aes(x, y)) +
+      ggplot2::geom_point()
+  }
+
+  result <- surf_montage(
+    stat = inputs$stat_map,
+    surfatlas = make_toy_surfatlas(),
+    output_file = tempfile("surface-publication-", fileext = ".png"),
+    threshold = 3,
+    cap = 5,
+    plot_fun = plot_fun,
+    width = 320,
+    height = 220,
+    res = 72,
+    render_device = "png"
+  )
+
+  expect_identical(captured$args$style, "stat_publication")
+  expect_identical(captured$args$static_backend, "cpu")
+  expect_identical(captured$args$colorbar_source, "overlay")
+  expect_identical(captured$args$overlay_title, "Statistic")
+  expect_identical(captured$args$overlay_alpha, 0.85)
+  expect_equal(captured$args$overlay_lim, c(-5, 5))
+  expect_identical(captured$args$overlay_interpolation, "linear")
+  expect_identical(captured$args$overlay_sampling, "thickness")
+  expect_identical(captured$args$overlay_aggregate, "mean")
+  expect_equal(captured$args$overlay_depth, seq(0.1, 0.9, length.out = 5L))
+  expect_identical(result$diagnostics$projection_interpolation, "linear")
+  expect_identical(result$diagnostics$projection_aggregate, "mean")
+  expect_identical(result$render$device, "png")
+  expect_identical(result$render$backend, "cpu_barycentric")
+  expect_equal(result$render[c("width", "height", "res")],
+               list(width = 320, height = 220, res = 72))
+})
+
+test_that("PDF output uses rasterized panels with a vector-capable device", {
+  skip_if_not(capabilities("cairo"), "Cairo PDF is unavailable")
+  surfatlas <- make_toy_surfatlas()
+  plot_fun <- function(...) {
+    ggplot2::ggplot(data.frame(x = 1, y = 1), ggplot2::aes(x, y)) +
+      ggplot2::geom_text(label = "vector label")
+  }
+  file <- tempfile(fileext = ".pdf")
+  result <- surf_montage(
+    vals = c(4, -4), surfatlas = surfatlas, output_file = file,
+    threshold = 3, plot_fun = plot_fun, width = 600, height = 375,
+    res = 150, render_device = "auto"
+  )
+  expect_true(file.exists(file))
+  expect_gt(file.info(file)$size, 100)
+  expect_identical(result$render$device, "cairo_pdf")
 })
 
 test_that("surf_montage renders parcel-valued vals without projection (#7)", {

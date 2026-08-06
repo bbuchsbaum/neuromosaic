@@ -10,7 +10,8 @@
 #' @param stat Statistic `NeuroVol` or file path. Leave `NULL` when using
 #'   parcel-valued `vals`.
 #' @param surfatlas Surface atlas with `lh_atlas`/`rh_atlas` geometry.
-#' @param output_file PNG output path.
+#' @param output_file PNG or PDF output path. PDF embeds the rasterized cortical
+#'   panels while retaining vector text, orientation marks, and legend.
 #' @param threshold Positive numeric overlay threshold.
 #' @param tail Tail mode.
 #' @param signed Logical; use symmetric overlay limits?
@@ -25,10 +26,38 @@
 #'   controls. They are ignored by the default `plot_brain()` path.
 #' @param fun,sampling Projection controls forwarded to
 #'   [neuroatlas::plot_brain()] as `overlay_fun` and `overlay_sampling`.
-#' @param overlay_alpha Surface overlay alpha.
+#'   Continuous publication output defaults to five samples through cortical
+#'   thickness rather than the historical Gaussian-KNN midpoint proxy.
+#' @param interpolation Voxel interpolation for continuous statistics:
+#'   `"linear"` (trilinear publication default), `"nearest"`, or the historical
+#'   `"legacy"` KNN contract.
+#' @param aggregate Aggregation across cortical-depth samples. The publication
+#'   default is `"mean"`; categorical `"mode"` remains distinct and is invalid
+#'   with linear interpolation.
+#' @param depth Explicit white-to-pial fractions. Defaults to five fractions
+#'   from 0.1 through 0.9.
+#' @param surface_smooth_fwhm Optional tangential smoothing in millimetres.
+#'   Zero disables it and is the publication default.
+#' @param cortex_mask Optional explicit lh/rh cortex-domain mask forwarded to
+#'   the publication renderer. If NULL, neuroatlas resolves atlas provenance
+#'   without treating parcel label zero as a universal medial wall.
+#' @param cortex_mask_source Provenance label for an explicit mask.
+#' @param anatomy_metric Optional lh/rh sulcal-depth or curvature metric.
+#' @param anatomy_metric_source Provenance label for an explicit anatomy metric.
+#' @param medial_wall Medial-wall display policy.
+#' @param camera Strict canonical or slightly oblique presentation camera.
+#' @param orientation_labels Draw anterior/posterior marks.
+#' @param overlay_alpha Surface overlay alpha. The publication default leaves
+#'   a small amount of anatomical context visible beneath the statistic.
 #' @param palette Base parcel palette.
 #' @param overlay_palette Overlay palette.
-#' @param width,height,res PNG device settings.
+#' @param width,height,res PNG device settings. Defaults target a 10 by 6.25
+#'   inch, 300-dpi publication raster.
+#' @param render_device Output backend: \code{"auto"} selects Cairo PDF for a
+#'   `.pdf` path, otherwise prefers \pkg{ragg} when it
+#'   is installed and otherwise uses the base PNG device; \code{"ragg"}
+#'   requires \pkg{ragg}; \code{"png"} forces the base device; and
+#'   \code{"pdf"} forces Cairo PDF.
 #' @param title,subtitle,caption Plot annotations.
 #' @param plot_fun Advanced/testing hook. Defaults to `neuroatlas::plot_brain`.
 #' @param projection Deprecated advanced/testing hook for a precomputed
@@ -55,13 +84,25 @@ surf_montage <- function(stat = NULL,
                          density_override = NULL,
                          resolution_override = NULL,
                          fun = c("avg", "nn", "mode"),
-                         sampling = c("midpoint", "normal_line", "thickness"),
-                         overlay_alpha = 0.45,
+                         sampling = c("thickness", "midpoint", "normal_line"),
+                         interpolation = c("linear", "nearest", "legacy"),
+                         aggregate = c("mean", "closest", "mode"),
+                         depth = NULL,
+                         surface_smooth_fwhm = 0,
+                         cortex_mask = NULL,
+                         cortex_mask_source = NULL,
+                         anatomy_metric = NULL,
+                         anatomy_metric_source = NULL,
+                         medial_wall = c("shade", "mask", "outline"),
+                         camera = c("canonical", "presentation"),
+                         orientation_labels = TRUE,
+                         overlay_alpha = 0.85,
                          palette = "cork",
                          overlay_palette = if (isTRUE(signed)) "vik" else "inferno",
-                         width = 1400,
-                         height = 900,
-                         res = 144,
+                         width = 3000,
+                         height = 1875,
+                         res = 300,
+                         render_device = c("auto", "ragg", "png", "pdf"),
                          title = NULL,
                          subtitle = NULL,
                          caption = NULL,
@@ -72,7 +113,29 @@ surf_montage <- function(stat = NULL,
   tail <- match.arg(tail)
   fun <- match.arg(fun)
   sampling <- match.arg(sampling)
+  interpolation <- match.arg(interpolation)
+  aggregate <- match.arg(aggregate)
+  medial_wall <- match.arg(medial_wall)
+  camera <- match.arg(camera)
   empty <- match.arg(empty)
+  render_device <- match.arg(render_device)
+  if (identical(interpolation, "linear") && identical(aggregate, "mode")) {
+    stop("aggregate = 'mode' is invalid with linear interpolation.",
+         call. = FALSE)
+  }
+  if (!is.numeric(surface_smooth_fwhm) ||
+      length(surface_smooth_fwhm) != 1L ||
+      !is.finite(surface_smooth_fwhm) || surface_smooth_fwhm < 0) {
+    stop("'surface_smooth_fwhm' must be a non-negative numeric scalar.",
+         call. = FALSE)
+  }
+  projection_depth <- if (identical(sampling, "thickness") &&
+                          identical(interpolation, "linear") &&
+                          is.null(depth)) {
+    seq(0.1, 0.9, length.out = 5L)
+  } else {
+    depth
+  }
 
   has_stat <- !is.null(stat)
   has_vals <- !is.null(vals)
@@ -183,6 +246,10 @@ surf_montage <- function(stat = NULL,
         projection = "plot_brain",
         projection_fun = fun,
         projection_sampling = sampling,
+        projection_interpolation = interpolation,
+        projection_aggregate = aggregate,
+        projection_depth = projection_depth,
+        surface_smooth_fwhm = surface_smooth_fwhm,
         surface_space = surface_space_out,
         cluster_voxels_nonzero = n_supra
       )
@@ -222,7 +289,16 @@ surf_montage <- function(stat = NULL,
     c(0, cap)
   }
 
-  grDevices::png(filename = output_file, width = width, height = height, res = res)
+  render_device_used <- .open_surface_montage_device(
+    filename = output_file,
+    width = width,
+    height = height,
+    res = res,
+    device = render_device,
+    background = "#FBFBF8"
+  )
+  plot_anatomy_provenance <- NULL
+  plot_backend <- if (has_vals) "ggplot" else "cpu_barycentric"
   tryCatch({
     plot_args <- list(
       surfatlas = surfatlas,
@@ -241,16 +317,33 @@ surf_montage <- function(stat = NULL,
     )
     if (!has_vals) {
       plot_args <- c(plot_args, list(
+        style = "stat_publication",
+        static_backend = "cpu",
+        colorbar_source = "overlay",
+        overlay_title = "Statistic",
         overlay = overlay_payload,
         overlay_threshold = max(abs(threshold), .Machine$double.eps),
         overlay_alpha = overlay_alpha,
         overlay_palette = overlay_palette,
         overlay_lim = overlay_lim,
         overlay_fun = fun,
-        overlay_sampling = sampling
+        overlay_sampling = sampling,
+        overlay_interpolation = interpolation,
+        overlay_aggregate = aggregate,
+        overlay_depth = projection_depth,
+        overlay_surface_smooth_fwhm = surface_smooth_fwhm,
+        cortex_mask = cortex_mask,
+        cortex_mask_source = cortex_mask_source,
+        anatomy_metric = anatomy_metric,
+        anatomy_metric_source = anatomy_metric_source,
+        medial_wall = medial_wall,
+        camera = camera,
+        orientation_labels = orientation_labels
       ))
     }
     p <- do.call(plot_fun, plot_args)
+    plot_anatomy_provenance <- attr(p, "plot_brain_anatomy")
+    plot_backend <- attr(p, "plot_brain_backend") %||% plot_backend
     print(p)
   }, finally = grDevices::dev.off())
 
@@ -267,10 +360,87 @@ surf_montage <- function(stat = NULL,
       surface_space = surface_space_out,
       vals = if (has_vals) plot_vals else NULL,
       views = views,
-      hemis = hemis
+      hemis = hemis,
+      render = list(
+        device = render_device_used,
+        width = width,
+        height = height,
+        res = res,
+        background = "#FBFBF8",
+        style = if (has_vals) "parcel_values" else "stat_publication",
+        backend = plot_backend,
+        colorbar_source = if (has_vals) "base" else "overlay",
+        palette = if (has_vals) overlay_palette else palette,
+        overlay_palette = if (has_vals) NULL else overlay_palette,
+        limits = overlay_lim,
+        projection = list(
+          interpolation = interpolation,
+          sampling = sampling,
+          aggregate = aggregate,
+          depth = projection_depth,
+          surface_smooth_fwhm = surface_smooth_fwhm
+        ),
+        anatomy = plot_anatomy_provenance,
+        medial_wall = medial_wall,
+        camera = camera,
+        orientation_labels = orientation_labels
+      )
     ),
     class = "surf_montage_result"
   )
+}
+
+.open_surface_montage_device <- function(filename, width, height, res,
+                                         device = c("auto", "ragg", "png",
+                                                    "pdf"),
+                                         background = "white") {
+  device <- match.arg(device)
+  is_pdf <- identical(tolower(tools::file_ext(filename)), "pdf")
+  if (identical(device, "pdf") || (identical(device, "auto") && is_pdf)) {
+    grDevices::cairo_pdf(
+      filename = filename,
+      width = width / res,
+      height = height / res,
+      bg = background,
+      onefile = FALSE
+    )
+    return("cairo_pdf")
+  }
+  if (is_pdf) {
+    stop("A '.pdf' output_file requires render_device = 'auto' or 'pdf'.",
+         call. = FALSE)
+  }
+  use_ragg <- identical(device, "ragg") ||
+    (identical(device, "auto") && requireNamespace("ragg", quietly = TRUE))
+
+  if (identical(device, "ragg") &&
+      !requireNamespace("ragg", quietly = TRUE)) {
+    stop(
+      "render_device = 'ragg' requires the optional 'ragg' package.",
+      call. = FALSE
+    )
+  }
+
+  if (use_ragg) {
+    ragg::agg_png(
+      filename = filename,
+      width = width,
+      height = height,
+      units = "px",
+      res = res,
+      background = background
+    )
+    return("ragg")
+  }
+
+  grDevices::png(
+    filename = filename,
+    width = width,
+    height = height,
+    res = res,
+    bg = background
+  )
+  "png"
 }
 
 .surface_parcel_values <- function(vals, surfatlas) {

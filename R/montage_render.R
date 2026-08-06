@@ -1109,8 +1109,28 @@ render_montage_report <- function(manifest,
   payload <- base_args[setdiff(
     names(base_args), c("stat", "vals", "surfatlas", "output_file", "empty")
   )]
-  payload$.surfatlas <- surfatlas$name %||% surfatlas$surface_space %||%
-    NA_character_
+  payload$.surfatlas <- list(
+    name = surfatlas$name %||% NA_character_,
+    surface_space = surfatlas$surface_space %||% NA_character_,
+    surf_type = surfatlas$surf_type %||% NA_character_,
+    cortex_mask_source = surfatlas$cortex_mask_source %||% NA_character_,
+    cortex_mask_hash = if (!is.null(surfatlas$cortex_mask)) {
+      rlang::hash(surfatlas$cortex_mask)
+    } else {
+      NA_character_
+    },
+    anatomy_metric_source = surfatlas$anatomy_metric_source %||% NA_character_,
+    anatomy_metric_surface = surfatlas$anatomy_metric_surface %||% NA_character_,
+    anatomy_metric_hash = if (!is.null(surfatlas$anatomy_metric)) {
+      rlang::hash(surfatlas$anatomy_metric)
+    } else {
+      NA_character_
+    }
+  )
+  # Bump when an implicit rendering/projection default changes. Explicit
+  # surface_args are already in payload; this version prevents a new release
+  # from reusing pixels produced under an older default contract.
+  payload$.surface_contract_version <- 2L
   substr(rlang::hash(payload), 1, 16)
 }
 

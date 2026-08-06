@@ -754,6 +754,24 @@ test_that("surface cache key changes when surface_args change", {
   ))
 })
 
+test_that("surface cache key includes mask and anatomy provenance", {
+  atlas <- make_toy_surfatlas()
+  atlas$name <- "same-name"
+  atlas$surface_space <- "toy"
+  base_args <- list(threshold = 3, cap = 5, tail = "two_sided")
+  plain <- neuromosaic:::.montage_surface_style_key(base_args, atlas)
+
+  atlas$cortex_mask <- list(lh = c(TRUE, FALSE), rh = c(TRUE, TRUE))
+  atlas$cortex_mask_source <- "toy-mask"
+  masked <- neuromosaic:::.montage_surface_style_key(base_args, atlas)
+  expect_false(identical(plain, masked))
+
+  atlas$anatomy_metric <- list(lh = c(-1, 1), rh = c(-1, 1))
+  atlas$anatomy_metric_source <- "toy-sulc"
+  anatomy <- neuromosaic:::.montage_surface_style_key(base_args, atlas)
+  expect_false(identical(masked, anatomy))
+})
+
 test_that("render_montage_report tolerates an empty contrast by default (#8)", {
   inputs <- make_toy_cluster_report_inputs()
   tmpdir <- tempfile("montage-empty-")

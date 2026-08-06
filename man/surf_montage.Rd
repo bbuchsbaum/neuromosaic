@@ -19,13 +19,25 @@ surf_montage(
   density_override = NULL,
   resolution_override = NULL,
   fun = c("avg", "nn", "mode"),
-  sampling = c("midpoint", "normal_line", "thickness"),
-  overlay_alpha = 0.45,
+  sampling = c("thickness", "midpoint", "normal_line"),
+  interpolation = c("linear", "nearest", "legacy"),
+  aggregate = c("mean", "closest", "mode"),
+  depth = NULL,
+  surface_smooth_fwhm = 0,
+  cortex_mask = NULL,
+  cortex_mask_source = NULL,
+  anatomy_metric = NULL,
+  anatomy_metric_source = NULL,
+  medial_wall = c("shade", "mask", "outline"),
+  camera = c("canonical", "presentation"),
+  orientation_labels = TRUE,
+  overlay_alpha = 0.85,
   palette = "cork",
   overlay_palette = if (isTRUE(signed)) "vik" else "inferno",
-  width = 1400,
-  height = 900,
-  res = 144,
+  width = 3000,
+  height = 1875,
+  res = 300,
+  render_device = c("auto", "ragg", "png", "pdf"),
   title = NULL,
   subtitle = NULL,
   caption = NULL,
@@ -41,7 +53,8 @@ parcel-valued `vals`.}
 
 \item{surfatlas}{Surface atlas with `lh_atlas`/`rh_atlas` geometry.}
 
-\item{output_file}{PNG output path.}
+\item{output_file}{PNG or PDF output path. PDF embeds the rasterized cortical
+panels while retaining vector text, orientation marks, and legend.}
 
 \item{threshold}{Positive numeric overlay threshold.}
 
@@ -65,15 +78,55 @@ resolved by [neuroatlas::plot_brain()].}
 controls. They are ignored by the default `plot_brain()` path.}
 
 \item{fun, sampling}{Projection controls forwarded to
-[neuroatlas::plot_brain()] as `overlay_fun` and `overlay_sampling`.}
+[neuroatlas::plot_brain()] as `overlay_fun` and `overlay_sampling`.
+Continuous publication output defaults to five samples through cortical
+thickness rather than the historical Gaussian-KNN midpoint proxy.}
 
-\item{overlay_alpha}{Surface overlay alpha.}
+\item{interpolation}{Voxel interpolation for continuous statistics:
+`"linear"` (trilinear publication default), `"nearest"`, or the historical
+`"legacy"` KNN contract.}
+
+\item{aggregate}{Aggregation across cortical-depth samples. The publication
+default is `"mean"`; categorical `"mode"` remains distinct and is invalid
+with linear interpolation.}
+
+\item{depth}{Explicit white-to-pial fractions. Defaults to five fractions
+from 0.1 through 0.9.}
+
+\item{surface_smooth_fwhm}{Optional tangential smoothing in millimetres.
+Zero disables it and is the publication default.}
+
+\item{cortex_mask}{Optional explicit lh/rh cortex-domain mask forwarded to
+the publication renderer. If NULL, neuroatlas resolves atlas provenance
+without treating parcel label zero as a universal medial wall.}
+
+\item{cortex_mask_source}{Provenance label for an explicit mask.}
+
+\item{anatomy_metric}{Optional lh/rh sulcal-depth or curvature metric.}
+
+\item{anatomy_metric_source}{Provenance label for an explicit anatomy metric.}
+
+\item{medial_wall}{Medial-wall display policy.}
+
+\item{camera}{Strict canonical or slightly oblique presentation camera.}
+
+\item{orientation_labels}{Draw anterior/posterior marks.}
+
+\item{overlay_alpha}{Surface overlay alpha. The publication default leaves
+a small amount of anatomical context visible beneath the statistic.}
 
 \item{palette}{Base parcel palette.}
 
 \item{overlay_palette}{Overlay palette.}
 
-\item{width, height, res}{PNG device settings.}
+\item{width, height, res}{PNG device settings. Defaults target a 10 by 6.25
+inch, 300-dpi publication raster.}
+
+\item{render_device}{Output backend: \code{"auto"} selects Cairo PDF for a
+`.pdf` path, otherwise prefers \pkg{ragg} when it
+is installed and otherwise uses the base PNG device; \code{"ragg"}
+requires \pkg{ragg}; \code{"png"} forces the base device; and
+\code{"pdf"} forces Cairo PDF.}
 
 \item{title, subtitle, caption}{Plot annotations.}
 
