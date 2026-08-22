@@ -11,6 +11,8 @@ montage_explorer(
   layout = NULL,
   labeller = NULL,
   policy = NULL,
+  profiles = NULL,
+  map_selector = "auto",
   bg = NULL,
   surfatlas = NULL,
   atlas = NULL,
@@ -42,7 +44,7 @@ supplied.}
 
 \item{title}{Explorer title.}
 
-\item{layout, labeller, policy, bg, surfatlas, atlas, panels, render_volume, render_surface, render_peaks, image_dir, cache_dir, materialize_recipes, overwrite_recipes, cache_surface, image_width, image_height, image_res, max_clusters, validate, check_files, load_maps}{Arguments forwarded to the montage report-data preparation path when
+\item{layout, labeller, policy, profiles, map_selector, bg, surfatlas, atlas, panels, render_volume, render_surface, render_peaks, image_dir, cache_dir, materialize_recipes, overwrite_recipes, cache_surface, image_width, image_height, image_res, max_clusters, validate, check_files, load_maps}{Arguments forwarded to the montage report-data preparation path when
 `report_data` is not supplied.}
 
 \item{design}{Optional design table for signal plot context.}
@@ -54,8 +56,8 @@ present, it is filtered to the selected row.}
 A `shiny.appobj`.
 }
 \description{
-Builds a lightweight row picker over the montage report contract. Selecting a
-manifest row shows the already-rendered volume/surface montage images, the
+Builds a lightweight analysis picker followed by a map-variant picker over
+the montage report contract. Selecting a manifest row shows the already-rendered volume/surface montage images, the
 per-panel cluster/peak table, QC metadata, and optional design-linked signal
 values.
 }

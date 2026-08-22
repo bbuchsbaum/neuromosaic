@@ -7,17 +7,17 @@
 #'
 #' @details
 #' For an explicit `source` data frame (or CSV/TSV) you control every column,
-#' including the required `map_id`, `stat_kind`, `signed`, and `label`; this is
+#' including `map_id`, generic `quantity`, grouping fields, and `label`; this is
 #' the recommended route for non-BIDS filenames where token parsing is
 #' unreliable. See [montage_manifest_schema()] for the full column contract.
 #'
 #' For path/`pattern` discovery, `map_id` is derived from the full filename
 #' stem so maps differing only by a *bare* (non `key-value`) token stay
 #' distinct; a warning is emitted if any derived `map_id` still collides.
-#' Key-value BIDS entities become columns, and a `stat-` entity (`t`, `z`,
-#' `beta`, or `cope`)
-#' (or a bare token naming the statistic) populates `stat_kind` and a default
-#' `signed = TRUE`. Other required fields, notably `label`, still come from a
+#' Key-value filename entities become columns. `analysis-`, `role-`,
+#' `quantity-`/`metric-`, and `distribution-` entities populate the generic
+#' grouping and quantity contract. A legacy `stat-` entity (`t`, `z`, `beta`,
+#' or `cope`) remains supported. Other required fields, notably `label`, come from a
 #' `labeller`, `overrides`, or an explicit `source`.
 #'
 #' @param source A data frame, CSV/TSV path, path vector, or `NULL` when using
@@ -34,8 +34,8 @@
 #'
 #' @return A render manifest data frame.
 #' @examples
-#' # Minimal explicit manifest. Required columns: map_id, stat_kind, signed
-#' # (a logical), and label; df is also needed for t-stat p->threshold.
+#' # Minimal explicit manifest. Required columns: map_id, quantity, and label;
+#' # distribution is also needed for test statistics.
 #' manifest <- build_manifest(
 #'   source = data.frame(
 #'     map_id = c("faces_gt_houses", "houses_gt_faces"),
@@ -162,9 +162,15 @@ build_manifest <- function(source = NULL,
 }
 
 # A `stat-{t,z,beta,cope}` entity (or a bare token naming the statistic, e.g.
-# `..._z_g.nii.gz`) already encodes the required `stat_kind`/`signed` fields.
-# Derive them when absent so pattern-only discovery can satisfy validate = TRUE.
+# `..._z_g.nii.gz`) already encodes legacy statistic semantics. Derive those
+# fields when present so pattern-only discovery remains backward compatible.
 .derive_manifest_stat_fields <- function(out, parsed) {
+  if (!"analysis_id" %in% names(out) && "analysis" %in% names(out)) {
+    out$analysis_id <- out$analysis
+  }
+  if (!"quantity" %in% names(out) && "metric" %in% names(out)) {
+    out$quantity <- out$metric
+  }
   if ("stat_kind" %in% names(out)) {
     return(out)
   }

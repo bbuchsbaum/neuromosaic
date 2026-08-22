@@ -61,6 +61,42 @@ test_that("montage_peak_table validates inputs and handles empty clusters", {
   expect_true("atlas_label" %in% names(empty))
 })
 
+test_that("report peak tables respect the analysis mask", {
+  inputs <- make_toy_cluster_report_inputs()
+  mask_values <- array(0, dim = dim(inputs$stat_map))
+  mask_values[1:2, 1:2, 1:2] <- 1
+  mask <- neuroim2::NeuroVol(
+    mask_values,
+    space = neuroim2::space(inputs$stat_map)
+  )
+  manifest <- data.frame(
+    map_id = "faces_z",
+    quantity = "test_statistic",
+    distribution = "z",
+    label = "Faces Z",
+    threshold = 3,
+    min_cluster_size = 3,
+    stringsAsFactors = FALSE
+  )
+  manifest$stat_map <- I(list(inputs$stat_map))
+  manifest$mask <- I(list(mask))
+  manifest <- resolve_montage_policy(
+    manifest,
+    stat_maps = list(inputs$stat_map)
+  )
+  panels <- stats::setNames(list(list()), manifest$map_id)
+
+  out <- suppressWarnings(neuromosaic:::.render_montage_peak_panels(
+    manifest,
+    atlas = inputs$atlas,
+    panels = panels,
+    max_clusters = 5L
+  ))
+
+  expect_equal(nrow(out$faces_z$peak_table), 1)
+  expect_identical(out$faces_z$peak_table$sign, "positive")
+})
+
 test_that("montage QC summary surfaces effective N and dropped subjects", {
   manifest <- data.frame(
     map_id = c("faces_m1", "places_m1"),

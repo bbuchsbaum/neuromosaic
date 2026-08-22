@@ -39,7 +39,10 @@ at or above it. A manifest `threshold` column overrides this per row.}
 
 \item{min_cluster_size}{Default minimum cluster size.}
 
-\item{cap_within}{Character vector of manifest columns that share color caps.}
+\item{cap_within}{Character vector of manifest columns that may share color
+caps. Requested groups are automatically partitioned by quantity, resolved
+profile, units, scale type, and center so incompatible maps never share a
+scale.}
 
 \item{cap}{Optional fixed color cap (magnitude). When supplied, every cap
 group uses this value and the robust quantile default is ignored. `NULL`

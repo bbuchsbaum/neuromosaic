@@ -16,6 +16,8 @@ render_montage_report(
   section_notes = NULL,
   interludes = NULL,
   policy = NULL,
+  profiles = NULL,
+  map_selector = c("auto", "tabs", "select", "none"),
   bg = NULL,
   surfatlas = NULL,
   atlas = NULL,
@@ -40,7 +42,8 @@ render_montage_report(
   check_files = TRUE,
   load_maps = FALSE,
   provenance = NULL,
-  surface_scene = NULL
+  surface_scene = NULL,
+  interactive = NULL
 )
 }
 \arguments{
@@ -88,6 +91,14 @@ between panels rather than inside a panel's `description`. Columns: `map_id`
 panel. Multiple rows for the same anchor render in row order.}
 
 \item{policy}{A [montage_policy()] object.}
+
+\item{profiles}{Optional list of [montage_map_profile()] objects used to
+resolve custom quantities and display overrides without global state.}
+
+\item{map_selector}{HTML selector style: `"auto"` uses segmented tabs for
+two to four variants and a select control for larger groups; `"tabs"` and
+`"select"` force a style; `"none"` expands every map. Non-HTML outputs
+always expand all variants in primary-first order.}
 
 \item{bg}{Optional background `NeuroVol` or path. When supplied, volume
 montage PNGs are generated with [stat_montage()].}
@@ -166,6 +177,14 @@ volume and surface montage panels.}
 \item{surface_scene}{Optional `neurosurf::SurfaceScene` rendered once as the
 report's shared lazy interactive viewer. Static per-panel surface figures
 remain in the report as print and failure fallbacks.}
+
+\item{interactive}{Optional [montage_interactive()] configuration for a lazy
+orthogonal volume viewer in HTML output. The viewer uses the same resolved
+maps, geometry, display limits, thresholds, palettes, and opacity defaults
+as the static panels; reader changes are exploratory and reset exactly per
+map. HTML can bundle relative compressed NIfTI assets or embed them for
+direct `file://` viewing. QMD preserves the scene and assets for a later
+HTML render. PDF remains static and does not include browser runtime code.}
 }
 \value{
 The path to the rendered report (invisibly).
@@ -183,11 +202,13 @@ is supplied (`render_surface = !is.null(surfatlas)`); volume panels when a
 `bg` is supplied (`render_volume = !is.null(bg)`). See
 `vignette("montage-report", package = "neuromosaic")` for a worked example.
 
-**Manifest contract.** Every row describes one statistical map. The required
-columns are `map_id` (unique stable key), `stat_kind` (one of `t`, `z`,
-`beta`, `cope`), `signed` (a *logical*: does the statistic have positive and
-negative semantics?), and `label` (the human-facing panel title). `df` is
-additionally required for `stat_kind = "t"` rows whenever the threshold is
+**Manifest contract.** Every row describes one map variant. The required
+columns are `map_id` (unique stable key), `quantity` (a built-in or custom
+scientific quantity), and `label` (the human-facing panel title).
+`analysis_id` groups associated variants and `role` identifies exactly one
+primary map per group; both are derived for legacy one-map rows. Legacy
+`stat_kind` values remain accepted. `df` is additionally required for t rows
+whenever the threshold is
 derived from a p-value rather than supplied directly. See
 [montage_manifest_schema()] for the full column list and
 [build_manifest()]/[validate_manifest()] for construction and checks. Surface
@@ -209,5 +230,8 @@ installation providing `latex_engine` (default `"xelatex"`, common on
 workstations but often absent on minimal HPC nodes); use the `latex_engine`
 argument to switch engines (e.g. `"pdflatex"`). `.qmd` does **not** render:
 it writes the Quarto source plus a `_report-data.rds` sidecar and emits a
-message telling you to run `quarto render` yourself.
+message telling you to run `quarto render` yourself. The QMD sidecar omits
+source-map paths, executable recipes, and already-materialized map payloads;
+its static images and interactive bundle files use companion-relative paths
+so the QMD, sidecar, and `<report>_files/` directory can move together.
 }

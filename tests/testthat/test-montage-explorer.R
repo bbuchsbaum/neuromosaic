@@ -72,6 +72,27 @@ test_that("montage_explorer_data indexes panels, cluster tables, and QC", {
   expect_identical(out$signals, signals)
 })
 
+test_that("montage explorer indexes analyses separately from map variants", {
+  fixture <- make_montage_explorer_fixture()
+  manifest <- rbind(fixture$manifest, fixture$manifest)
+  manifest$analysis_id <- "faces"
+  manifest$map_id <- c("faces_z", "faces_se")
+  manifest$role <- c("primary", "auxiliary")
+  manifest$quantity <- c("test_statistic", "standard_error")
+  manifest$distribution <- c("z", NA)
+  manifest$label <- c("Z statistic", "Standard error")
+  manifest$signed <- c(TRUE, FALSE)
+  panels <- list(faces_z = fixture$panels[[1]], faces_se = list())
+
+  out <- montage_explorer_data(manifest = manifest, panels = panels)
+
+  expect_identical(out$analysis_index$analysis_id, "faces")
+  expect_identical(out$analysis_index$primary_map_id, "faces_z")
+  expect_identical(out$groups$faces$map_ids, c("faces_z", "faces_se"))
+  expect_identical(out$panel_index$selector_label,
+                   c("Z statistic", "Standard error"))
+})
+
 test_that("montage_explorer builds a Shiny app from report data", {
   skip_if_not_installed("shiny")
 

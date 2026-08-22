@@ -1,18 +1,30 @@
 #' Render a Statistic Volume Montage
 #'
-#' Builds a thresholded volume montage using `neuroim2::plot_overlay()` after
+#' Builds a thresholded or continuous volume montage using
+#' `neuroim2::plot_overlay()` after
 #' running [prepare_overlay()]. The function hard-errors by default when no
 #' finite suprathreshold voxels are present, avoiding silently blank figures.
 #'
 #' @param bg Background `NeuroVol` or file path.
 #' @param stat Statistic `NeuroVol` or file path.
-#' @param threshold Positive numeric overlay threshold.
+#' @param threshold Positive numeric overlay threshold, or `NULL`/`NA` to show
+#'   finite values continuously without significance thresholding.
 #' @param tail Tail mode: `"two_sided"`, `"positive"`, or `"negative"`.
 #' @param signed Logical; use symmetric signed color limits and a diverging
 #'   palette?
 #' @param cap Optional shared color cap. When supplied, overlay values are
 #'   clipped to this cap before plotting.
+#' @param limits Optional finite increasing display limits. This is the
+#'   preferred scale contract for continuous maps; `cap` remains as a backward-
+#'   compatible shorthand for zero-centered or nonnegative scales.
+#' @param support_mask Optional logical/numeric mask in statistic-map order.
+#'   Values outside the mask are hidden. This supports explicitly requested
+#'   primary-map masking without making it the auxiliary-map default.
 #' @param title,subtitle,caption Text passed to `neuroim2::plot_overlay()`.
+#' @param initial_world_coord Optional finite `(x, y, z)` world coordinate used
+#'   as the interactive view's initial crosshair. When omitted, the shared
+#'   display specification uses a tail-aware peak and then a field-of-view
+#'   centre fallback. It does not change the static slice selection.
 #' @param zlevels,along,ncol Slice selection arguments passed through.
 #' @param bg_cmap,ov_cmap Background and overlay color maps.
 #' @param ov_alpha Overlay alpha.
@@ -39,9 +51,12 @@ stat_montage <- function(bg,
                          tail = c("two_sided", "positive", "negative"),
                          signed = TRUE,
                          cap = NULL,
+                         limits = NULL,
+                         support_mask = NULL,
                          title = NULL,
                          subtitle = NULL,
                          caption = NULL,
+                         initial_world_coord = NULL,
                          zlevels = NULL,
                          along = 3L,
                          ncol = 3L,
@@ -59,64 +74,51 @@ stat_montage <- function(bg,
   ov_alpha_mode <- match.arg(ov_alpha_mode)
   on_mismatch <- match.arg(on_mismatch)
   empty <- match.arg(empty)
-
-  if (!is.numeric(threshold) || length(threshold) != 1L ||
-      !is.finite(threshold) || threshold <= 0) {
-    stop("'threshold' must be a positive number.", call. = FALSE)
-  }
-  if (!is.logical(signed) || length(signed) != 1L || is.na(signed)) {
-    stop("'signed' must be TRUE or FALSE.", call. = FALSE)
-  }
-  if (!is.null(cap) && (!is.numeric(cap) || length(cap) != 1L ||
-                        !is.finite(cap) || cap <= 0)) {
-    stop("'cap' must be NULL or a positive number.", call. = FALSE)
-  }
-  if (!is.null(alpha_gamma) && (!is.numeric(alpha_gamma) ||
-                                length(alpha_gamma) != 1L ||
-                                !is.finite(alpha_gamma) || alpha_gamma <= 0)) {
-    stop("'alpha_gamma' must be NULL or a positive number.", call. = FALSE)
-  }
-
-  aligned <- prepare_overlay(bg, stat, on_mismatch = on_mismatch)
-  stat_arr <- as.array(aligned$stat)
-  stat_values <- as.numeric(stat_arr)
-  supra <- .suprathreshold_mask(stat_values, threshold = threshold, tail = tail)
-  n_supra <- sum(supra, na.rm = TRUE)
-  if (n_supra == 0L) {
-    msg <- paste0(
-      "No finite suprathreshold voxels for threshold ", threshold,
-      " and tail '", tail, "'."
-    )
-    if (identical(empty, "error")) {
-      stop(msg, call. = FALSE)
-    }
-    warning(msg, call. = FALSE)
-  }
-
-  display_arr <- stat_arr
-  supra_arr <- array(supra, dim = dim(display_arr))
-  display_arr[!supra_arr] <- NA_real_
-  cap <- cap %||% .stat_montage_default_cap(display_arr, signed = signed)
-  display_arr <- .clip_montage_overlay(display_arr, cap = cap, signed = signed)
-  display_stat <- neuroim2::NeuroVol(display_arr, space = neuroim2::space(aligned$stat))
-  plot_zlevels <- zlevels %||% .stat_montage_zlevels(supra_arr, along = along)
-
-  plot_style <- .plot_overlay_style(style)
-  alpha_mode <- .plot_overlay_alpha_mode(ov_alpha_mode)
-
-  overlay_args <- list(
-    bgvol = aligned$background,
-    overlay = display_stat,
-    zlevels = plot_zlevels,
+  spec <- .prepare_montage_volume_display_spec(
+    bg = bg,
+    stat = stat,
+    threshold = threshold,
+    tail = tail,
+    signed = signed,
+    cap = cap,
+    limits = limits,
+    support_mask = support_mask,
+    initial_world_coord = initial_world_coord,
+    zlevels = zlevels,
     along = along,
     bg_cmap = bg_cmap,
     ov_cmap = ov_cmap,
-    bg_range = "robust",
-    ov_range = "data",
-    ov_thresh = threshold,
     ov_alpha = ov_alpha,
-    ov_alpha_mode = alpha_mode,
-    ov_symmetric = isTRUE(signed),
+    ov_alpha_mode = ov_alpha_mode,
+    alpha_gamma = alpha_gamma,
+    on_mismatch = on_mismatch,
+    empty = empty
+  )
+
+  plot_style <- .plot_overlay_style(style)
+
+  overlay_args <- list(
+    bgvol = spec$background,
+    overlay = spec$overlay,
+    zlevels = spec$zlevels,
+    along = along,
+    bg_cmap = spec$bg_cmap,
+    ov_cmap = spec$palette_value,
+    bg_range = "robust",
+    ov_range = if (identical(spec$display_mode, "continuous")) {
+      spec$limits
+    } else {
+      "data"
+    },
+    ov_thresh = if (identical(spec$display_mode, "continuous")) {
+      0
+    } else {
+      spec$threshold
+    },
+    ov_alpha = spec$alpha,
+    ov_alpha_mode = spec$alpha_mode,
+    ov_symmetric = isTRUE(spec$signed),
+    ov_cap = if (isTRUE(spec$signed)) max(abs(spec$limits)) else NULL,
     ncol = ncol,
     title = title,
     subtitle = subtitle,
@@ -135,21 +137,56 @@ stat_montage <- function(bg,
   structure(
     list(
       plot = plot,
-      background = aligned$background,
-      overlay = display_stat,
-      threshold = threshold,
-      tail = tail,
-      signed = signed,
-      cap = cap,
-      zlevels = plot_zlevels,
-      n_suprathreshold = n_supra,
+      background = spec$background,
+      overlay = spec$overlay,
+      threshold = spec$threshold,
+      display_mode = spec$display_mode,
+      tail = spec$tail,
+      signed = spec$signed,
+      cap = spec$cap,
+      limits = spec$limits,
+      zlevels = spec$zlevels,
+      initial_world_coord = spec$initial_world_coord,
+      n_suprathreshold = spec$n_display_voxels,
       style = plot_style,
       requested_style = style,
-      alpha_mode = alpha_mode,
-      overlay_action = aligned$action
+      alpha_mode = spec$alpha_mode,
+      display_spec = spec,
+      overlay_action = spec$overlay_action
     ),
     class = "stat_montage_result"
   )
+}
+
+.validate_montage_limits <- function(limits) {
+  if (is.null(limits)) return(NULL)
+  if (!is.numeric(limits) || length(limits) != 2L || anyNA(limits) ||
+      any(!is.finite(limits)) || limits[[1L]] >= limits[[2L]]) {
+    stop("'limits' must be NULL or a finite increasing numeric pair.",
+         call. = FALSE)
+  }
+  as.numeric(limits)
+}
+
+.normalize_montage_support_mask <- function(mask, n) {
+  if (is.null(mask)) return(rep(TRUE, n))
+  if (methods::is(mask, "NeuroVol")) mask <- as.numeric(mask)
+  if (length(mask) != n) {
+    stop("'support_mask' must have one value per statistic value.",
+         call. = FALSE)
+  }
+  if (is.logical(mask)) {
+    mask[is.na(mask)] <- FALSE
+    return(mask)
+  }
+  mask <- suppressWarnings(as.numeric(mask))
+  is.finite(mask) & mask != 0
+}
+
+.clip_montage_limits <- function(values, limits) {
+  values[values < limits[[1L]]] <- limits[[1L]]
+  values[values > limits[[2L]]] <- limits[[2L]]
+  values
 }
 
 .stat_montage_default_cap <- function(values, signed) {

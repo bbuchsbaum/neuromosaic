@@ -11,9 +11,12 @@ stat_montage(
   tail = c("two_sided", "positive", "negative"),
   signed = TRUE,
   cap = NULL,
+  limits = NULL,
+  support_mask = NULL,
   title = NULL,
   subtitle = NULL,
   caption = NULL,
+  initial_world_coord = NULL,
   zlevels = NULL,
   along = 3L,
   ncol = 3L,
@@ -33,7 +36,8 @@ stat_montage(
 
 \item{stat}{Statistic `NeuroVol` or file path.}
 
-\item{threshold}{Positive numeric overlay threshold.}
+\item{threshold}{Positive numeric overlay threshold, or `NULL`/`NA` to show
+finite values continuously without significance thresholding.}
 
 \item{tail}{Tail mode: `"two_sided"`, `"positive"`, or `"negative"`.}
 
@@ -43,7 +47,20 @@ palette?}
 \item{cap}{Optional shared color cap. When supplied, overlay values are
 clipped to this cap before plotting.}
 
+\item{limits}{Optional finite increasing display limits. This is the
+preferred scale contract for continuous maps; `cap` remains as a backward-
+compatible shorthand for zero-centered or nonnegative scales.}
+
+\item{support_mask}{Optional logical/numeric mask in statistic-map order.
+Values outside the mask are hidden. This supports explicitly requested
+primary-map masking without making it the auxiliary-map default.}
+
 \item{title, subtitle, caption}{Text passed to `neuroim2::plot_overlay()`.}
+
+\item{initial_world_coord}{Optional finite `(x, y, z)` world coordinate used
+as the interactive view's initial crosshair. When omitted, the shared
+display specification uses a tail-aware peak and then a field-of-view
+centre fallback. It does not change the static slice selection.}
 
 \item{zlevels, along, ncol}{Slice selection arguments passed through.}
 
@@ -75,7 +92,8 @@ A `stat_montage_result` list containing the plot object/list and
   render metadata.
 }
 \description{
-Builds a thresholded volume montage using `neuroim2::plot_overlay()` after
+Builds a thresholded or continuous volume montage using
+`neuroim2::plot_overlay()` after
 running [prepare_overlay()]. The function hard-errors by default when no
 finite suprathreshold voxels are present, avoiding silently blank figures.
 }

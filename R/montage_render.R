@@ -12,11 +12,13 @@
 #' `bg` is supplied (`render_volume = !is.null(bg)`). See
 #' `vignette("montage-report", package = "neuromosaic")` for a worked example.
 #'
-#' **Manifest contract.** Every row describes one statistical map. The required
-#' columns are `map_id` (unique stable key), `stat_kind` (one of `t`, `z`,
-#' `beta`, `cope`), `signed` (a *logical*: does the statistic have positive and
-#' negative semantics?), and `label` (the human-facing panel title). `df` is
-#' additionally required for `stat_kind = "t"` rows whenever the threshold is
+#' **Manifest contract.** Every row describes one map variant. The required
+#' columns are `map_id` (unique stable key), `quantity` (a built-in or custom
+#' scientific quantity), and `label` (the human-facing panel title).
+#' `analysis_id` groups associated variants and `role` identifies exactly one
+#' primary map per group; both are derived for legacy one-map rows. Legacy
+#' `stat_kind` values remain accepted. `df` is additionally required for t rows
+#' whenever the threshold is
 #' derived from a p-value rather than supplied directly. See
 #' [montage_manifest_schema()] for the full column list and
 #' [build_manifest()]/[validate_manifest()] for construction and checks. Surface
@@ -38,7 +40,10 @@
 #' workstations but often absent on minimal HPC nodes); use the `latex_engine`
 #' argument to switch engines (e.g. `"pdflatex"`). `.qmd` does **not** render:
 #' it writes the Quarto source plus a `_report-data.rds` sidecar and emits a
-#' message telling you to run `quarto render` yourself.
+#' message telling you to run `quarto render` yourself. The QMD sidecar omits
+#' source-map paths, executable recipes, and already-materialized map payloads;
+#' its static images and interactive bundle files use companion-relative paths
+#' so the QMD, sidecar, and `<report>_files/` directory can move together.
 #'
 #' @param manifest A render manifest data frame, one row per statistical map.
 #'   See Details for the required columns.
@@ -74,6 +79,19 @@
 #'   (`"before"` or `"after"`, default `"before"`) selecting the side of that
 #'   panel. Multiple rows for the same anchor render in row order.
 #' @param policy A [montage_policy()] object.
+#' @param profiles Optional list of [montage_map_profile()] objects used to
+#'   resolve custom quantities and display overrides without global state.
+#' @param map_selector HTML selector style: `"auto"` uses segmented tabs for
+#'   two to four variants and a select control for larger groups; `"tabs"` and
+#'   `"select"` force a style; `"none"` expands every map. Non-HTML outputs
+#'   always expand all variants in primary-first order.
+#' @param interactive Optional [montage_interactive()] configuration for a lazy
+#'   orthogonal volume viewer in HTML output. The viewer uses the same resolved
+#'   maps, geometry, display limits, thresholds, palettes, and opacity defaults
+#'   as the static panels; reader changes are exploratory and reset exactly per
+#'   map. HTML can bundle relative compressed NIfTI assets or embed them for
+#'   direct `file://` viewing. QMD preserves the scene and assets for a later
+#'   HTML render. PDF remains static and does not include browser runtime code.
 #' @param bg Optional background `NeuroVol` or path. When supplied, volume
 #'   montage PNGs are generated with [stat_montage()].
 #' @param surfatlas Optional surface atlas. Required when `render_surface` is
@@ -143,6 +161,9 @@ render_montage_report <- function(manifest,
                                   section_notes = NULL,
                                   interludes = NULL,
                                   policy = NULL,
+                                  profiles = NULL,
+                                  map_selector = c("auto", "tabs", "select",
+                                                   "none"),
                                   bg = NULL,
                                   surfatlas = NULL,
                                   atlas = NULL,
@@ -167,7 +188,8 @@ render_montage_report <- function(manifest,
                                   check_files = TRUE,
                                   load_maps = FALSE,
                                   provenance = NULL,
-                                  surface_scene = NULL) {
+                                  surface_scene = NULL,
+                                  interactive = NULL) {
   volume_args <- .validate_montage_passthrough(
     volume_args, stat_montage, c("bg", "stat", "draw"), "volume_args"
   )
@@ -180,6 +202,27 @@ render_montage_report <- function(manifest,
   )
 
   empty <- match.arg(empty)
+  map_selector <- match.arg(map_selector)
+  if (!is.null(interactive) &&
+      !inherits(interactive, "montage_interactive")) {
+    stop("'interactive' must be NULL or created by montage_interactive().",
+         call. = FALSE)
+  }
+  if (!is.null(interactive) && !isTRUE(render_volume)) {
+    stop(
+      "Interactive volume reports require render_volume = TRUE so the static ",
+      "fallback remains authoritative.",
+      call. = FALSE
+    )
+  }
+  if (!is.null(interactive) &&
+      identical(volume_args$on_mismatch, "restamp")) {
+    stop(
+      "Interactive volume reports do not support ",
+      "volume_args$on_mismatch = 'restamp'; align the inputs first.",
+      call. = FALSE
+    )
+  }
   if (!is.character(latex_engine) || length(latex_engine) != 1L ||
       is.na(latex_engine) || !nzchar(latex_engine)) {
     stop("'latex_engine' must be a single non-empty string.", call. = FALSE)
@@ -238,6 +281,8 @@ render_montage_report <- function(manifest,
     section_notes = section_notes,
     interludes = interludes,
     policy = policy,
+    profiles = profiles,
+    map_selector = map_selector,
     bg = bg,
     surfatlas = surfatlas,
     atlas = atlas,
@@ -263,6 +308,46 @@ render_montage_report <- function(manifest,
     provenance = provenance,
     surface_scene = surface_scene
   )
+  report_data$params$interactive_requested <- !is.null(interactive)
+  report_data$interactive <- if (!is.null(interactive) &&
+                                 ext %in% c("html", "qmd")) {
+    .prepare_montage_interactive_report(
+      report_data = report_data,
+      interactive = interactive,
+      background = bg,
+      output_file = output_file
+    )
+  } else {
+    NULL
+  }
+  if (!is.null(report_data$interactive)) {
+    interactive_summary <- report_data$interactive$summary
+    report_data$provenance$interactive_engine <- paste0(
+      "neuroimjs ", report_data$interactive$engine_version,
+      " / adapter ", report_data$interactive$adapter_version
+    )
+    report_data$provenance$interactive_packaging <- paste0(
+      interactive_summary$packaging, " / ", interactive_summary$compression
+    )
+    report_data$provenance$interactive_asset_count <-
+      interactive_summary$asset_count
+    report_data$provenance$interactive_scene_version <-
+      report_data$interactive$scene$schema_version
+    report_data$provenance$interactive_runtime_sha256 <-
+      report_data$interactive$runtime_sha256
+    report_data$provenance$interactive_compressed_bytes <-
+      interactive_summary$compressed_bytes
+    report_data$provenance$interactive_uncompressed_bytes <-
+      interactive_summary$uncompressed_bytes
+    report_data$provenance$interactive_transformations <- paste(unique(unlist(
+      lapply(report_data$interactive$scene$assets, `[[`, "transformations")
+    )), collapse = ", ")
+    report_data$provenance$interactive_asset_hashes <- paste(vapply(
+      report_data$interactive$scene$assets,
+      function(asset) paste0(asset$asset_id, "=", asset$hash),
+      character(1)
+    ), collapse = "; ")
+  }
 
   if (ext == "qmd") {
     return(invisible(.write_montage_report_qmd(
@@ -276,7 +361,11 @@ render_montage_report <- function(manifest,
     stop("Package 'rmarkdown' is required to render reports.", call. = FALSE)
   }
 
-  output_format <- .montage_rmarkdown_output_format(ext, latex_engine)
+  has_interactive_bundle <- !is.null(report_data$interactive) &&
+    identical(report_data$interactive$summary$packaging, "bundle")
+  output_format <- .montage_rmarkdown_output_format(
+    ext, latex_engine, self_contained = !has_interactive_bundle
+  )
   withr::with_dir(output_dir, {
     rmarkdown::render(
       input = template,
@@ -296,12 +385,16 @@ render_montage_report <- function(manifest,
   invisible(normalizePath(output_file, mustWork = FALSE))
 }
 
-.montage_rmarkdown_output_format <- function(ext, latex_engine = "xelatex") {
+.montage_rmarkdown_output_format <- function(ext,
+                                             latex_engine = "xelatex",
+                                             self_contained = TRUE) {
   if (identical(ext, "html")) {
     return(rmarkdown::html_document(
       toc = TRUE,
       toc_float = TRUE,
-      theme = "flatly"
+      theme = "flatly",
+      self_contained = isTRUE(self_contained),
+      mathjax = NULL
     ))
   }
 
@@ -326,6 +419,8 @@ render_montage_report <- function(manifest,
                                          section_notes = NULL,
                                          interludes = NULL,
                                          policy,
+                                         profiles = NULL,
+                                         map_selector = "auto",
                                          bg,
                                          surfatlas,
                                          atlas,
@@ -396,10 +491,38 @@ render_montage_report <- function(manifest,
          call. = FALSE)
   }
   policy$layout <- layout
-  policy_stat_maps <- if (.montage_policy_uses_fdr(manifest, policy)) {
+  profile_values <- if (isTRUE(render_volume) || isTRUE(render_surface) ||
+                        isTRUE(render_peaks) ||
+                        .montage_policy_uses_fdr(manifest, policy)) {
     lapply(seq_len(nrow(manifest)), function(i) {
       .montage_manifest_stat_values(manifest, i)
     })
+  } else {
+    NULL
+  }
+  if (!is.null(profile_values)) {
+    # Resolve geometry before masks, profiles, static images, or interactive
+    # assets can hide a mismatch. The interactive MVP never restamps or
+    # resamples a map, even if a direct stat_montage() caller opts into that
+    # legacy behavior.
+    if (isTRUE(render_volume) &&
+        !identical(volume_args$on_mismatch, "restamp")) {
+      .montage_validate_report_volume_geometry(
+        manifest, background = bg, stat_maps = profile_values
+      )
+    }
+    .validate_montage_group_sources(manifest, profile_values)
+    profile_values <- .montage_profile_values_with_analysis_masks(
+      manifest, profile_values
+    )
+  }
+  manifest <- resolve_montage_profiles(
+    manifest,
+    profiles = profiles,
+    map_values = profile_values
+  )
+  policy_stat_maps <- if (.montage_policy_uses_fdr(manifest, policy)) {
+    profile_values
   } else {
     NULL
   }
@@ -409,6 +532,7 @@ render_montage_report <- function(manifest,
     empty = empty,
     stat_maps = policy_stat_maps
   )
+  manifest <- .apply_montage_shared_profile_limits(manifest, policy)
   missing_layout <- setdiff(layout, names(manifest))
   if (length(missing_layout) > 0L) {
     stop(
@@ -417,6 +541,7 @@ render_montage_report <- function(manifest,
       call. = FALSE
     )
   }
+  .validate_montage_group_layout(manifest, layout)
 
   map_ids <- as.character(manifest$map_id)
   narratives <- .validate_montage_narratives(
@@ -467,8 +592,12 @@ render_montage_report <- function(manifest,
     )
   }
 
+  groups <- .montage_analysis_groups(manifest)
+  groups <- .attach_montage_group_views(groups, panels)
+
   list(
     manifest = manifest,
+    groups = groups,
     panels = panels,
     qc = qc,
     intro = narratives$intro,
@@ -479,10 +608,72 @@ render_montage_report <- function(manifest,
       title = title,
       layout = layout,
       policy = policy,
+      map_selector = map_selector,
       report_mode = "montage"
     ),
     provenance = provenance %||% .montage_report_provenance()
   )
+}
+
+.apply_montage_shared_profile_limits <- function(manifest, policy) {
+  if (length(policy$cap_within) == 0L) return(manifest)
+  for (key in unique(manifest$cap_key)) {
+    rows <- which(
+      manifest$cap_key == key & manifest$effective_display_mode == "continuous"
+    )
+    if (length(rows) < 2L) next
+    if (!is.null(policy$cap)) {
+      if (identical(manifest$effective_scale[[rows[[1L]]]], "diverging")) {
+        center <- manifest$effective_center[[rows[[1L]]]]
+        shared <- c(center - policy$cap, center + policy$cap)
+      } else {
+        shared <- c(min(manifest$effective_lower[rows]), policy$cap)
+      }
+    } else {
+      shared <- c(
+        min(manifest$effective_lower[rows]),
+        max(manifest$effective_upper[rows])
+      )
+    }
+    if ("effective_domain_lower" %in% names(manifest)) {
+      shared[[1L]] <- max(
+        shared[[1L]], max(manifest$effective_domain_lower[rows])
+      )
+    }
+    if ("effective_domain_upper" %in% names(manifest)) {
+      shared[[2L]] <- min(
+        shared[[2L]], min(manifest$effective_domain_upper[rows])
+      )
+    }
+    if (!all(is.finite(shared)) || shared[[1L]] >= shared[[2L]]) {
+      stop(
+        "Shared display limits are incompatible for cap group '", key, "'.",
+        call. = FALSE
+      )
+    }
+    manifest$effective_lower[rows] <- shared[[1L]]
+    manifest$effective_upper[rows] <- shared[[2L]]
+  }
+  manifest
+}
+
+.validate_montage_group_layout <- function(manifest, layout) {
+  if (length(layout) == 0L) return(invisible(TRUE))
+  for (id in unique(manifest$analysis_id)) {
+    rows <- manifest$analysis_id == id
+    for (field in layout) {
+      values <- unique(as.character(manifest[[field]][rows]))
+      values <- values[!is.na(values) & nzchar(values)]
+      if (length(values) > 1L) {
+        stop(
+          "Layout column '", field, "' must be invariant within analysis_id '",
+          id, "'.",
+          call. = FALSE
+        )
+      }
+    }
+  }
+  invisible(TRUE)
 }
 
 .normalize_montage_panels <- function(panels, map_ids) {
@@ -763,22 +954,52 @@ render_montage_report <- function(manifest,
   stat_maps <- lapply(seq_len(nrow(manifest)), function(i) {
     .montage_manifest_stat_source(manifest, i)
   })
-  caps <- .montage_shared_caps(manifest, stat_maps, policy = policy)
+  if (!identical(volume_args$on_mismatch, "restamp")) {
+    .montage_validate_report_volume_geometry(manifest, bg, stat_maps)
+  }
+  support_masks <- .montage_render_support_masks(manifest, stat_maps)
+  caps <- .montage_shared_caps(
+    manifest, stat_maps, policy = policy, support_masks = support_masks
+  )
+  group_zlevels <- .montage_group_zlevels(
+    manifest,
+    stat_maps,
+    support_masks,
+    along = volume_args$along %||% 3L
+  )
 
   for (i in seq_len(nrow(manifest))) {
     map_id <- as.character(manifest$map_id[[i]])
     image_path <- file.path(image_dir, paste0(.safe_file_stem(map_id), "_volume.png"))
     cap_value <- caps[[manifest$cap_key[[i]]]]
+    continuous <- identical(
+      manifest$effective_display_mode[[i]], "continuous"
+    )
+    limits <- c(
+      manifest$effective_lower[[i]], manifest$effective_upper[[i]]
+    )
     base_args <- list(
       bg = bg,
       stat = stat_maps[[i]],
       threshold = manifest$effective_threshold[[i]],
       tail = manifest$effective_tail[[i]],
-      signed = manifest$signed[[i]],
+      signed = manifest$effective_signed[[i]],
       # A non-positive group cap (an entirely empty/all-zero cap group) is not a
       # valid color magnitude; pass NULL so the montage picks its own benign
       # default instead of failing the cap > 0 check (defeats empty = "warning").
-      cap = if (is.finite(cap_value) && cap_value > 0) cap_value else NULL,
+      cap = if (!continuous && is.finite(cap_value) && cap_value > 0) {
+        cap_value
+      } else {
+        NULL
+      },
+      limits = if (continuous) limits else NULL,
+      support_mask = support_masks[[i]],
+      zlevels = group_zlevels[[as.character(manifest$analysis_id[[i]])]],
+      ov_cmap = .montage_volume_palette(
+        manifest$effective_palette_family[[i]],
+        manifest$effective_scale[[i]]
+      ),
+      ov_alpha_mode = manifest$effective_alpha_mode[[i]],
       title = manifest$label[[i]],
       subtitle = .montage_panel_subtitle(manifest[i, , drop = FALSE]),
       draw = TRUE,
@@ -797,17 +1018,15 @@ render_montage_report <- function(manifest,
     )
 
     panels[[map_id]]$volume_image <- normalizePath(image_path, mustWork = FALSE)
-    panels[[map_id]]$volume <- list(
-      threshold = result$threshold,
-      tail = result$tail,
-      cap = result$cap,
-      n_suprathreshold = result$n_suprathreshold,
-      alpha_mode = result$alpha_mode,
-      style = result$style
+    panels[[map_id]]$volume <- .montage_volume_display_metadata(
+      spec = result$display_spec,
+      row = manifest[i, , drop = FALSE],
+      support = support_masks[[i]]
     )
+    panels[[map_id]]$volume$style <- result$style
   }
 
-  panels
+  .montage_share_group_volume_views(manifest, panels)
 }
 
 .render_montage_surface_panels <- function(manifest,
@@ -833,11 +1052,20 @@ render_montage_report <- function(manifest,
   stat_values <- lapply(surface_sources, function(source) {
     source$vals %||% source$stat
   })
-  caps <- .montage_shared_caps(manifest, stat_values, policy = policy)
+  support_masks <- .montage_render_support_masks(manifest, stat_values)
+  caps <- .montage_shared_caps(
+    manifest, stat_values, policy = policy, support_masks = support_masks
+  )
 
   for (i in seq_len(nrow(manifest))) {
     map_id <- as.character(manifest$map_id[[i]])
     group_cap <- caps[[manifest$cap_key[[i]]]]
+    continuous <- identical(
+      manifest$effective_display_mode[[i]], "continuous"
+    )
+    limits <- c(
+      manifest$effective_lower[[i]], manifest$effective_upper[[i]]
+    )
     source_args <- surface_sources[[i]]
     # surface_args (caller wins) can override threshold/tail/signed/cap; merge
     # before computing the cache key so it reflects the values actually rendered.
@@ -848,10 +1076,20 @@ render_montage_report <- function(manifest,
           surfatlas = surfatlas,
           threshold = manifest$effective_threshold[[i]],
           tail = manifest$effective_tail[[i]],
-          signed = manifest$signed[[i]],
+          signed = manifest$effective_signed[[i]],
           # See the volume renderer: a non-positive cap (empty cap group) is not
           # a valid magnitude; pass NULL so surf_montage uses its benign default.
-          cap = if (is.finite(group_cap) && group_cap > 0) group_cap else NULL,
+          cap = if (!continuous && is.finite(group_cap) && group_cap > 0) {
+            group_cap
+          } else {
+            NULL
+          },
+          limits = if (continuous) limits else NULL,
+          support_mask = support_masks[[i]],
+          overlay_palette = .montage_surface_palette(
+            manifest$effective_palette_family[[i]],
+            manifest$effective_scale[[i]]
+          ),
           width = width,
           height = height,
           res = res,
@@ -881,18 +1119,30 @@ render_montage_report <- function(manifest,
     eff_empty <- base_args$empty %||% empty
 
     if (isTRUE(cache_surface) && file.exists(image_path)) {
-      n_supra <- sum(.suprathreshold_mask(
+      n_supra <- sum(.montage_display_mask(
         as.numeric(stat_values[[i]]),
+        display_mode = manifest$effective_display_mode[[i]],
         threshold = eff_threshold,
-        tail = eff_tail
+        tail = eff_tail,
+        support_mask = base_args$support_mask
       ), na.rm = TRUE)
       if (n_supra == 0L) {
         # A panel cached under empty = "warning" must still abort under a later
         # empty = "error" request (the PNG carries no policy of its own).
-        msg <- paste0(
-          "No finite suprathreshold voxels for threshold ", eff_threshold,
-          " and tail '", eff_tail, "'."
-        )
+        msg <- if (continuous) {
+          paste0(
+            "No finite display ",
+            if (!is.null(source_args$vals)) "parcels" else "voxels",
+            " for the continuous overlay."
+          )
+        } else {
+          paste0(
+            "No finite suprathreshold ",
+            if (!is.null(source_args$vals)) "parcels" else "voxels",
+            " for threshold ", eff_threshold,
+            " and tail '", eff_tail, "'."
+          )
+        }
         if (identical(eff_empty, "error")) {
           stop(msg, call. = FALSE)
         }
@@ -901,10 +1151,15 @@ render_montage_report <- function(manifest,
       panels[[map_id]]$surface_image <- normalizePath(image_path, mustWork = TRUE)
       panels[[map_id]]$surface <- list(
         threshold = eff_threshold,
+        display_mode = manifest$effective_display_mode[[i]],
         tail = eff_tail,
         cap = eff_cap,
+        limits = base_args$limits,
+        support = manifest$effective_support[[i]],
         n_suprathreshold = n_supra,
         surface_space = NA_character_,
+        views = base_args$views %||% c("lateral", "medial"),
+        hemis = base_args$hemis %||% c("left", "right"),
         diagnostics = list(cache_hit = TRUE)
       )
       next
@@ -916,10 +1171,15 @@ render_montage_report <- function(manifest,
     panels[[map_id]]$surface_image <- result$image
     panels[[map_id]]$surface <- list(
       threshold = result$threshold,
+      display_mode = result$display_mode,
       tail = result$tail,
       cap = result$cap,
+      limits = result$limits,
+      support = manifest$effective_support[[i]],
       n_suprathreshold = result$n_suprathreshold,
       surface_space = result$surface_space,
+      views = result$views,
+      hemis = result$hemis,
       diagnostics = result$diagnostics
     )
   }
@@ -976,7 +1236,192 @@ render_montage_report <- function(manifest,
   list(stat = .montage_manifest_stat_source(manifest, row))
 }
 
-.montage_shared_caps <- function(manifest, stat_maps, policy = NULL) {
+.montage_render_support_masks <- function(manifest, sources) {
+  groups <- .montage_analysis_groups(manifest)
+  lapply(seq_len(nrow(manifest)), function(i) {
+    values <- as.numeric(sources[[i]])
+    group <- groups[[as.character(manifest$analysis_id[[i]])]]
+    primary_row <- match(group$primary_map_id, manifest$map_id)
+    requested <- manifest$effective_support[[i]]
+    if (identical(requested, "primary")) {
+      primary_values <- as.numeric(sources[[primary_row]])
+      if (length(primary_values) != length(values)) {
+        stop(
+          "Primary support cannot be shared across different map sizes in ",
+          "analysis_id '", manifest$analysis_id[[i]], "'.",
+          call. = FALSE
+        )
+      }
+      primary_analysis_mask <- if (.montage_row_has_mask(
+        manifest, primary_row
+      )) {
+        .montage_manifest_mask_values(
+          manifest, primary_row, reference = sources[[primary_row]]
+        )
+      } else {
+        NULL
+      }
+      primary_support <- .montage_display_mask(
+        primary_values,
+        display_mode = manifest$effective_display_mode[[primary_row]],
+        threshold = manifest$effective_threshold[[primary_row]],
+        tail = manifest$effective_tail[[primary_row]],
+        support_mask = primary_analysis_mask
+      )
+      target_mask_row <- if (.montage_row_has_mask(manifest, i)) {
+        i
+      } else {
+        primary_row
+      }
+      if (.montage_row_has_mask(manifest, target_mask_row)) {
+        target_mask <- .montage_manifest_mask_values(
+          manifest, target_mask_row, reference = sources[[i]]
+        )
+        primary_support <- primary_support &
+          .normalize_montage_support_mask(target_mask, length(values))
+      }
+      return(primary_support)
+    }
+
+    mask_row <- if (.montage_row_has_mask(manifest, i)) i else primary_row
+    if (!.montage_row_has_mask(manifest, mask_row)) return(NULL)
+    mask <- .montage_manifest_mask_values(
+      manifest, mask_row, reference = sources[[i]]
+    )
+    if (length(mask) != length(values)) {
+      stop(
+        "Analysis mask size does not match map_id '", manifest$map_id[[i]],
+        "'.",
+        call. = FALSE
+      )
+    }
+    .normalize_montage_support_mask(mask, length(values))
+  })
+}
+
+.montage_profile_values_with_analysis_masks <- function(manifest, sources) {
+  groups <- .montage_analysis_groups(manifest)
+  lapply(seq_len(nrow(manifest)), function(i) {
+    group <- groups[[as.character(manifest$analysis_id[[i]])]]
+    primary_row <- match(group$primary_map_id, manifest$map_id)
+    mask_row <- if (.montage_row_has_mask(manifest, i)) i else primary_row
+    if (!.montage_row_has_mask(manifest, mask_row)) return(sources[[i]])
+
+    values <- as.numeric(sources[[i]])
+    mask <- .montage_manifest_mask_values(
+      manifest, mask_row, reference = sources[[i]]
+    )
+    if (length(mask) != length(values)) {
+      stop(
+        "Analysis mask size does not match map_id '", manifest$map_id[[i]],
+        "'.",
+        call. = FALSE
+      )
+    }
+    values[!.normalize_montage_support_mask(mask, length(values))] <- NA_real_
+    values
+  })
+}
+
+.montage_row_has_mask <- function(manifest, row) {
+  "mask" %in% names(manifest) &&
+    !.missing_column_values(manifest$mask)[[row]]
+}
+
+.montage_manifest_mask_values <- function(manifest, row, reference = NULL) {
+  mask <- .montage_manifest_mask_source(manifest, row)
+  if (methods::is(mask, "NeuroVol") &&
+      methods::is(reference, "NeuroVol") &&
+      !.same_neuro_space(neuroim2::space(mask), neuroim2::space(reference))) {
+    stop(
+      "Analysis mask geometry does not match map_id '",
+      manifest$map_id[[row]], "'.",
+      call. = FALSE
+    )
+  }
+  as.numeric(mask)
+}
+
+.montage_display_mask <- function(values,
+                                  display_mode,
+                                  threshold,
+                                  tail,
+                                  support_mask = NULL) {
+  mask <- if (identical(display_mode, "thresholded")) {
+    .suprathreshold_mask(values, threshold = threshold, tail = tail)
+  } else {
+    is.finite(values)
+  }
+  if (!is.null(support_mask)) {
+    mask <- mask & .normalize_montage_support_mask(
+      support_mask, length(values)
+    )
+  }
+  mask
+}
+
+.montage_group_zlevels <- function(manifest, stat_maps, support_masks,
+                                   along = 3L) {
+  groups <- .montage_analysis_groups(manifest)
+  stats::setNames(lapply(groups, function(group) {
+    row <- match(group$primary_map_id, manifest$map_id)
+    stat <- stat_maps[[row]]
+    if (!methods::is(stat, "NeuroVol")) return(NULL)
+    mask <- .montage_display_mask(
+      as.numeric(stat),
+      display_mode = manifest$effective_display_mode[[row]],
+      threshold = manifest$effective_threshold[[row]],
+      tail = manifest$effective_tail[[row]],
+      support_mask = support_masks[[row]]
+    )
+    .stat_montage_zlevels(array(mask, dim = dim(stat)), along = along)
+  }), names(groups))
+}
+
+.montage_volume_palette <- function(palette_family, scale) {
+  if (identical(palette_family, "diverging")) return("blue-red")
+  if (identical(palette_family, "sequential")) return("inferno")
+  palette_family %||% if (identical(scale, "diverging")) {
+    "blue-red"
+  } else {
+    "inferno"
+  }
+}
+
+.montage_surface_palette <- function(palette_family, scale) {
+  if (identical(palette_family, "diverging")) return("vik")
+  if (identical(palette_family, "sequential")) return("inferno")
+  palette_family %||% if (identical(scale, "diverging")) "vik" else "inferno"
+}
+
+.attach_montage_group_views <- function(groups, panels) {
+  lapply(groups, function(group) {
+    primary <- panels[[group$primary_map_id]] %||% list()
+    # Use exact list indexing: `$volume` partially matches the public
+    # `volume_image` field when no rendered-volume metadata is present.
+    volume <- primary[["volume"]]
+    surface <- primary[["surface"]]
+    group$view <- list(
+      zlevels = if (is.list(volume)) volume[["zlevels"]] else NULL,
+      zlevel_bookmarks = if (is.list(volume)) {
+        volume[["zlevel_bookmarks"]]
+      } else {
+        NULL
+      },
+      initial_world_coord = if (is.list(volume)) {
+        volume[["initial_world_coord"]]
+      } else {
+        NULL
+      },
+      surface_views = if (is.list(surface)) surface[["views"]] else NULL,
+      surface_hemis = if (is.list(surface)) surface[["hemis"]] else NULL
+    )
+    group
+  })
+}
+
+.montage_shared_caps <- function(manifest, stat_maps, policy = NULL,
+                                 support_masks = NULL) {
   cap_override <- policy$cap
   cap_quantile <- policy$cap_quantile %||% 0.99
   cap_floor <- policy$cap_floor
@@ -993,7 +1438,8 @@ render_montage_report <- function(manifest,
       stat_maps = stat_maps,
       rows = rows,
       cap_quantile = cap_quantile,
-      cap_floor = cap_floor
+      cap_floor = cap_floor,
+      support_masks = support_masks
     )
   }
   caps
@@ -1005,13 +1451,15 @@ render_montage_report <- function(manifest,
 # proportional/soft alpha (see GitHub issue #5). Falls back to the map maximum
 # when no voxels survive threshold so a cap is always available.
 .montage_group_cap <- function(manifest, stat_maps, rows, cap_quantile,
-                               cap_floor) {
+                               cap_floor, support_masks = NULL) {
   supra <- unlist(lapply(rows, function(r) {
     values <- as.numeric(stat_maps[[r]])
-    mask <- .suprathreshold_mask(
-      values,
+    mask <- .montage_display_mask(
+      values = values,
+      display_mode = manifest$effective_display_mode[[r]],
       threshold = manifest$effective_threshold[[r]],
-      tail = manifest$effective_tail[[r]]
+      tail = manifest$effective_tail[[r]],
+      support_mask = if (is.null(support_masks)) NULL else support_masks[[r]]
     )
     abs(values[mask])
   }), use.names = FALSE)
@@ -1021,7 +1469,15 @@ render_montage_report <- function(manifest,
     as.numeric(stats::quantile(supra, probs = cap_quantile, names = FALSE,
                                type = 7))
   } else {
-    values <- unlist(lapply(stat_maps[rows], as.numeric), use.names = FALSE)
+    values <- unlist(lapply(rows, function(r) {
+      values <- as.numeric(stat_maps[[r]])
+      if (!is.null(support_masks) && !is.null(support_masks[[r]])) {
+        values <- values[.normalize_montage_support_mask(
+          support_masks[[r]], length(values)
+        )]
+      }
+      values
+    }), use.names = FALSE)
     values <- abs(values[is.finite(values)])
     if (length(values) == 0L) NA_real_ else max(values)
   }
@@ -1151,6 +1607,9 @@ render_montage_report <- function(manifest,
   )
   sidecar_path <- file.path(dirname(output_file), sidecar)
 
+  report_data <- .montage_qmd_portable_report_data(
+    report_data, output_file
+  )
   saveRDS(report_data, sidecar_path)
   lines <- gsub("__REPORT_DATA_FILE__", sidecar, lines, fixed = TRUE)
   note_lines <- c(
@@ -1180,4 +1639,96 @@ render_montage_report <- function(manifest,
   )
 
   invisible(normalizePath(output_file, mustWork = FALSE))
+}
+
+.montage_qmd_portable_report_data <- function(report_data, output_file) {
+  output_dir <- normalizePath(dirname(output_file), mustWork = TRUE,
+                              winslash = "/")
+  companion <- paste0(
+    tools::file_path_sans_ext(basename(output_file)), "_files"
+  )
+
+  # Rendering has already materialized every static panel and interactive
+  # asset. Source maps, recipes, masks, and parcel vectors are neither needed
+  # by the QMD template nor safe/portable to retain in its render sidecar.
+  source_fields <- intersect(
+    c("path", "recipe", "stat_map", "space", "template", "mask",
+      "parcel_values"),
+    names(report_data$manifest)
+  )
+  if (length(source_fields) > 0L) {
+    report_data$manifest[source_fields] <- NULL
+  }
+
+  image_fields <- c(
+    "volume_image", "volume_image_path",
+    "surface_image", "surface_image_path"
+  )
+  report_data$panels <- lapply(report_data$panels, function(panel) {
+    for (field in intersect(image_fields, names(panel))) {
+      value <- panel[[field]]
+      if (is.character(value) && length(value) == 1L &&
+          !is.na(value) && nzchar(value)) {
+        panel[[field]] <- .montage_qmd_portable_image(
+          value, output_dir = output_dir, companion = companion
+        )
+      }
+    }
+    panel
+  })
+
+  if (!is.null(report_data$interactive) &&
+      length(report_data$interactive$bundle_files) > 0L) {
+    report_data$interactive$bundle_files <- unname(vapply(
+      report_data$interactive$bundle_files,
+      .montage_qmd_relative_path,
+      character(1),
+      output_dir = output_dir,
+      label = "interactive bundle asset"
+    ))
+  }
+  report_data
+}
+
+.montage_qmd_portable_image <- function(path, output_dir, companion) {
+  source <- .montage_qmd_existing_path(path, output_dir, "panel image")
+  relative <- .montage_path_below(source, output_dir)
+  if (!is.null(relative)) return(relative)
+
+  image_dir <- file.path(output_dir, companion, "qmd-images")
+  if (!dir.exists(image_dir)) {
+    dir.create(image_dir, recursive = TRUE)
+  }
+  digest <- substr(unname(tools::md5sum(source)), 1L, 12L)
+  filename <- paste0(digest, "-", .safe_file_stem(basename(source)))
+  destination <- file.path(image_dir, filename)
+  if (!file.exists(destination) && !file.copy(source, destination)) {
+    stop("Could not copy QMD panel image '", source, "'.", call. = FALSE)
+  }
+  file.path(companion, "qmd-images", filename)
+}
+
+.montage_qmd_relative_path <- function(path, output_dir, label) {
+  source <- .montage_qmd_existing_path(path, output_dir, label)
+  relative <- .montage_path_below(source, output_dir)
+  if (is.null(relative)) {
+    stop("QMD ", label, " is outside the report directory: ", source,
+         call. = FALSE)
+  }
+  relative
+}
+
+.montage_qmd_existing_path <- function(path, output_dir, label) {
+  candidates <- c(path, file.path(output_dir, path))
+  existing <- candidates[file.exists(candidates)]
+  if (length(existing) == 0L) {
+    stop("QMD ", label, " does not exist: ", path, call. = FALSE)
+  }
+  normalizePath(existing[[1L]], mustWork = TRUE, winslash = "/")
+}
+
+.montage_path_below <- function(path, directory) {
+  prefix <- paste0(sub("/+$", "", directory), "/")
+  if (!startsWith(path, prefix)) return(NULL)
+  gsub("\\\\", "/", substring(path, nchar(prefix) + 1L))
 }

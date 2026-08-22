@@ -19,3 +19,14 @@
 ^_pkgdown\.yml$
 ^docs$
 ^pkgdown$
+^package\.json$
+^package-lock\.json$
+^playwright\.config\.cjs$
+^node_modules$
+^e2e$
+^tools$
+^testdata$
+^test-results$
+^playwright-report$
+^Rplots\.pdf$
+^tests/testthat/Rplots\.pdf$

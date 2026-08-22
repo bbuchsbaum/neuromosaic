@@ -79,8 +79,23 @@ test_that("resolve_montage_policy applies defaults and row overrides", {
   expect_identical(out$effective_tail, c("two_sided", "negative"))
   expect_identical(out$effective_connectivity, c("26-connect", "18-connect"))
   expect_identical(out$effective_min_cluster_size, c(5L, 10L))
-  expect_identical(out$cap_key, c("faces", "faces"))
+  expect_false(identical(out$cap_key[[1]], out$cap_key[[2]]))
+  expect_true(all(startsWith(out$cap_key, "faces::test_statistic/")))
   expect_s3_class(attr(out, "montage_policy"), "montage_policy")
+})
+
+test_that("cap groups share scales only across compatible map semantics", {
+  manifest <- make_policy_manifest()
+  manifest$stat_kind <- "z"
+  manifest$units <- "z"
+  manifest$df <- NA
+
+  out <- resolve_montage_policy(
+    manifest,
+    montage_policy(cap_within = "contrast")
+  )
+
+  expect_identical(out$cap_key[[1]], out$cap_key[[2]])
 })
 
 test_that("resolve_montage_policy respects explicit thresholds", {

@@ -117,6 +117,27 @@ test_that("build_manifest derives stat_kind from a stat- entity (#3)", {
   expect_identical(out$map_id, "contrast-cue_model-metaRandom_stat-t")
 })
 
+test_that("filename discovery recognizes generic grouped metric entities", {
+  tmpdir <- tempfile("build-manifest-metrics-")
+  write_placeholder_map(file.path(
+    tmpdir,
+    "analysis-faces_role-primary_metric-teststat_distribution-z.nii.gz"
+  ))
+  write_placeholder_map(file.path(
+    tmpdir,
+    "analysis-faces_role-auxiliary_metric-se.nii.gz"
+  ))
+
+  out <- build_manifest(pattern = "*.nii.gz", root = tmpdir, validate = FALSE)
+  out$label <- ifelse(out$role == "primary", "Z statistic", "Standard error")
+  out <- validate_manifest(out, check_files = TRUE, check_overlays = FALSE)
+
+  expect_true(all(out$analysis_id == "faces"))
+  expect_setequal(out$quantity, c("test_statistic", "standard_error"))
+  expect_identical(out$role[out$quantity == "test_statistic"], "primary")
+  expect_identical(out$distribution[out$quantity == "test_statistic"], "z")
+})
+
 test_that("build_manifest warns on colliding map_id from filenames (#3)", {
   tmpdir <- tempfile("build-manifest-collide-")
   write_placeholder_map(file.path(tmpdir, "a", "zstat.nii.gz"))

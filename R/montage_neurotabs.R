@@ -16,10 +16,18 @@
 #'   directory.
 #' @param map_id_cols,label_cols Observation columns used to build `map_id` and
 #'   `label`. Defaults to NFTab observation axes when available.
+#' @param analysis_id_cols Observation columns defining the associated-analysis
+#'   group. Defaults to `map_id_cols`.
 #' @param include_design Logical; include observation/design columns in the
 #'   render manifest?
-#' @param stat_kind,units,signed,threshold,p,tail,connectivity,min_cluster_size
-#'   Default render-manifest policy columns.
+#' @param quantity Generic scientific quantity. Custom namespaced values are
+#'   accepted. When supplied without an explicit `stat_kind`, the legacy
+#'   statistic field is omitted.
+#' @param distribution Optional `z` or `t` distribution for test statistics.
+#' @param role Role within each analysis group.
+#' @param stat_kind Legacy statistic-kind compatibility field.
+#' @param units,signed,threshold,p,tail,connectivity,min_cluster_size Default
+#'   render-manifest policy columns.
 #' @param level Manifest `level` value. Defaults to `"subject"`.
 #' @param validate Logical; run [validate_manifest()] before returning?
 #' @param check_files Logical; require output paths to exist during validation?
@@ -33,10 +41,14 @@ nf_render_manifest <- function(ds,
                                materialize_dir = NULL,
                                map_id_cols = NULL,
                                label_cols = map_id_cols,
+                               analysis_id_cols = map_id_cols,
                                include_design = TRUE,
                                stat_kind = "z",
-                               units = stat_kind,
-                               signed = TRUE,
+                               quantity = NULL,
+                               distribution = NULL,
+                               role = "primary",
+                               units = NULL,
+                               signed = NULL,
                                threshold = NULL,
                                p = NULL,
                                tail = "two_sided",
@@ -71,8 +83,12 @@ nf_render_manifest <- function(ds,
   axes <- .nf_render_axes(ds)
   map_id_cols <- .nf_render_default_cols(map_id_cols, axes, design, ds)
   label_cols <- .nf_render_default_cols(label_cols, axes, design, ds)
+  analysis_id_cols <- .nf_render_default_cols(
+    analysis_id_cols, axes, design, ds
+  )
   .nf_render_check_cols(design, map_id_cols, "map_id_cols")
   .nf_render_check_cols(design, label_cols, "label_cols")
+  .nf_render_check_cols(design, analysis_id_cols, "analysis_id_cols")
 
   root <- root %||% .nf_render_root(ds)
   inferred_path_col <- path_col %||% .nf_feature_locator_col(ds, data_feature)
@@ -96,10 +112,18 @@ nf_render_manifest <- function(ds,
   }
   out$path <- paths
   out$map_id <- .nf_render_row_ids(design, map_id_cols)
+  out$analysis_id <- .nf_render_row_ids(design, analysis_id_cols)
+  out$role <- role
   out$label <- .nf_render_row_labels(design, label_cols)
-  out$stat_kind <- stat_kind
-  out$units <- units %||% stat_kind
-  out$signed <- signed
+  out$selector_label <- data_feature
+  if (!is.null(quantity)) out$quantity <- quantity
+  if (!is.null(distribution)) out$distribution <- distribution
+  if (!is.null(stat_kind) && (is.null(quantity) || !missing(stat_kind))) {
+    out$stat_kind <- stat_kind
+  }
+  effective_units <- units %||% if (is.null(quantity)) stat_kind else NULL
+  if (!is.null(effective_units)) out$units <- effective_units
+  if (!is.null(signed)) out$signed <- signed
   out$tail <- tail
   out$connectivity <- connectivity
   out$min_cluster_size <- min_cluster_size
@@ -242,7 +266,8 @@ nf_render_manifest <- function(ds,
 
 .nf_render_order_manifest_columns <- function(manifest) {
   preferred <- c(
-    "map_id", "path", "stat_kind", "units", "signed", "p", "threshold",
+    "analysis_id", "map_id", "role", "quantity", "distribution", "path",
+    "stat_kind", "units", "signed", "selector_label", "p", "threshold",
     "tail", "connectivity", "min_cluster_size", "level", "label",
     "description", "n", "subjects"
   )

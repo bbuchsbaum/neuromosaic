@@ -1,13 +1,19 @@
 # Render-manifest fields shared by the programmatic API and CLI.
-.montage_manifest_required <- c("map_id", "label", "stat_kind", "signed")
+.montage_manifest_required <- c("map_id", "label")
 .montage_manifest_stat_kinds <- c("t", "z", "beta", "cope")
+.montage_manifest_roles <- c("primary", "auxiliary")
+.montage_manifest_distributions <- c("z", "t")
+.montage_manifest_builtin_quantities <- c(
+  "test_statistic", "estimate", "standard_error", "variance",
+  "probability", "proportion", "r_squared", "diagnostic"
+)
 .montage_manifest_tails <- c("two_sided", "positive", "negative")
 .montage_manifest_connectivity <- c("26-connect", "18-connect", "6-connect")
 
 #' Render Manifest Schema
 #'
 #' Returns the formal schema for multi-map montage render manifests. A render
-#' manifest has one row per statistical map and is distinct from the
+#' manifest has one row per map variant and is distinct from the
 #' per-observation `nftab`/`--design` manifest used by the existing cluster
 #' report path.
 #'
@@ -17,23 +23,31 @@ montage_manifest_schema <- function() {
   data.frame(
     field = c(
       "map_id", "path", "recipe", "space", "template", "mask",
-      "parcel_values",
-      "stat_kind", "df", "units", "signed",
+      "parcel_values", "analysis_id", "analysis_label", "role",
+      "quantity", "distribution", "stat_kind", "df", "units", "signed",
+      "selector_label", "display_order", "profile",
+      "display_mode", "scale", "center", "lower", "upper",
+      "palette_family", "alpha_mode", "support",
       "p", "q", "threshold", "tail", "connectivity", "min_cluster_size",
       "level", "label", "description", "n", "subjects"
     ),
     required = c(
       TRUE, FALSE, FALSE, FALSE, FALSE, FALSE,
-      FALSE,
-      TRUE, FALSE, FALSE, TRUE,
+      FALSE, FALSE, FALSE, FALSE,
+      TRUE, FALSE, FALSE, FALSE, FALSE, FALSE,
+      FALSE, FALSE, FALSE,
+      FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE,
       FALSE, FALSE, FALSE, FALSE, FALSE, FALSE,
       FALSE, TRUE, FALSE, FALSE, FALSE
     ),
     type = c(
       "character", "character", "function/list", "character", "character",
       "character",
-      "numeric/list",
-      "character", "numeric", "character", "logical",
+      "numeric/list", "character", "character", "character",
+      "character", "character", "character", "numeric", "character", "logical",
+      "character", "numeric", "character",
+      "character", "character", "numeric", "numeric", "numeric",
+      "character", "character", "character",
       "numeric", "numeric", "numeric", "character", "character", "integer",
       "character", "character", "character", "integer", "character/list"
     ),
@@ -45,10 +59,26 @@ montage_manifest_schema <- function() {
       "template/background identity",
       "optional analysis mask",
       "per-parcel statistic vector for direct surface rendering",
-      "statistic family such as t, z, beta, or cope",
+      "stable identifier shared by associated map variants",
+      "human-facing title for an analysis group",
+      "primary or auxiliary role within an analysis group",
+      "generic scientific quantity or a caller-defined namespaced value",
+      "sampling distribution for a test statistic, currently z or t",
+      "legacy statistic family; accepted for compatibility",
       "degrees of freedom for p-to-threshold conversion",
       "colorbar units",
       "whether the statistic has positive and negative semantics",
+      "short label used by the map selector",
+      "ordering of variants within an analysis group",
+      "optional profile id used to resolve display semantics",
+      "explicit thresholded or continuous display-mode override",
+      "explicit diverging or sequential color-scale override",
+      "center of an explicit diverging color scale",
+      "explicit lower display limit",
+      "explicit upper display limit",
+      "explicit renderer palette family or palette name",
+      "explicit overlay opacity mode",
+      "analysis-wide or primary-map display support",
       "per-map p-value override",
       "per-map Benjamini-Hochberg FDR q-value override",
       "per-map numeric threshold override",
@@ -114,6 +144,7 @@ validate_manifest <- function(manifest,
 
   manifest <- as.data.frame(manifest, stringsAsFactors = FALSE)
   .validate_manifest_required_columns(manifest)
+  manifest <- .normalize_montage_semantics(manifest)
   manifest <- .normalize_manifest_policy_columns(manifest)
   .validate_manifest_identity(manifest)
   .validate_manifest_map_sources(manifest, check_files = check_files)
@@ -151,6 +182,172 @@ validate_manifest <- function(manifest,
       call. = FALSE
     )
   }
+  if (!"quantity" %in% names(manifest) &&
+      !"stat_kind" %in% names(manifest)) {
+    stop(
+      "Render manifest must define 'quantity' (preferred) or legacy ",
+      "'stat_kind'.",
+      call. = FALSE
+    )
+  }
+}
+
+.normalize_montage_semantics <- function(manifest) {
+  n <- nrow(manifest)
+  legacy_kind <- if ("stat_kind" %in% names(manifest)) {
+    tolower(trimws(as.character(manifest$stat_kind)))
+  } else {
+    rep(NA_character_, n)
+  }
+  legacy_kind[.missing_character(legacy_kind)] <- NA_character_
+  bad_legacy <- !is.na(legacy_kind) &
+    !legacy_kind %in% .montage_manifest_stat_kinds
+  if (any(bad_legacy)) {
+    stop(
+      "Unsupported 'stat_kind' for map_id: ",
+      paste(manifest$map_id[bad_legacy], collapse = ", "),
+      ". Supported legacy values are: ",
+      paste(.montage_manifest_stat_kinds, collapse = ", "),
+      call. = FALSE
+    )
+  }
+
+  legacy_quantity <- rep(NA_character_, n)
+  legacy_quantity[legacy_kind %in% c("z", "t")] <- "test_statistic"
+  legacy_quantity[legacy_kind %in% c("beta", "cope")] <- "estimate"
+  quantity <- if ("quantity" %in% names(manifest)) {
+    tolower(trimws(as.character(manifest$quantity)))
+  } else {
+    legacy_quantity
+  }
+  quantity <- .normalize_montage_quantity(quantity)
+  quantity[.missing_character(quantity)] <- legacy_quantity[.missing_character(quantity)]
+  if (any(.missing_character(quantity))) {
+    stop(
+      "Every render manifest row must define a non-empty 'quantity' or a ",
+      "recognized legacy 'stat_kind'. Missing for map_id: ",
+      paste(manifest$map_id[.missing_character(quantity)], collapse = ", "),
+      call. = FALSE
+    )
+  }
+  conflict <- !is.na(legacy_quantity) & quantity != legacy_quantity
+  if (any(conflict)) {
+    stop(
+      "Manifest 'quantity' conflicts with legacy 'stat_kind' for map_id: ",
+      paste(manifest$map_id[conflict], collapse = ", "),
+      call. = FALSE
+    )
+  }
+
+  distribution <- if ("distribution" %in% names(manifest)) {
+    tolower(trimws(as.character(manifest$distribution)))
+  } else {
+    rep(NA_character_, n)
+  }
+  distribution[.missing_character(distribution)] <- NA_character_
+  legacy_distribution <- legacy_kind
+  legacy_distribution[!legacy_distribution %in% c("z", "t")] <- NA_character_
+  fill_distribution <- is.na(distribution) & !is.na(legacy_distribution)
+  distribution[fill_distribution] <- legacy_distribution[fill_distribution]
+  distribution_conflict <- !is.na(legacy_distribution) &
+    !is.na(distribution) & distribution != legacy_distribution
+  if (any(distribution_conflict)) {
+    stop(
+      "Manifest 'distribution' conflicts with legacy 'stat_kind' for map_id: ",
+      paste(manifest$map_id[distribution_conflict], collapse = ", "),
+      call. = FALSE
+    )
+  }
+
+  analysis_id <- if ("analysis_id" %in% names(manifest)) {
+    trimws(as.character(manifest$analysis_id))
+  } else {
+    as.character(manifest$map_id)
+  }
+  if (any(.missing_character(analysis_id))) {
+    stop("Manifest column 'analysis_id' must be non-empty.", call. = FALSE)
+  }
+
+  role <- if ("role" %in% names(manifest)) {
+    tolower(trimws(as.character(manifest$role)))
+  } else {
+    rep(NA_character_, n)
+  }
+  role[.missing_character(role)] <- NA_character_
+  for (id in unique(analysis_id)) {
+    rows <- which(analysis_id == id)
+    present <- role[rows][!is.na(role[rows])]
+    if (length(present) == 0L) {
+      candidates <- rows[quantity[rows] == "test_statistic"]
+      if (length(rows) == 1L) {
+        role[rows] <- "primary"
+      } else if (length(candidates) == 1L) {
+        role[rows] <- "auxiliary"
+        role[candidates] <- "primary"
+      }
+    } else if (sum(present == "primary") == 1L) {
+      missing_rows <- rows[is.na(role[rows])]
+      role[missing_rows] <- "auxiliary"
+    }
+  }
+
+  signed <- if ("signed" %in% names(manifest)) {
+    .coerce_manifest_logical(manifest$signed, "signed")
+  } else {
+    rep(NA, n)
+  }
+  signed_default <- rep(NA, n)
+  signed_default[quantity %in% c("test_statistic", "estimate")] <- TRUE
+  signed_default[quantity %in% c(
+    "standard_error", "variance", "probability", "proportion", "r_squared"
+  )] <- FALSE
+  signed[is.na(signed)] <- signed_default[is.na(signed)]
+
+  manifest$analysis_id <- analysis_id
+  manifest$role <- role
+  manifest$quantity <- quantity
+  manifest$distribution <- distribution
+  manifest$stat_kind <- legacy_kind
+  test_rows <- quantity == "test_statistic" & is.na(manifest$stat_kind)
+  manifest$stat_kind[test_rows] <- distribution[test_rows]
+  manifest$signed <- signed
+  if (!"selector_label" %in% names(manifest)) {
+    manifest$selector_label <- as.character(manifest$label)
+  } else {
+    selector_label <- trimws(as.character(manifest$selector_label))
+    missing_selector <- .missing_character(selector_label)
+    selector_label[missing_selector] <- as.character(
+      manifest$label[missing_selector]
+    )
+    manifest$selector_label <- selector_label
+  }
+  if (!"display_order" %in% names(manifest)) {
+    manifest$display_order <- stats::ave(
+      seq_len(n), analysis_id, FUN = seq_along
+    )
+  } else {
+    manifest$display_order <- suppressWarnings(as.numeric(manifest$display_order))
+  }
+  manifest
+}
+
+.normalize_montage_quantity <- function(quantity) {
+  aliases <- c(
+    se = "standard_error",
+    stderr = "standard_error",
+    `standard-error` = "standard_error",
+    var = "variance",
+    probability_map = "probability",
+    prop = "proportion",
+    r2 = "r_squared",
+    `r-squared` = "r_squared",
+    statistic = "test_statistic",
+    teststat = "test_statistic",
+    `test-statistic` = "test_statistic"
+  )
+  hit <- match(quantity, names(aliases))
+  quantity[!is.na(hit)] <- unname(aliases[hit[!is.na(hit)]])
+  quantity
 }
 
 .normalize_manifest_policy_columns <- function(manifest) {
@@ -165,7 +362,10 @@ validate_manifest <- function(manifest,
   }
   manifest$signed <- .coerce_manifest_logical(manifest$signed, "signed")
 
-  for (field in c("df", "p", "q", "threshold", "min_cluster_size", "n")) {
+  for (field in c(
+    "df", "p", "q", "threshold", "min_cluster_size", "n",
+    "center", "lower", "upper"
+  )) {
     if (field %in% names(manifest)) {
       manifest[[field]] <- .coerce_manifest_numeric(manifest[[field]], field)
     }
@@ -246,16 +446,73 @@ validate_manifest <- function(manifest,
 }
 
 .validate_manifest_semantics <- function(manifest) {
-  stat_kind <- tolower(trimws(as.character(manifest$stat_kind)))
-  bad <- !stat_kind %in% .montage_manifest_stat_kinds
-  if (any(bad)) {
+  quantity <- trimws(as.character(manifest$quantity))
+  if (any(.missing_character(quantity))) {
     stop(
-      "Unsupported 'stat_kind' for map_id: ",
-      paste(manifest$map_id[bad], collapse = ", "),
-      ". Supported values are: ",
-      paste(.montage_manifest_stat_kinds, collapse = ", "),
+      "Manifest column 'quantity' must be non-empty for every map.",
       call. = FALSE
     )
+  }
+
+  distribution <- trimws(as.character(manifest$distribution))
+  distribution[.missing_character(distribution)] <- NA_character_
+  bad_distribution <- !is.na(distribution) &
+    !distribution %in% .montage_manifest_distributions
+  if (any(bad_distribution)) {
+    stop(
+      "Manifest column 'distribution' must be one of ",
+      paste(.montage_manifest_distributions, collapse = ", "),
+      " for map_id: ",
+      paste(manifest$map_id[bad_distribution], collapse = ", "),
+      call. = FALSE
+    )
+  }
+  missing_distribution <- quantity == "test_statistic" & is.na(distribution)
+  if (any(missing_distribution)) {
+    stop(
+      "Rows with quantity 'test_statistic' require 'distribution' for map_id: ",
+      paste(manifest$map_id[missing_distribution], collapse = ", "),
+      call. = FALSE
+    )
+  }
+
+  role <- trimws(as.character(manifest$role))
+  bad_role <- is.na(role) | !role %in% .montage_manifest_roles
+  if (any(bad_role)) {
+    stop(
+      "Each analysis group must have exactly one primary map; role is ",
+      "missing or invalid for map_id: ",
+      paste(manifest$map_id[bad_role], collapse = ", "),
+      call. = FALSE
+    )
+  }
+  primary_counts <- vapply(
+    split(role, manifest$analysis_id),
+    function(x) sum(x == "primary"),
+    integer(1)
+  )
+  if (any(primary_counts != 1L)) {
+    stop(
+      "Each analysis group must have exactly one primary map. Invalid ",
+      "analysis_id: ",
+      paste(names(primary_counts)[primary_counts != 1L], collapse = ", "),
+      call. = FALSE
+    )
+  }
+  if ("analysis_label" %in% names(manifest)) {
+    labels_by_group <- split(
+      trimws(as.character(manifest$analysis_label)), manifest$analysis_id
+    )
+    inconsistent <- vapply(labels_by_group, function(x) {
+      length(unique(x[!.missing_character(x)])) > 1L
+    }, logical(1))
+    if (any(inconsistent)) {
+      stop(
+        "Manifest 'analysis_label' must be consistent within analysis_id: ",
+        paste(names(inconsistent)[inconsistent], collapse = ", "),
+        call. = FALSE
+      )
+    }
   }
 
   has_threshold <- if ("threshold" %in% names(manifest)) {
@@ -263,7 +520,7 @@ validate_manifest <- function(manifest,
   } else {
     rep(FALSE, nrow(manifest))
   }
-  needs_df <- stat_kind == "t" & !has_threshold
+  needs_df <- !is.na(distribution) & distribution == "t" & !has_threshold
   has_df <- if ("df" %in% names(manifest)) {
     !.missing_numeric(manifest$df)
   } else {
@@ -277,6 +534,78 @@ validate_manifest <- function(manifest,
       call. = FALSE
     )
   }
+
+  if ("display_order" %in% names(manifest)) {
+    display_order <- suppressWarnings(as.numeric(manifest$display_order))
+    bad <- !is.finite(display_order)
+    if (any(bad)) {
+      stop("Manifest column 'display_order' must be finite.", call. = FALSE)
+    }
+    manifest$display_order <- display_order
+  }
+
+  profile_choices <- list(
+    display_mode = c("thresholded", "continuous"),
+    scale = c("diverging", "sequential"),
+    support = c("analysis", "primary")
+  )
+  for (field in names(profile_choices)) {
+    if (!field %in% names(manifest)) next
+    values <- trimws(as.character(manifest[[field]]))
+    present <- !.missing_character(values)
+    bad <- present & !values %in% profile_choices[[field]]
+    if (any(bad)) {
+      stop(
+        "Manifest column '", field, "' must be one of ",
+        paste(profile_choices[[field]], collapse = ", "), ".",
+        call. = FALSE
+      )
+    }
+  }
+
+  for (field in intersect(c("center", "lower", "upper"), names(manifest))) {
+    present <- !.missing_numeric(manifest[[field]])
+    if (any(present & !is.finite(manifest[[field]]))) {
+      stop("Manifest column '", field, "' must be finite.", call. = FALSE)
+    }
+  }
+  if (all(c("lower", "upper") %in% names(manifest))) {
+    complete <- !.missing_numeric(manifest$lower) &
+      !.missing_numeric(manifest$upper)
+    if (any(complete & manifest$lower >= manifest$upper)) {
+      stop("Manifest display limits must be increasing.", call. = FALSE)
+    }
+  }
+}
+
+.montage_analysis_groups <- function(manifest) {
+  ids <- unique(as.character(manifest$analysis_id))
+  stats::setNames(lapply(ids, function(id) {
+    rows <- which(manifest$analysis_id == id)
+    order_key <- if ("display_order" %in% names(manifest)) {
+      as.numeric(manifest$display_order[rows])
+    } else {
+      seq_along(rows)
+    }
+    primary <- manifest$role[rows] == "primary"
+    rows <- rows[order(!primary, order_key, rows)]
+    primary_row <- rows[manifest$role[rows] == "primary"][[1L]]
+    group_label <- if ("analysis_label" %in% names(manifest) &&
+                       !.missing_character(as.character(
+                         manifest$analysis_label[[primary_row]]
+                       ))) {
+      as.character(manifest$analysis_label[[primary_row]])
+    } else {
+      as.character(manifest$label[[primary_row]])
+    }
+    list(
+      analysis_id = id,
+      analysis_label = group_label,
+      primary_map_id = as.character(manifest$map_id[[primary_row]]),
+      map_ids = as.character(manifest$map_id[rows]),
+      rows = rows
+    )
+  }), ids)
 }
 
 .validate_manifest_policy <- function(manifest) {
@@ -398,11 +727,13 @@ validate_manifest <- function(manifest,
                                         default_tail,
                                         empty = "error") {
   background_space <- .montage_background_space(background)
+  sources <- vector("list", nrow(manifest))
 
   for (i in seq_len(nrow(manifest))) {
     parcel_values <- .manifest_row_parcel_values(manifest, i, required = FALSE)
     if (!is.null(parcel_values)) {
       values <- parcel_values
+      sources[[i]] <- parcel_values
     } else {
       stat_map <- .manifest_row_stat_map(manifest, i, load_maps = load_maps)
       if (!methods::is(stat_map, "NeuroVol")) {
@@ -414,6 +745,7 @@ validate_manifest <- function(manifest,
         )
       }
       values <- as.numeric(stat_map)
+      sources[[i]] <- stat_map
     }
 
     if (is.null(parcel_values) && !is.null(background_space)) {
@@ -427,18 +759,24 @@ validate_manifest <- function(manifest,
       }
     }
 
-    threshold <- .manifest_row_threshold(
-      manifest = manifest,
-      row = i,
-      default_p = default_p,
-      default_tail = default_tail
-    )
-    tail <- .manifest_row_tail(manifest, i, default_tail)
-    supra <- .suprathreshold_mask(values, threshold = threshold, tail = tail)
+    display_mode <- .manifest_row_display_mode(manifest, i)
+    if (identical(display_mode, "thresholded")) {
+      threshold <- .manifest_row_threshold(
+        manifest = manifest,
+        row = i,
+        default_p = default_p,
+        default_tail = default_tail
+      )
+      tail <- .manifest_row_tail(manifest, i, default_tail)
+      supra <- .suprathreshold_mask(values, threshold = threshold, tail = tail)
+    } else {
+      supra <- is.finite(values)
+    }
 
     if (!any(supra, na.rm = TRUE)) {
       msg <- paste0(
-        "No finite suprathreshold ",
+        "No finite ",
+        if (identical(display_mode, "thresholded")) "suprathreshold " else "display ",
         if (is.null(parcel_values)) "voxels" else "parcels",
         " for map_id '",
         manifest$map_id[[i]], "'."
@@ -451,7 +789,60 @@ validate_manifest <- function(manifest,
     }
   }
 
+  .validate_montage_group_sources(manifest, sources)
+
   TRUE
+}
+
+.validate_montage_group_sources <- function(manifest, sources) {
+  groups <- .montage_analysis_groups(manifest)
+  for (group in groups) {
+    if (length(group$rows) < 2L) next
+
+    primary_row <- match(group$primary_map_id, manifest$map_id)
+    primary <- sources[[primary_row]]
+    primary_is_volume <- methods::is(primary, "NeuroVol")
+
+    for (row in setdiff(group$rows, primary_row)) {
+      candidate <- sources[[row]]
+      candidate_is_volume <- methods::is(candidate, "NeuroVol")
+      incompatible <- primary_is_volume != candidate_is_volume
+      if (!incompatible && primary_is_volume) {
+        incompatible <- !.same_neuro_space(
+          neuroim2::space(primary), neuroim2::space(candidate)
+        )
+      } else if (!incompatible) {
+        incompatible <- length(primary) != length(candidate)
+      }
+
+      if (incompatible) {
+        stop(
+          "Map variants in analysis_id '", group$analysis_id,
+          "' must use the same spatial representation and geometry. ",
+          "Map '", manifest$map_id[[row]], "' is incompatible with primary ",
+          "map '", group$primary_map_id, "'.",
+          call. = FALSE
+        )
+      }
+    }
+  }
+  invisible(TRUE)
+}
+
+.manifest_row_display_mode <- function(manifest, row) {
+  if ("effective_display_mode" %in% names(manifest) &&
+      !.missing_character(as.character(manifest$effective_display_mode))[[row]]) {
+    return(as.character(manifest$effective_display_mode[[row]]))
+  }
+  if ("display_mode" %in% names(manifest) &&
+      !.missing_character(as.character(manifest$display_mode))[[row]]) {
+    return(as.character(manifest$display_mode[[row]]))
+  }
+  if (identical(as.character(manifest$quantity[[row]]), "test_statistic")) {
+    "thresholded"
+  } else {
+    "continuous"
+  }
 }
 
 .manifest_row_stat_map <- function(manifest, row, load_maps) {
@@ -577,14 +968,16 @@ validate_manifest <- function(manifest,
   )
 }
 
-.same_neuro_space <- function(x, y, tolerance = sqrt(.Machine$double.eps)) {
+.same_neuro_space <- function(x, y,
+                              tolerance = .montage_geometry_tolerance) {
   x_sig <- .neuro_space_signature(x)
   y_sig <- .neuro_space_signature(y)
 
   identical(x_sig$dim, y_sig$dim) &&
-    isTRUE(all.equal(x_sig$spacing, y_sig$spacing, tolerance = tolerance)) &&
-    isTRUE(all.equal(x_sig$origin, y_sig$origin, tolerance = tolerance)) &&
-    isTRUE(all.equal(x_sig$trans, y_sig$trans, tolerance = tolerance))
+    identical(x_sig$orientation, y_sig$orientation) &&
+    .montage_geometry_numeric_equal(x_sig$spacing, y_sig$spacing, tolerance) &&
+    .montage_geometry_numeric_equal(x_sig$origin, y_sig$origin, tolerance) &&
+    .montage_geometry_numeric_equal(x_sig$trans, y_sig$trans, tolerance)
 }
 
 .neuro_space_signature <- function(space) {
@@ -592,6 +985,7 @@ validate_manifest <- function(manifest,
     dim = dim(space),
     spacing = neuroim2::spacing(space),
     origin = neuroim2::origin(space),
+    orientation = .montage_space_orientation(space),
     trans = if ("trans" %in% methods::slotNames(space)) {
       as.numeric(methods::slot(space, "trans"))
     } else {

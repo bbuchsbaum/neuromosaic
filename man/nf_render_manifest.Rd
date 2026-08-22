@@ -12,10 +12,14 @@ nf_render_manifest(
   materialize_dir = NULL,
   map_id_cols = NULL,
   label_cols = map_id_cols,
+  analysis_id_cols = map_id_cols,
   include_design = TRUE,
   stat_kind = "z",
-  units = stat_kind,
-  signed = TRUE,
+  quantity = NULL,
+  distribution = NULL,
+  role = "primary",
+  units = NULL,
+  signed = NULL,
   threshold = NULL,
   p = NULL,
   tail = "two_sided",
@@ -44,10 +48,24 @@ directory.}
 \item{map_id_cols, label_cols}{Observation columns used to build `map_id` and
 `label`. Defaults to NFTab observation axes when available.}
 
+\item{analysis_id_cols}{Observation columns defining the associated-analysis
+group. Defaults to `map_id_cols`.}
+
 \item{include_design}{Logical; include observation/design columns in the
 render manifest?}
 
-\item{stat_kind, units, signed, threshold, p, tail, connectivity, min_cluster_size}{Default render-manifest policy columns.}
+\item{stat_kind}{Legacy statistic-kind compatibility field.}
+
+\item{quantity}{Generic scientific quantity. Custom namespaced values are
+accepted. When supplied without an explicit `stat_kind`, the legacy
+statistic field is omitted.}
+
+\item{distribution}{Optional `z` or `t` distribution for test statistics.}
+
+\item{role}{Role within each analysis group.}
+
+\item{units, signed, threshold, p, tail, connectivity, min_cluster_size}{Default
+render-manifest policy columns.}
 
 \item{level}{Manifest `level` value. Defaults to `"subject"`.}
 

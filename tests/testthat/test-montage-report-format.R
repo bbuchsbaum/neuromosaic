@@ -128,6 +128,103 @@ test_that("montage_report_formatters emits HTML panel heading as breadcrumb", {
   expect_false(grepl("^### m1", heading))
 })
 
+test_that("group selectors are accessible, escaped, and progressively enhanced", {
+  manifest <- data.frame(
+    analysis_id = rep("faces & places", 3L),
+    map_id = c("z map", "estimate", "se"),
+    role = c("primary", "auxiliary", "auxiliary"),
+    quantity = c("test_statistic", "estimate", "standard_error"),
+    distribution = c("z", NA, NA),
+    selector_label = c("Z <main>", "Estimate", "SE"),
+    label = c("Z statistic", "Estimate", "Standard error"),
+    stringsAsFactors = FALSE
+  )
+  group <- list(
+    analysis_id = "faces & places",
+    analysis_label = "Faces < Places",
+    primary_map_id = "z map",
+    map_ids = manifest$map_id
+  )
+  fmt <- montage_report_formatters(
+    manifest = manifest,
+    is_html = TRUE,
+    map_selector = "auto"
+  )
+
+  start <- paste(
+    capture.output(fmt$emit_group_start(group, 1L, 1:3)),
+    collapse = "\n"
+  )
+  variant <- paste(
+    capture.output(fmt$emit_variant_start(manifest[2, , drop = FALSE],
+                                          group, 2L)),
+    collapse = "\n"
+  )
+  styles <- paste(capture.output(fmt$emit_report_styles()), collapse = "\n")
+
+  expect_match(start, "role=\"tablist\"", fixed = TRUE)
+  expect_match(start, "role=\"tab\"", fixed = TRUE)
+  expect_match(start, "aria-controls", fixed = TRUE)
+  expect_match(start, "Z &lt;main&gt;", fixed = TRUE)
+  expect_match(start, "Faces &lt; Places", fixed = TRUE)
+  expect_match(variant, "role=\"tabpanel\"", fixed = TRUE)
+  expect_match(variant, "data-nm-primary=\"false\"", fixed = TRUE)
+  expect_false(grepl(" hidden", variant, fixed = TRUE))
+  expect_match(styles, "DOMContentLoaded", fixed = TRUE)
+  expect_match(styles, "ArrowRight", fixed = TRUE)
+  expect_match(styles, "if(tabs.length===0&&!select)return;", fixed = TRUE)
+  expect_match(styles, "nm-map-change", fixed = TRUE)
+  expect_match(styles, "nm-volume-map-request", fixed = TRUE)
+  expect_match(styles, ".nm-map-variant[hidden]", fixed = TRUE)
+})
+
+test_that("map_selector none emits an expanded group without controls", {
+  manifest <- data.frame(
+    map_id = c("z", "se"),
+    label = c("Z", "SE"),
+    selector_label = c("Z", "SE"),
+    stringsAsFactors = FALSE
+  )
+  group <- list(
+    analysis_id = "a",
+    analysis_label = "Analysis",
+    primary_map_id = "z",
+    map_ids = manifest$map_id
+  )
+  fmt <- montage_report_formatters(
+    manifest = manifest,
+    is_html = TRUE,
+    map_selector = "none"
+  )
+  out <- paste(capture.output(fmt$emit_group_start(group, 1L, 1:2)),
+               collapse = "\n")
+
+  expect_false(grepl("nm-map-selector", out, fixed = TRUE))
+  expect_false(grepl("role=\"tablist\"", out, fixed = TRUE))
+})
+
+test_that("automatic selector uses a select control beyond four maps", {
+  manifest <- data.frame(
+    map_id = paste0("map", 1:5),
+    label = paste("Map", 1:5),
+    selector_label = paste("Map", 1:5),
+    stringsAsFactors = FALSE
+  )
+  group <- list(
+    analysis_id = "a",
+    analysis_label = "Analysis",
+    primary_map_id = "map1",
+    map_ids = manifest$map_id
+  )
+  fmt <- montage_report_formatters(manifest = manifest, is_html = TRUE)
+  out <- paste(capture.output(fmt$emit_group_start(group, 1L, 1:5)),
+               collapse = "\n")
+
+  expect_match(out, "<select", fixed = TRUE)
+  expect_match(out, "data-nm-map-select", fixed = TRUE)
+  expect_false(grepl("role=\"tablist\"", out, fixed = TRUE))
+})
+
 test_that("montage_report_formatters suppresses redundant panel QC", {
   fmt <- montage_report_formatters()
   ok <- data.frame(
@@ -262,6 +359,8 @@ test_that("montage report templates use the shared formatter factory", {
   expect_match(qmd_text, "emit_intro", fixed = TRUE)
   expect_match(rmd_text, "emit_interludes", fixed = TRUE)
   expect_match(qmd_text, "emit_interludes", fixed = TRUE)
+  expect_match(rmd_text, "emit_group_start", fixed = TRUE)
+  expect_match(qmd_text, "emit_variant_start", fixed = TRUE)
   expect_match(qmd_text, "#| results: asis", fixed = TRUE)
   expect_false(grepl("format_peak_table <-", rmd_text, fixed = TRUE))
   expect_false(grepl("format_peak_table <-", qmd_text, fixed = TRUE))

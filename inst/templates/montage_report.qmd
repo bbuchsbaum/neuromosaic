@@ -5,6 +5,7 @@ format:
   html:
     toc: true
     theme: flatly
+    html-math-method: mathml
   pdf:
     toc: true
     number-sections: true
@@ -30,7 +31,12 @@ fmt <- neuromosaic::montage_report_formatters(
   is_html = is_html,
   intro = rd$intro,
   section_notes = rd$section_notes,
-  interludes = rd$interludes
+  interludes = rd$interludes,
+  groups = rd$groups,
+  map_selector = rd$params$map_selector %||% "auto"
+)
+interactive_hooks <- neuromosaic::montage_interactive_report_hooks(
+  rd$interactive, is_html = is_html
 )
 ```
 
@@ -42,6 +48,7 @@ fmt$emit_report_styles()
 fmt$emit_intro()
 fmt$emit_report_overview()
 fmt$emit_qc_summary(qc)
+interactive_hooks$emit_document()
 ```
 
 ```{r}
@@ -64,32 +71,51 @@ if (!is.null(rd$surface_scene)) {
 
 ```{r}
 #| results: asis
+emit_map_body <- function(i) {
+  row <- manifest[i, , drop = FALSE]
+  map_id <- as.character(row$map_id[[1]])
+  label <- as.character(row$label[[1]])
+  panel <- panels[[map_id]] %||% list()
+
+  fmt$emit_interludes(map_id, "before")
+  if ("description" %in% names(row) &&
+      !is.na(row$description[[1]]) &&
+      nzchar(row$description[[1]])) {
+    cat(row$description[[1]], "\n\n", sep = "")
+  }
+  fmt$emit_metadata(row)
+  fmt$emit_panel_qc(panel$qc)
+
+  volume_image <- panel$volume_image %||% panel$volume_image_path
+  surface_image <- panel$surface_image %||% panel$surface_image_path
+  fmt$emit_panel_image(volume_image, paste(label, "volume montage"))
+  fmt$emit_panel_image(surface_image, paste(label, "surface montage"))
+
+  fmt$emit_table(panel$table)
+  fmt$emit_interludes(map_id, "after")
+}
+
 if (nrow(manifest) == 0L) {
   cat("*No maps to display.*\n")
 } else {
-  for (i in seq_len(nrow(manifest))) {
-    row <- manifest[i, , drop = FALSE]
-    map_id <- as.character(row$map_id[[1]])
-    label <- as.character(row$label[[1]])
-    panel <- panels[[map_id]] %||% list()
-
-    fmt$emit_interludes(map_id, "before")
-    fmt$emit_panel_heading(i, label)
-    if ("description" %in% names(row) &&
-        !is.na(row$description[[1]]) &&
-        nzchar(row$description[[1]])) {
-      cat(row$description[[1]], "\n\n", sep = "")
+  for (group in rd$groups) {
+    rows <- match(group$map_ids, manifest$map_id)
+    if (is_html && length(rows) > 1L) {
+      fmt$emit_group_start(group, rows[[1]], rows)
+      for (j in seq_along(rows)) {
+        i <- rows[[j]]
+        fmt$emit_variant_start(manifest[i, , drop = FALSE], group, j)
+        emit_map_body(i)
+        fmt$emit_variant_end()
+      }
+      fmt$emit_group_end()
+    } else {
+      for (i in rows) {
+        fmt$emit_panel_heading(i, as.character(manifest$label[[i]]))
+        emit_map_body(i)
+      }
     }
-    fmt$emit_metadata(row)
-    fmt$emit_panel_qc(panel$qc)
-
-    volume_image <- panel$volume_image %||% panel$volume_image_path
-    surface_image <- panel$surface_image %||% panel$surface_image_path
-    fmt$emit_panel_image(volume_image, paste(label, "volume montage"))
-    fmt$emit_panel_image(surface_image, paste(label, "surface montage"))
-
-    fmt$emit_table(panel$table)
-    fmt$emit_interludes(map_id, "after")
+    interactive_hooks$emit_host(as.character(group$analysis_id))
   }
 }
 ```

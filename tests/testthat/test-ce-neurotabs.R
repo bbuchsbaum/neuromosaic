@@ -407,6 +407,24 @@ test_that("nf_render_manifest materializes backend-backed NFTab rows", {
   expect_s3_class(validate_manifest(manifest), "data.frame")
 })
 
+test_that("nf_render_manifest accepts generic and custom quantity semantics", {
+  skip_if_not_installed("neurotabs")
+  adhoc <- make_toy_nftab_from_table(n_obs = 2L)
+  on.exit(unlink(adhoc$root, recursive = TRUE), add = TRUE)
+
+  manifest <- nf_render_manifest(
+    adhoc$ds,
+    data_feature = "AUC",
+    quantity = "standard_error"
+  )
+
+  expect_true(all(manifest$quantity == "standard_error"))
+  expect_true(all(manifest$role == "primary"))
+  expect_false(any(manifest$signed))
+  expect_true(all(manifest$analysis_id == manifest$map_id))
+  expect_true(all(is.na(manifest$stat_kind)))
+})
+
 test_that("nf_render_manifest validates feature and path column inputs", {
   skip_if_not_installed("neurotabs")
 

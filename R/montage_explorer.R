@@ -39,6 +39,13 @@ montage_explorer_data <- function(report_data = NULL,
   if (!"map_id" %in% names(manifest)) {
     stop("Montage explorer manifests must contain 'map_id'.", call. = FALSE)
   }
+  if (!all(c("analysis_id", "role", "quantity") %in% names(manifest))) {
+    manifest <- validate_manifest(
+      manifest,
+      check_files = FALSE,
+      check_overlays = FALSE
+    )
+  }
   map_ids <- as.character(manifest$map_id)
   panels <- .normalize_montage_panels(panels, map_ids)
 
@@ -48,6 +55,13 @@ montage_explorer_data <- function(report_data = NULL,
   qc <- as.data.frame(qc, stringsAsFactors = FALSE)
 
   panel_index <- .montage_explorer_panel_index(manifest, panels, qc)
+  groups <- report_data$groups %||% .montage_analysis_groups(manifest)
+  analysis_index <- data.frame(
+    analysis_id = names(groups),
+    label = vapply(groups, `[[`, character(1), "analysis_label"),
+    primary_map_id = vapply(groups, `[[`, character(1), "primary_map_id"),
+    stringsAsFactors = FALSE
+  )
   cluster_tables <- stats::setNames(vector("list", length(map_ids)), map_ids)
   for (map_id in map_ids) {
     panel <- panels[[map_id]] %||% list()
@@ -56,6 +70,8 @@ montage_explorer_data <- function(report_data = NULL,
 
   list(
     manifest = manifest,
+    groups = groups,
+    analysis_index = analysis_index,
     panel_index = panel_index,
     panels = panels,
     cluster_tables = cluster_tables,
@@ -67,8 +83,8 @@ montage_explorer_data <- function(report_data = NULL,
 
 #' Launch a Shiny Explorer for a Montage Manifest
 #'
-#' Builds a lightweight row picker over the montage report contract. Selecting a
-#' manifest row shows the already-rendered volume/surface montage images, the
+#' Builds a lightweight analysis picker followed by a map-variant picker over
+#' the montage report contract. Selecting a manifest row shows the already-rendered volume/surface montage images, the
 #' per-panel cluster/peak table, QC metadata, and optional design-linked signal
 #' values.
 #'
@@ -76,7 +92,7 @@ montage_explorer_data <- function(report_data = NULL,
 #'   supplied.
 #' @param report_data Optional precomputed report data list.
 #' @param title Explorer title.
-#' @param layout,labeller,policy,bg,surfatlas,atlas,panels,render_volume,render_surface,render_peaks,image_dir,cache_dir,materialize_recipes,overwrite_recipes,cache_surface,image_width,image_height,image_res,max_clusters,validate,check_files,load_maps
+#' @param layout,labeller,policy,profiles,map_selector,bg,surfatlas,atlas,panels,render_volume,render_surface,render_peaks,image_dir,cache_dir,materialize_recipes,overwrite_recipes,cache_surface,image_width,image_height,image_res,max_clusters,validate,check_files,load_maps
 #'   Arguments forwarded to the montage report-data preparation path when
 #'   `report_data` is not supplied.
 #' @param design Optional design table for signal plot context.
@@ -91,6 +107,8 @@ montage_explorer <- function(manifest = NULL,
                              layout = NULL,
                              labeller = NULL,
                              policy = NULL,
+                             profiles = NULL,
+                             map_selector = "auto",
                              bg = NULL,
                              surfatlas = NULL,
                              atlas = NULL,
@@ -126,6 +144,8 @@ montage_explorer <- function(manifest = NULL,
       layout = layout,
       labeller = labeller,
       policy = policy,
+      profiles = profiles,
+      map_selector = map_selector,
       bg = bg,
       surfatlas = surfatlas,
       atlas = atlas,
@@ -169,12 +189,17 @@ montage_explorer <- function(manifest = NULL,
     shiny::sidebarLayout(
       shiny::sidebarPanel(
         shiny::selectInput(
-          "map_id",
-          "Map",
+          "analysis_id",
+          "Analysis",
           choices = stats::setNames(
-            explorer$panel_index$map_id,
-            explorer$panel_index$label
+            explorer$analysis_index$analysis_id,
+            explorer$analysis_index$label
           )
+        ),
+        shiny::selectInput(
+          "map_id",
+          "Map variant",
+          choices = character()
         ),
         shiny::div(class = "nm-montage-meta", shiny::tableOutput("metadata")),
         shiny::div(class = "nm-montage-meta", shiny::tableOutput("qc"))
@@ -188,10 +213,41 @@ montage_explorer <- function(manifest = NULL,
   )
 
   server <- function(input, output, session) {
+    selected_analysis <- shiny::reactive({
+      value <- input$analysis_id
+      if (is.null(value) || !value %in% names(explorer$groups)) {
+        names(explorer$groups)[[1L]]
+      } else {
+        value
+      }
+    })
+
+    shiny::observeEvent(selected_analysis(), {
+      group <- explorer$groups[[selected_analysis()]]
+      idx <- match(group$map_ids, explorer$panel_index$map_id)
+      choices <- stats::setNames(
+        group$map_ids,
+        explorer$panel_index$selector_label[idx]
+      )
+      current <- shiny::isolate(input$map_id)
+      selected <- if (!is.null(current) && current %in% group$map_ids) {
+        current
+      } else {
+        group$primary_map_id
+      }
+      shiny::updateSelectInput(
+        session,
+        "map_id",
+        choices = choices,
+        selected = selected
+      )
+    }, ignoreInit = FALSE)
+
     selected_map <- shiny::reactive({
       value <- input$map_id
-      if (is.null(value) || !nzchar(value)) {
-        explorer$panel_index$map_id[[1]]
+      group <- explorer$groups[[selected_analysis()]]
+      if (is.null(value) || !nzchar(value) || !value %in% group$map_ids) {
+        group$primary_map_id
       } else {
         value
       }
@@ -254,7 +310,16 @@ montage_explorer <- function(manifest = NULL,
   map_ids <- as.character(manifest$map_id)
   out <- data.frame(
     map_id = map_ids,
+    analysis_id = as.character(manifest$analysis_id),
+    role = as.character(manifest$role),
     label = if ("label" %in% names(manifest)) {
+      as.character(manifest$label)
+    } else {
+      map_ids
+    },
+    selector_label = if ("selector_label" %in% names(manifest)) {
+      as.character(manifest$selector_label)
+    } else if ("label" %in% names(manifest)) {
       as.character(manifest$label)
     } else {
       map_ids
@@ -290,8 +355,10 @@ montage_explorer <- function(manifest = NULL,
 
 .montage_explorer_metadata <- function(row) {
   fields <- intersect(
-    c("map_id", "label", "contrast", "model", "variant", "stat_kind",
-      "units", "effective_threshold", "effective_tail", "cap_key", "path"),
+    c("analysis_id", "map_id", "role", "label", "quantity", "distribution",
+      "contrast", "model", "variant", "stat_kind", "effective_profile_label",
+      "effective_units", "effective_display_mode", "effective_threshold",
+      "effective_lower", "effective_upper", "effective_tail", "cap_key", "path"),
     names(row)
   )
   values <- vapply(fields, function(field) {

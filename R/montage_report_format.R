@@ -19,6 +19,8 @@
 #' @param interludes Optional data frame of free-standing inter-map narrative
 #'   with columns `map_id`, `text`, and optional `position` (`"before"` or
 #'   `"after"`), emitted around the named panel by `emit_interludes()`.
+#' @param groups Optional analysis-group metadata produced by the report engine.
+#' @param map_selector HTML selector style; see [render_montage_report()].
 #'
 #' @return A named list of formatter and emitter functions.
 #' @export
@@ -27,7 +29,9 @@ montage_report_formatters <- function(manifest = NULL,
                                       is_html = FALSE,
                                       intro = NULL,
                                       section_notes = NULL,
-                                      interludes = NULL) {
+                                      interludes = NULL,
+                                      groups = NULL,
+                                      map_selector = "auto") {
   layout_state <- new.env(parent = emptyenv())
   # Section-note change detection for the HTML path is tracked separately from
   # `layout_state` (which drives markdown/PDF headings) so the two never share
@@ -35,6 +39,10 @@ montage_report_formatters <- function(manifest = NULL,
   # cross-talk if a custom template calls both emitters.
   section_state <- new.env(parent = emptyenv())
   layout <- layout %||% character()
+  map_selector <- match.arg(
+    map_selector,
+    c("auto", "tabs", "select", "none")
+  )
   if (is.null(manifest)) {
     manifest <- data.frame()
   }
@@ -91,6 +99,37 @@ montage_report_formatters <- function(manifest = NULL,
         section_notes = section_notes,
         section_state = section_state
       )
+    },
+    emit_group_start = function(group, primary_i, rows) {
+      .montage_report_emit_group_start(
+        group = group,
+        primary_i = primary_i,
+        rows = rows,
+        manifest = manifest,
+        layout = layout,
+        layout_state = layout_state,
+        section_notes = section_notes,
+        section_state = section_state,
+        map_selector = map_selector,
+        is_html = isTRUE(is_html)
+      )
+    },
+    emit_group_end = function() {
+      if (isTRUE(is_html)) cat("</section>\n\n")
+      invisible(NULL)
+    },
+    emit_variant_start = function(row, group, position) {
+      .montage_report_emit_variant_start(
+        row = row,
+        group = group,
+        position = position,
+        map_selector = map_selector,
+        is_html = isTRUE(is_html)
+      )
+    },
+    emit_variant_end = function() {
+      if (isTRUE(is_html)) cat("</article>\n")
+      invisible(NULL)
     },
     emit_layout_headings = function(i) {
       .montage_report_emit_layout_headings(
@@ -345,8 +384,36 @@ montage_report_formatters <- function(manifest = NULL,
     ".nm-intro{color:#243447;font-size:1.02rem;line-height:1.55;margin:0.4rem 0 1.5rem;}\n",
     ".nm-section-note{border-left:4px solid #2f6f73;background:#f2f7f7;border-radius:4px;color:#2b3d4f;margin:0.35rem 0 1.3rem;padding:0.65rem 0.9rem;}\n",
     ".nm-interlude{border-left:4px solid #94a1b2;background:#f7f9fc;border-radius:4px;color:#31414f;margin:1.1rem 0;padding:0.65rem 0.9rem;}\n",
-    "@media print{.nm-report-overview{display:block}.nm-overview-card{margin-bottom:0.5rem}}\n",
-    "</style>\n\n",
+    ".nm-analysis-group{border-top:1px solid #d7dee8;margin:2rem 0;padding-top:0.2rem;}\n",
+    ".nm-map-selector{display:none;align-items:center;gap:0.35rem;margin:0.65rem 0 1rem;}\n",
+    ".nm-js .nm-map-selector{display:flex;}\n",
+    ".nm-map-tabs{flex-wrap:wrap;}\n",
+    ".nm-map-tab{appearance:none;background:#edf2f5;border:1px solid #c9d3dc;border-radius:999px;color:#33485a;cursor:pointer;font:inherit;font-weight:650;padding:0.38rem 0.78rem;}\n",
+    ".nm-map-tab[aria-selected=true]{background:#2f6f73;border-color:#2f6f73;color:white;}\n",
+    ".nm-map-tab:focus-visible,.nm-map-select:focus-visible{outline:3px solid #86b8c0;outline-offset:2px;}\n",
+    ".nm-map-select{background:white;border:1px solid #aebbc7;border-radius:5px;padding:0.38rem 0.55rem;}\n",
+    ".nm-map-variant{margin:0.5rem 0 1.5rem;}\n",
+    ".nm-variant-title{color:#33485a;font-size:1.12rem;margin:0.75rem 0 0.45rem;}\n",
+    ".nm-sr-only{clip:rect(0,0,0,0);clip-path:inset(50%);height:1px;overflow:hidden;position:absolute;white-space:nowrap;width:1px;}\n",
+    "@media(max-width:760px){.main-container{max-width:100%!important;overflow-x:hidden}.table{table-layout:fixed;width:100%!important}.table td,.table th{overflow-wrap:anywhere;word-break:break-word}pre code{white-space:pre-wrap;overflow-wrap:anywhere}pre code.hljs{box-sizing:border-box;max-width:100%}}\n",
+    "@media print{.nm-report-overview{display:block}.nm-overview-card{margin-bottom:0.5rem}.nm-map-selector{display:none!important}.nm-map-variant[hidden]{display:block!important}}\n",
+    "</style>\n",
+    "<script>\n",
+    "document.addEventListener('DOMContentLoaded',function(){\n",
+    "var groups=document.querySelectorAll('[data-nm-map-group]');\n",
+    "groups.forEach(function(group){\n",
+    "var variants=Array.prototype.slice.call(group.querySelectorAll('[data-nm-map-variant]'));\n",
+    "var tabs=Array.prototype.slice.call(group.querySelectorAll('[role=tab]'));\n",
+    "var select=group.querySelector('[data-nm-map-select]');\n",
+    "if(tabs.length===0&&!select)return;\n",
+    "function activate(id,focus){var mapId=null;variants.forEach(function(v){var on=v.id===id;v.hidden=!on;if(on)mapId=v.getAttribute('data-nm-map-id');});tabs.forEach(function(t){var on=t.getAttribute('aria-controls')===id;t.setAttribute('aria-selected',on?'true':'false');t.tabIndex=on?0:-1;if(on&&focus)t.focus();});if(select)select.value=id;if(mapId)group.dispatchEvent(new CustomEvent('nm-map-change',{detail:{analysisId:group.getAttribute('data-nm-map-group'),mapId:mapId},bubbles:true}));}\n",
+    "tabs.forEach(function(tab,index){tab.addEventListener('click',function(){activate(tab.getAttribute('aria-controls'),false);});tab.addEventListener('keydown',function(e){var next=index;if(e.key==='ArrowRight'||e.key==='ArrowDown')next=(index+1)%tabs.length;else if(e.key==='ArrowLeft'||e.key==='ArrowUp')next=(index+tabs.length-1)%tabs.length;else if(e.key==='Home')next=0;else if(e.key==='End')next=tabs.length-1;else return;e.preventDefault();activate(tabs[next].getAttribute('aria-controls'),true);});});\n",
+    "if(select)select.addEventListener('change',function(){activate(select.value,false);});\n",
+    "group.addEventListener('nm-volume-map-request',function(e){var detail=e.detail||{};if(detail.analysisId!==group.getAttribute('data-nm-map-group'))return;var variant=variants.find(function(v){return v.getAttribute('data-nm-map-id')===detail.mapId;});if(variant)activate(variant.id,false);});\n",
+    "var primary=group.querySelector('[data-nm-primary=true]')||variants[0];if(primary)activate(primary.id,false);\n",
+    "});document.documentElement.classList.add('nm-js');\n",
+    "});\n",
+    "</script>\n\n",
     sep = ""
   )
   invisible(NULL)
@@ -354,6 +421,12 @@ montage_report_formatters <- function(manifest = NULL,
 
 .montage_report_emit_report_overview <- function(manifest, layout, is_html) {
   map_count <- if (is.data.frame(manifest)) nrow(manifest) else 0L
+  analysis_count <- if (is.data.frame(manifest) &&
+                        "analysis_id" %in% names(manifest)) {
+    length(unique(manifest$analysis_id))
+  } else {
+    map_count
+  }
   layout_value <- if (length(layout) > 0L) {
     paste(layout, collapse = " / ")
   } else {
@@ -363,6 +436,8 @@ montage_report_formatters <- function(manifest = NULL,
   if (isTRUE(is_html)) {
     cat(
       "<div class=\"nm-report-overview\">",
+      "<div class=\"nm-overview-card\"><span class=\"nm-overview-label\">Analyses</span>",
+      "<span class=\"nm-overview-value\">", analysis_count, "</span></div>",
       "<div class=\"nm-overview-card\"><span class=\"nm-overview-label\">Maps</span>",
       "<span class=\"nm-overview-value\">", map_count, "</span></div>",
       "<div class=\"nm-overview-card\"><span class=\"nm-overview-label\">Layout</span>",
@@ -373,6 +448,7 @@ montage_report_formatters <- function(manifest = NULL,
     )
   } else {
     cat(
+      "**Analyses:** ", analysis_count, "  \n",
       "**Maps:** ", map_count, "  \n",
       "**Layout:** ", layout_value, "\n\n",
       sep = ""
@@ -474,6 +550,13 @@ montage_report_formatters <- function(manifest = NULL,
 
 .montage_report_emit_metadata <- function(row, is_html) {
   stat <- .montage_report_scalar(row, "stat_kind")
+  quantity <- .montage_report_scalar(row, "quantity")
+  distribution <- .montage_report_scalar(row, "distribution")
+  profile_label <- .montage_report_scalar(row, "effective_profile_label")
+  display_mode <- .montage_report_scalar(row, "effective_display_mode")
+  lower <- .montage_report_scalar(row, "effective_lower")
+  upper <- .montage_report_scalar(row, "effective_upper")
+  units <- .montage_report_pick(row, "effective_units", "units")
   threshold <- .montage_report_pick(row, "effective_threshold", "threshold")
   tail <- .montage_report_pick(row, "effective_tail", "tail")
   connectivity <- .montage_report_pick(
@@ -489,7 +572,16 @@ montage_report_formatters <- function(manifest = NULL,
   n <- .montage_report_scalar(row, "n")
 
   parts <- character(0)
-  if (!(length(stat) == 1L && is.na(stat))) {
+  if (!(length(quantity) == 1L && is.na(quantity))) {
+    if (identical(as.character(quantity), "test_statistic") &&
+        !(length(distribution) == 1L && is.na(distribution))) {
+      parts <- c(parts, paste0(toupper(distribution), "-statistic"))
+    } else if (!(length(profile_label) == 1L && is.na(profile_label))) {
+      parts <- c(parts, as.character(profile_label))
+    } else {
+      parts <- c(parts, .profile_title(as.character(quantity)))
+    }
+  } else if (!(length(stat) == 1L && is.na(stat))) {
     stat <- as.character(stat)
     parts <- c(parts, paste0(
       toupper(substr(stat, 1L, 1L)),
@@ -508,8 +600,16 @@ montage_report_formatters <- function(manifest = NULL,
       )
     }
     parts <- c(parts, value)
+  } else if (identical(as.character(display_mode), "continuous") &&
+             !(length(lower) == 1L && is.na(lower)) &&
+             !(length(upper) == 1L && is.na(upper))) {
+    parts <- c(parts, paste0(
+      "continuous range ", .montage_report_fmt_val(lower), " to ",
+      .montage_report_fmt_val(upper)
+    ))
   }
-  if (!(length(connectivity) == 1L && is.na(connectivity))) {
+  if (!(length(threshold) == 1L && is.na(threshold)) &&
+      !(length(connectivity) == 1L && is.na(connectivity))) {
     value <- as.character(connectivity)
     if (!(length(min_cluster_size) == 1L && is.na(min_cluster_size))) {
       value <- paste0(
@@ -523,6 +623,10 @@ montage_report_formatters <- function(manifest = NULL,
   }
   if (!(length(n) == 1L && is.na(n))) {
     parts <- c(parts, paste0("N = ", .montage_report_fmt_val(n)))
+  }
+  if (!(length(units) == 1L && is.na(units)) &&
+      nzchar(as.character(units))) {
+    parts <- c(parts, paste0("units: ", as.character(units)))
   }
   if (length(parts) == 0L) {
     return(invisible(NULL))
@@ -648,6 +752,145 @@ montage_report_formatters <- function(manifest = NULL,
     cat("> **Caution - ", msg, "**\n\n", sep = "")
   }
   invisible(NULL)
+}
+
+.montage_report_emit_group_start <- function(group,
+                                             primary_i,
+                                             rows,
+                                             manifest,
+                                             layout,
+                                             layout_state,
+                                             section_notes,
+                                             section_state,
+                                             map_selector,
+                                             is_html) {
+  if (!isTRUE(is_html)) return(invisible(NULL))
+  group_label <- group$analysis_label %||% group$analysis_id
+  cat(
+    "<section class=\"nm-analysis-group\" data-nm-map-group=\"",
+    .montage_report_html_escape(group$analysis_id),
+    "\" aria-label=\"",
+    .montage_report_html_escape(group_label),
+    "\">\n",
+    sep = ""
+  )
+  .montage_report_emit_panel_heading(
+    i = primary_i,
+    label = group_label,
+    manifest = manifest,
+    layout = layout,
+    layout_state = layout_state,
+    is_html = TRUE,
+    section_notes = section_notes,
+    section_state = section_state
+  )
+
+  style <- .montage_report_selector_style(map_selector, length(rows))
+  if (identical(style, "none")) return(invisible(NULL))
+  labels <- vapply(rows, function(i) {
+    label <- .montage_report_scalar(manifest[i, , drop = FALSE],
+                                    "selector_label")
+    if (length(label) == 1L && is.na(label)) {
+      label <- manifest$label[[i]]
+    }
+    as.character(label)
+  }, character(1))
+  map_ids <- as.character(manifest$map_id[rows])
+  variant_ids <- vapply(map_ids, function(id) {
+    .montage_report_dom_id("nm-variant", group$analysis_id, id)
+  }, character(1))
+  primary <- map_ids == group$primary_map_id
+
+  if (identical(style, "tabs")) {
+    cat(
+      "<div class=\"nm-map-selector nm-map-tabs\" role=\"tablist\" ",
+      "aria-label=\"Map variant\">\n",
+      sep = ""
+    )
+    for (j in seq_along(rows)) {
+      tab_id <- .montage_report_dom_id(
+        "nm-tab", group$analysis_id, map_ids[[j]]
+      )
+      cat(
+        "<button type=\"button\" class=\"nm-map-tab\" role=\"tab\" id=\"",
+        tab_id,
+        "\" aria-controls=\"", variant_ids[[j]],
+        "\" aria-selected=\"", if (primary[[j]]) "true" else "false",
+        "\" tabindex=\"", if (primary[[j]]) "0" else "-1", "\">",
+        .montage_report_html_escape(labels[[j]]),
+        "</button>\n",
+        sep = ""
+      )
+    }
+    cat("</div>\n")
+  } else {
+    select_id <- .montage_report_dom_id(
+      "nm-select", group$analysis_id, "selector"
+    )
+    cat(
+      "<div class=\"nm-map-selector\"><label class=\"nm-sr-only\" for=\"",
+      select_id,
+      "\">Map variant</label><select class=\"nm-map-select\" id=\"",
+      select_id,
+      "\" data-nm-map-select aria-label=\"Map variant\">\n",
+      sep = ""
+    )
+    for (j in seq_along(rows)) {
+      cat(
+        "<option value=\"", variant_ids[[j]], "\"",
+        if (primary[[j]]) " selected" else "",
+        ">", .montage_report_html_escape(labels[[j]]), "</option>\n",
+        sep = ""
+      )
+    }
+    cat("</select></div>\n")
+  }
+  invisible(NULL)
+}
+
+.montage_report_emit_variant_start <- function(row,
+                                               group,
+                                               position,
+                                               map_selector,
+                                               is_html) {
+  if (!isTRUE(is_html)) return(invisible(NULL))
+  map_id <- as.character(row$map_id[[1L]])
+  label <- as.character(row$label[[1L]])
+  variant_id <- .montage_report_dom_id(
+    "nm-variant", group$analysis_id, map_id
+  )
+  style <- .montage_report_selector_style(
+    map_selector, length(group$map_ids)
+  )
+  tab_id <- .montage_report_dom_id("nm-tab", group$analysis_id, map_id)
+  cat(
+    "<article class=\"nm-map-variant\" data-nm-map-variant=\"\" ",
+    "data-nm-primary=\"",
+    if (identical(map_id, group$primary_map_id)) "true" else "false",
+    "\" data-nm-map-id=\"", .montage_report_html_escape(map_id),
+    "\" id=\"", variant_id, "\"",
+    if (identical(style, "tabs")) {
+      paste0(" role=\"tabpanel\" aria-labelledby=\"", tab_id, "\"")
+    } else {
+      ""
+    },
+    ">\n<h3 class=\"nm-variant-title\">",
+    .montage_report_html_escape(label),
+    "</h3>\n",
+    sep = ""
+  )
+  invisible(NULL)
+}
+
+.montage_report_selector_style <- function(map_selector, n) {
+  if (n <= 1L || identical(map_selector, "none")) return("none")
+  if (!identical(map_selector, "auto")) return(map_selector)
+  if (n <= 4L) "tabs" else "select"
+}
+
+.montage_report_dom_id <- function(prefix, analysis_id, map_id) {
+  stem <- .safe_file_stem(paste(prefix, analysis_id, map_id, sep = "-"))
+  paste0(stem, "-", substr(rlang::hash(c(analysis_id, map_id)), 1L, 8L))
 }
 
 .montage_report_emit_panel_heading <- function(i,

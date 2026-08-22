@@ -10,7 +10,9 @@ montage_report_formatters(
   is_html = FALSE,
   intro = NULL,
   section_notes = NULL,
-  interludes = NULL
+  interludes = NULL,
+  groups = NULL,
+  map_selector = "auto"
 )
 }
 \arguments{
@@ -33,6 +35,10 @@ section's heading. See [render_montage_report()] for the contract.}
 \item{interludes}{Optional data frame of free-standing inter-map narrative
 with columns `map_id`, `text`, and optional `position` (`"before"` or
 `"after"`), emitted around the named panel by `emit_interludes()`.}
+
+\item{groups}{Optional analysis-group metadata produced by the report engine.}
+
+\item{map_selector}{HTML selector style; see [render_montage_report()].}
 }
 \value{
 A named list of formatter and emitter functions.

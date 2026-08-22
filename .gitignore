@@ -8,3 +8,12 @@ docs
 .rcmdcheck_result.rds
 .omc/
 Rplots.pdf
+.albersdown.bak/
+AGENTS.md
+testdata/
+
+# Repository-owned browser tests
+node_modules/
+test-results/
+playwright-report/
+e2e/.artifacts/

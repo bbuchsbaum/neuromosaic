@@ -1,5 +1,5 @@
 ---
-title: Publication Surface Montage Reports from Statistical Maps
+title: Grouped Montage Reports for Related Neuroimaging Maps
 output:
   rmarkdown::html_vignette:
     toc: yes
@@ -17,14 +17,13 @@ resource_files:
 - fonts
 
 vignette: |
-  %\VignetteIndexEntry{Publication Surface Montage Reports from Statistical Maps}
+  %\VignetteIndexEntry{Grouped Montage Reports for Related Neuroimaging Maps}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
 ```{r setup, include = FALSE}
 if (requireNamespace("ragg", quietly = TRUE)) knitr::opts_chunk$set(dev = "ragg_png")
-if (requireNamespace("systemfonts", quietly = TRUE)) albersdown::albers_register_fonts()
 if (requireNamespace("ggplot2", quietly = TRUE) && requireNamespace("albersdown", quietly = TRUE)) ggplot2::theme_set(albersdown::theme_albers(family = params$family, preset = params$preset))
 knitr::opts_chunk$set(
   collapse = TRUE,
@@ -47,23 +46,23 @@ cat(sprintf(
 ))
 ```
 
-You have a set of second-level statistical volumes--for example signed
-*t*-maps from several contrasts--and want one report that shows every map on an
-inflated cortical surface with comparable thresholds, colour limits, anatomy,
-and legends. A continuous map should read as a scalar field on cortex, not as
-an atlas with parcel boundaries drawn over it. The *montage report* path keeps
-those statistical and rendering semantics together. Its minimal recipe is two
-calls:
+You have one main result for each analysis--often a *z*- or *t*-statistic--and
+several maps that help a reader interpret it: an effect estimate, its standard
+error, perhaps a reliability diagnostic. You want one report where those maps
+occupy the same slices or surface views, without forcing readers through four
+nearly identical panels. A montage report groups associated maps and gives the
+HTML reader a compact selector; PDF and print output expand every variant.
+
+The minimal recipe is still two calls:
 
 ```r
 manifest <- build_manifest(source = ...)
 render_montage_report(manifest, "report.html", surfatlas = atlas)
 ```
 
-Everything else is policy and annotation. This vignette walks the whole path:
-the manifest contract, `montage_policy()`, continuous volume-to-surface
-projection, publication rendering, output formats, and the parcel/FDR wrinkles
-you hit with ROI data.
+Everything else is policy and annotation. This vignette shows how to name map
+quantities, group variants, accept the display defaults, add a custom metric,
+and render the same contract as slices or surfaces.
 
 ```{r library}
 library(neuromosaic)
@@ -71,7 +70,7 @@ library(neuromosaic)
 
 ## The render manifest
 
-A render manifest is a data frame with **one row per statistical map**. It is
+A render manifest is a data frame with **one row per map variant**. It is
 the single source of truth the report consumes; there is no hidden state.
 `montage_manifest_schema()` returns the full column contract:
 
@@ -81,26 +80,31 @@ knitr::kable(schema[schema$required, c("field", "type", "role")],
              row.names = FALSE)
 ```
 
-So the required columns are:
+Every row needs:
 
 - **`map_id`** — a unique, stable key. It anchors caches, figure files, and
   table joins, so distinct maps must never share one.
-- **`stat_kind`** — the statistic family, one of `t`, `z`, `beta`, `cope`.
-- **`signed`** — a **logical** (note: not a string). Does the statistic carry
-  positive *and* negative meaning? `TRUE` gives a symmetric diverging color
-  scale; `FALSE` a one-sided scale.
+- **`quantity`** — what the values mean. Built-ins include
+  `test_statistic`, `estimate`, `standard_error`, `variance`, `probability`,
+  `proportion`, and `r_squared`; namespaced custom values are welcome.
 - **`label`** — the human-facing panel title.
 
-One more column is *conditionally* required: **`df`**. When a `t` map's
-threshold is derived from a p-value (rather than supplied directly), the
-degrees of freedom are needed for the p→*t* conversion. Supply `df`, or give an
-explicit numeric `threshold`, for every `t` row.
+To associate variants, give them the same **`analysis_id`** and mark exactly one
+as **`role = "primary"`**; the rest are `"auxiliary"`. A test statistic also
+needs **`distribution = "z"`** or `"t"`. For a *t* statistic whose threshold is
+derived from a p-value, supply `df`.
+
+Old manifests remain valid: `stat_kind = "z"` or `"t"` maps to
+`quantity = "test_statistic"`, while `"beta"` and `"cope"` map to
+`"estimate"`. Those names are compatibility inputs, not the vocabulary custom
+metrics must adopt. When `analysis_id` is absent, each row becomes its own
+one-map analysis, so existing reports do not acquire selectors unexpectedly.
 
 The remaining schema columns (`path`, `recipe`, `p`, `threshold`, `tail`,
 `level`, `n`, `description`, ...) are optional overrides; see
 `?montage_manifest_schema`.
 
-### Building one
+### Group the maps from one analysis
 
 When filenames do not follow BIDS conventions, the clearest route is an
 explicit `source` data frame where you control every column:
@@ -108,24 +112,116 @@ explicit `source` data frame where you control every column:
 ```{r build}
 manifest <- build_manifest(
   source = data.frame(
-    map_id    = c("faces_gt_houses", "houses_gt_faces", "null_contrast"),
-    path      = c("faces.nii.gz", "houses.nii.gz", "null.nii.gz"),
-    stat_kind = "t",
-    df        = 24,
-    signed    = TRUE,
-    label     = c("Faces > Houses", "Houses > Faces", "A null contrast"),
-    p         = 0.001,
+    analysis_id = "faces_gt_houses",
+    map_id = c("faces_z", "faces_estimate", "faces_se", "faces_reliability"),
+    path = c("faces_z.nii.gz", "faces_beta.nii.gz", "faces_se.nii.gz",
+             "faces_reliability.nii.gz"),
+    role = c("primary", "auxiliary", "auxiliary", "auxiliary"),
+    quantity = c("test_statistic", "estimate", "standard_error",
+                 "mylab:reliability"),
+    distribution = c("z", NA, NA, NA),
+    label = c("Z statistic", "Effect estimate", "Standard error",
+              "Split-half reliability"),
+    units = c("z", "% signal", "% signal", "correlation"),
+    threshold = c(3.1, NA, NA, NA),
     stringsAsFactors = FALSE
   ),
   check_files = FALSE   # skip on-disk existence checks for this example
 )
-manifest[, c("map_id", "stat_kind", "signed", "df", "label")]
+manifest[, c("analysis_id", "map_id", "role", "quantity", "label")]
+```
+
+```{r grouped-contract-check, include=FALSE}
+stopifnot(
+  length(unique(manifest$analysis_id)) == 1L,
+  sum(manifest$role == "primary") == 1L,
+  identical(manifest$map_id[[1L]], "faces_z")
+)
 ```
 
 `build_manifest()` can also discover maps from a `pattern` glob or a path
 vector and parse BIDS entities (`contrast-faces_model-m1_stat-z.nii.gz`); see
 `?build_manifest`. However the maps are sourced, `validate_manifest()` enforces
 the contract above before rendering.
+
+## Let the quantity choose the display
+
+You should not need to choose four palettes and four scales for a four-map
+analysis. `resolve_montage_profiles()` applies conservative defaults:
+
+- test statistics are thresholded with a diverging scale;
+- estimates are continuous, zero-centred, and diverging;
+- standard errors and variances are continuous, sequential, and nonnegative;
+- probabilities, proportions, and R-squared maps use their fixed 0--1 domain;
+- an unknown custom quantity is continuous and becomes diverging when its
+  finite values include material negatives or its declared domain spans zero.
+
+Robust limits use the 99th percentile rather than one extreme voxel. Auxiliary
+maps use the full analysis mask by default; significance-masking them by the
+primary map is available only as an explicit `support = "primary"` choice.
+
+```{r profile-defaults}
+map_values <- list(
+  c(-5, -3, 0, 3, 5),
+  c(-2.0, -0.4, 0, 0.5, 2.1),
+  c(0.10, 0.14, 0.20, 0.31, 0.80),
+  c(-0.4, 0.1, 0.5, 0.8)
+)
+resolved <- resolve_montage_profiles(manifest, map_values = map_values)
+knitr::kable(
+  resolved[, c("label", "effective_display_mode", "effective_scale",
+               "effective_lower", "effective_upper")],
+  digits = 2,
+  row.names = FALSE
+)
+```
+
+```{r profile-default-checks, include=FALSE}
+stopifnot(
+  identical(resolved$effective_display_mode,
+            c("thresholded", "continuous", "continuous", "continuous")),
+  identical(resolved$effective_scale,
+            c("diverging", "diverging", "sequential", "diverging")),
+  all(is.finite(resolved$effective_lower)),
+  all(is.finite(resolved$effective_upper)),
+  resolved$effective_lower[[3L]] >= 0
+)
+```
+
+### Define a custom metric locally
+
+A profile is an ordinary R object, not a global registration. Its legal domain
+and units travel with the render call:
+
+```{r custom-profile}
+reliability_profile <- montage_map_profile(
+  id = "mylab:reliability",
+  label = "Split-half reliability",
+  scale = "diverging",
+  center = 0,
+  domain = c(-1, 1),
+  units = "correlation"
+)
+
+custom_resolved <- resolve_montage_profiles(
+  manifest,
+  profiles = list(`mylab:reliability` = reliability_profile),
+  map_values = map_values
+)
+```
+
+```{r custom-profile-checks, include=FALSE}
+custom_row <- custom_resolved$quantity == "mylab:reliability"
+stopifnot(
+  identical(custom_resolved$effective_profile_source[custom_row], "user"),
+  identical(custom_resolved$effective_lower[custom_row], -1),
+  identical(custom_resolved$effective_upper[custom_row], 1)
+)
+```
+
+The precedence is explicit manifest display columns, then a supplied profile,
+then a built-in quantity profile, then automatic data-driven defaults. There is
+no process-wide registry to make one report depend on another.
 
 ## Thresholding and color policy
 
@@ -141,34 +237,19 @@ policy <- montage_policy(
 policy$threshold      # NULL -> uses the built-in p->z/t rule
 ```
 
-The built-in p→threshold rule covers `z` (via `qnorm`) and `t` (via `qt`, using
-`df`). It is **uncorrected**.
+The built-in p→threshold rule applies only to thresholded test-statistic rows.
+It covers `z` (via `qnorm`) and `t` (via `qt`, using `df`) and is
+**uncorrected**. Continuous auxiliary maps do not inherit that threshold.
 
 ### FDR / q-value thresholding
 
-There is no `q =` option. FDR is data-dependent — the cutoff depends on a
-map's whole p-value distribution — and the policy `threshold` function only
-sees `(stat_kind, df, p, tail)`, not the voxel/parcel values, so it cannot
-compute it. The supported pattern is to **precompute the FDR-critical
-statistic value per map and put it in the manifest `threshold` column**, which
-overrides the policy for that row. That is cleaner than zeroing
-non-significant parcels in the volume and forcing a tiny `threshold` to bypass
-the policy.
+FDR is data-dependent: its cutoff depends on the whole map. The renderer can
+resolve it per test-statistic map when you set `q`; continuous auxiliary maps
+remain continuous.
 
 ```{r fdr, eval = FALSE}
-# Critical |t| at a Benjamini-Hochberg q from a map's p-values:
-bh_threshold <- function(pvals, df, q = 0.05) {
-  pvals <- sort(pvals[is.finite(pvals)])
-  m <- length(pvals)
-  ok <- pvals <= (seq_len(m) / m) * q
-  # No survivors: a finite threshold above any statistic, so the map renders as
-  # an empty panel (handled below). Avoid Inf, which the threshold check rejects.
-  if (!any(ok)) return(.Machine$double.xmax)
-  stats::qt(1 - pvals[max(which(ok))] / 2, df = df)
-}
-
-# map_pvalues: a list with one p-value vector per manifest row
-manifest$threshold <- mapply(bh_threshold, map_pvalues, manifest$df, q = 0.05)
+policy <- montage_policy(q = 0.05)
+render_montage_report(manifest, "report.html", policy = policy)
 ```
 
 A map where nothing survives gets a threshold above any statistic, so it
@@ -188,6 +269,8 @@ render_montage_report(
   output_file = "montage_report.html",
   surfatlas   = atlas,
   policy      = policy,
+  profiles    = list(`mylab:reliability` = reliability_profile),
+  map_selector = "auto",
   image_dir   = "montage_images",   # where panel PNGs are written
   cache_dir   = "montage_cache"     # reused across re-renders
 )
@@ -200,6 +283,171 @@ other material rendering inputs) so iterating on labels or layout is cheap
 without reusing a scientifically different panel. Supply a `bg` volume as well
 to additionally generate volume montages, and an `atlas` to add per-panel peak
 tables.
+
+### What does the HTML selector switch?
+
+For two to four variants, `map_selector = "auto"` produces keyboard-accessible
+segmented tabs. Larger groups use a select control. The primary map is selected
+initially, and switching changes the whole variant: its slice and surface
+images, description, metadata, QC warning, and table. A one-map analysis gets
+no selector.
+
+This is progressive enhancement. Before JavaScript runs--or when it is
+disabled--all variants are visible. Printing and PDF output also show every
+variant in primary-first order. Use `map_selector = "none"` when you prefer the
+expanded HTML form.
+
+### Add optional orthogonal exploration
+
+The static panels are usually the right report artifact: they are quick to scan,
+work in print, and remain usable on HPC systems where a browser cannot run on the
+compute node. When a reader also needs to move through voxels, switch maps, or
+try a different threshold or colour map, add `montage_interactive()` to the same
+render call:
+
+```{r interactive-volume, eval=FALSE}
+render_montage_report(
+  manifest,
+  "report.html",
+  bg = anatomical_volume,
+  policy = policy,
+  profiles = list(`mylab:reliability` = reliability_profile),
+  interactive = montage_interactive(
+    view = "orthogonal",
+    assets = "embed",
+    controls = c("threshold", "palette", "opacity")
+  )
+)
+```
+
+For a throw-away static website, change only the packaging choice and keep the
+HTML beside its generated companion directory:
+
+```{r interactive-bundle, eval=FALSE}
+render_montage_report(
+  manifest,
+  "faces-site.html",
+  bg = anatomical_volume,
+  interactive = montage_interactive(assets = "bundle")
+)
+# Copy both faces-site.html and faces-site_files/, then serve that directory.
+```
+
+Nothing interactive loads until the reader chooses **Explore volume
+interactively** under an analysis. The launcher opens three synchronized axial,
+coronal, and sagittal views at the primary map's peak (or at the field-of-view
+centre when requested). Its map menu follows the same primary-first order as the
+static selector. Each map starts from the report-resolved display state:
+
+- a thresholded test statistic gets its resolved tail and threshold;
+- an estimate gets its continuous signed limits and diverging palette;
+- a standard error or variance gets its nonnegative limits and sequential
+  palette; and
+- a namespaced custom metric follows its supplied or data-derived profile.
+
+The threshold/range, colour-map, and opacity widgets are deliberately
+exploratory. They update all three views, and **Reset to defaults** restores the
+exact authored state for the currently selected map. They do not recompute
+clusters, peaks, QC, tables, or the static figures, so those remain the
+authoritative analysis result. A visible status marks a map as modified. Each
+map keeps its own temporary settings while the page is open, and the static tabs
+and interactive map menu remain synchronized. **Reset to report position** is
+separate from the display reset and returns the crosshair to the authored world
+coordinate.
+
+Version 1 translates the resolved numeric limits, inclusive positive, negative,
+or two-sided threshold, sequential/diverging palette family, units, and global
+overlay alpha. neuroimjs exposes uniform layer opacity, so a static `soft` or
+other intensity-dependent alpha mode is approximated by that global alpha. This
+is a declared semantic-parity boundary: pixel identity is not claimed, and the
+static montage is the authoritative rendering.
+
+`assets = "embed"` places the gzip-compressed NIfTI payloads in the HTML and is
+the convenient choice for a single file opened with `file://`. Embedded output
+has an explicit `max_embed_mb` guard (25 MiB by default) applied to the actual
+base64 payload, not just the smaller gzip files. `assets = "bundle"` writes a
+complete `<report>_files/interactive/` tree containing `scene.json`, pinned
+runtime and licence files, and content-addressed `.nii.gz` volumes. Bundle-mode
+HTML deliberately uses companion resources rather than pretending to be a
+single self-contained file; the HTML and directory must travel together and be
+served over HTTP. It has no CDN or other network dependency. Compression is
+lossless and does not crop, downsample, or quantize the maps.
+
+Both modes include a prominent disclosure because the original voxel values
+remain recoverable from the NIfTI payloads. Treat the resulting report as
+sensitive data when its inputs are sensitive; gzip and base64 are packaging,
+not anonymization or encryption.
+
+The 25 MiB embed default is a guardrail, not a promise that every analysis fits.
+`tools/benchmark-interactive-browser-fixtures.R` and
+`tools/benchmark-interactive-browser.mjs` exercise the exact FLOAT64 NIfTI and
+neuroimjs path for one background plus one, four, or eight overlays:
+
+| Lattice and field | Raw, 8 maps | gzip, 1 / 4 / 8 maps | base64, 1 / 4 / 8 maps |
+|:--|--:|--:|--:|
+| 2 mm sparse | 61.98 MiB | 0.85 / 1.69 / 2.83 MiB | 1.13 / 2.26 / 3.77 MiB |
+| 2 mm dense | 61.98 MiB | 5.43 / 12.55 / 22.04 MiB | 7.24 / 16.74 / 29.39 MiB |
+| 1 mm sparse | 495.83 MiB | 6.76 / 13.52 / 22.58 MiB | 9.01 / 18.03 / 30.11 MiB |
+| 1 mm dense | 495.83 MiB | 43.45 / 100.33 / 176.16 MiB | 57.93 / 133.78 / 234.88 MiB |
+
+The same run measured fetch, gzip decode, NIfTI parse, and viewer update in the
+project's headless Chromium. Times are wall-clock observations on the test host,
+not universal performance promises:
+
+| Lattice and field | Initial activation | Next 3 maps | Next 4 maps | Chromium backing store, 1 -> 4 -> 8 maps |
+|:--|--:|--:|--:|--:|
+| 2 mm sparse | 0.88 s | 0.37 s | 0.38 s | 14.22 -> 21.00 -> 21.00 MiB |
+| 2 mm dense | 0.80 s | 0.33 s | 0.42 s | 14.22 -> 21.00 -> 21.00 MiB |
+| 1 mm sparse | 1.17 s | 0.87 s | 0.93 s | 112.78 -> 167.01 -> 167.01 MiB |
+| 1 mm dense | 1.46 s | 1.74 s | 1.90 s | 112.78 -> 167.01 -> 167.01 MiB |
+
+These deterministic measurements were recorded on 2026-08-22. Chromium's JS
+heap increase stayed between 4.38 and 5.13 MiB; the backing-store measure covers
+decoded buffers but not driver-specific GPU memory. Actual values and masks can
+compress differently. The evidence supports embedding a typical small 2 mm
+group while making dense 1 mm groups choose `assets = "bundle"` or an explicitly
+reviewed higher budget. The plateau from four to eight maps verifies the default
+two-overlay cache bound; the background and selected map still decode first.
+
+The browser path is fail-closed: background and overlays must agree in dimensions,
+voxel spacing, orientation, origin, and full affine. It never restamps, resamples,
+or silently aligns data, and `volume_args = list(on_mismatch = "restamp")` is
+therefore rejected when interactivity is requested. If JavaScript, WebGL, data
+loading, or geometry validation fails, the report leaves the static montage in
+place with a local error message. PDF output always remains static; QMD output
+retains the scene and companion assets for a later HTML render. Its render
+sidecar omits source paths, recipes, and redundant map objects, and rewrites or
+copies static panel images under the companion directory so the QMD, sidecar,
+and `<report>_files/` tree can move together.
+
+For troubleshooting, a bundle opened with `file://` should be served from a
+local or static HTTP server, or regenerated with `assets = "embed"`. A geometry
+error must be repaired upstream by aligning inputs; the interactive path never
+restamps. A WebGL error affects only the optional canvas. If controls show the
+modified status, **Reset to defaults** and **Reset to report position** restore
+the authored display and coordinate independently. Hiding or leaving the page
+disposes the viewer and its bounded decoded-map cache; reopening starts from
+the currently selected map's report defaults. Report provenance records
+the VolumeScene version, neuroimjs and adapter versions, runtime SHA-256, asset
+hashes, compression, byte totals, and declared storage transformations so a
+copied artifact can be audited without its source checkout.
+
+Custom HTML templates can use the same stable emitters without constructing an
+htmlwidget:
+
+```{r interactive-hooks, eval=FALSE}
+hooks <- montage_interactive_report_hooks(
+  report_data$interactive,
+  is_html = knitr::is_html_output()
+)
+hooks$emit_document()                 # exactly once
+hooks$emit_host("faces-versus-places") # after that analysis's static panels
+```
+
+An htmlwidget wrapper is unnecessary for the report path: the scene, runtime,
+and payload lifecycle belong to the report document. Applications that need
+Shiny-style reactive bindings can add a separate wrapper around the same scene
+contract later.
 
 ### What happens to a continuous volume?
 
@@ -215,8 +463,13 @@ scientific contract rather than a collection of cosmetic switches:
 - use a per-sample z-buffer, a cortex/medial-wall mask, and a subtle anatomy
   metric beneath the statistic;
 - omit parcel, network, mesh, and internal occlusion lines; and
-- derive the legend from the overlay limits, including signed endpoints, zero,
-  and threshold marks.
+- derive the legend from the overlay limits, including signed endpoints and
+  zero, plus threshold marks when the map is thresholded.
+
+Within an analysis, the primary map chooses the slice coordinates; surface
+variants share the same views and camera. A requested shared color scale is
+used only when quantity, resolved profile, units, scale type, and center are
+compatible.
 
 The default renderer is a deterministic CPU backend, so the four-view path
 does not need OpenGL, a browser, or the user's Chrome profile. The report
@@ -396,15 +649,17 @@ annotations, and legends are composed as vector-capable text and graphics.
 ## Recap
 
 ```r
-manifest <- build_manifest(source = roi_table)        # the contract
+manifest <- build_manifest(source = grouped_maps)     # one row per variant
 policy   <- montage_policy(p = 0.001, tail = "two_sided")
 atlas    <- neuroatlas::get_schaefer_surfatlas(400, 17)
 render_montage_report(manifest, "report.html",        # volumes -> surfaces
                       surfatlas = atlas, policy = policy,
+                      profiles = list(`mylab:reliability` = reliability_profile),
                       image_dir = "img", cache_dir = "cache")
 ```
 
-See `?build_manifest`, `?montage_policy`, `?surf_montage`, and
+See `?build_manifest`, `?montage_map_profile`, `?montage_policy`,
+`?surf_montage`, and
 `?render_montage_report` for the complete argument reference. For the
 anatomical scene contract, continue with
 `vignette("surface-panels", package = "neuroatlas")`; for the scalar-first

@@ -25,6 +25,9 @@ test_that("montage_manifest_schema carries cluster-report parity fields", {
   expect_true(all(c("field", "required", "type", "role") %in% names(schema)))
   expect_true(all(c(
     "map_id", "path", "recipe", "stat_kind", "df", "units", "signed",
+    "analysis_id", "role", "quantity", "distribution", "profile",
+    "display_mode", "scale", "center", "lower", "upper",
+    "palette_family", "alpha_mode", "support",
     "p", "threshold", "tail", "connectivity", "min_cluster_size",
     "space", "template", "mask", "parcel_values", "label", "n", "subjects"
   ) %in% schema$field))
@@ -192,5 +195,44 @@ test_that("validate_manifest overlay QC catches empty maps and grid mismatch", {
       load_maps = TRUE
     ),
     "Grid mismatch"
+  )
+})
+
+test_that("analysis variants must share their primary map geometry", {
+  inputs <- make_toy_cluster_report_inputs()
+  shifted_space <- neuroim2::NeuroSpace(
+    dim = dim(inputs$stat_map),
+    spacing = c(2, 2, 2),
+    origin = c(-4, -5, -5)
+  )
+  shifted <- neuroim2::NeuroVol(
+    array(0.5, dim = dim(inputs$stat_map)),
+    space = shifted_space
+  )
+  manifest <- data.frame(
+    map_id = c("z", "se"),
+    analysis_id = "model-1",
+    role = c("primary", "auxiliary"),
+    quantity = c("test_statistic", "standard_error"),
+    distribution = c("z", NA_character_),
+    label = c("Z", "SE"),
+    stringsAsFactors = FALSE
+  )
+  manifest$stat_map <- I(list(inputs$stat_map, shifted))
+
+  expect_error(
+    validate_manifest(manifest, empty = "warning"),
+    "same spatial representation and geometry"
+  )
+
+  single <- manifest[1, , drop = FALSE]
+  single$analysis_id <- "model-1"
+  single$mask <- I(list(shifted))
+  expect_error(
+    resolve_montage_policy(
+      single,
+      stat_maps = list(inputs$stat_map)
+    ),
+    "mask geometry does not match"
   )
 })

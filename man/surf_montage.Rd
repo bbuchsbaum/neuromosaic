@@ -12,6 +12,8 @@ surf_montage(
   tail = c("two_sided", "positive", "negative"),
   signed = TRUE,
   cap = NULL,
+  limits = NULL,
+  support_mask = NULL,
   views = c("lateral", "medial"),
   hemis = c("left", "right"),
   surface = "inflated",
@@ -56,13 +58,18 @@ parcel-valued `vals`.}
 \item{output_file}{PNG or PDF output path. PDF embeds the rasterized cortical
 panels while retaining vector text, orientation marks, and legend.}
 
-\item{threshold}{Positive numeric overlay threshold.}
+\item{threshold}{Positive numeric overlay threshold, or `NULL`/`NA` for a
+continuous map.}
 
 \item{tail}{Tail mode.}
 
 \item{signed}{Logical; use symmetric overlay limits?}
 
 \item{cap}{Optional shared cap for surface overlay colors.}
+
+\item{limits}{Optional finite increasing display limits.}
+
+\item{support_mask}{Optional logical/numeric mask in source-value order.}
 
 \item{views}{Surface views passed to `neuroatlas::plot_brain()`.}
 

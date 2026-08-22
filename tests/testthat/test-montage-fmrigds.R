@@ -74,3 +74,26 @@ test_that("fmrigds_render_manifest validates GDS assay inputs", {
     "GDS object"
   )
 })
+
+test_that("fmrigds adapter is not limited to package-specific statistic names", {
+  skip_if_not_installed("fmrigds")
+  gds <- make_toy_fmrigds_group(n_contrast = 1L)
+
+  manifest <- fmrigds_render_manifest(
+    gds,
+    assay = "beta",
+    quantity = "standard_error",
+    units = "estimate SE",
+    materialize_dir = tempfile("fmrigds-se-")
+  )
+
+  expect_true(all(manifest$quantity == "standard_error"))
+  expect_false(any(manifest$signed))
+  expect_true(all(is.na(manifest$stat_kind)))
+  expect_true(all(manifest$units == "estimate SE"))
+  expect_null(neuromosaic:::.fmrigds_default_stat_kind("reliability"))
+  expect_identical(
+    neuromosaic:::.fmrigds_default_quantity("reliability"),
+    "assay:reliability"
+  )
+})

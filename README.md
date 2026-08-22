@@ -111,6 +111,91 @@ neuromosaic explore \
   --plot-formula 'AUC ~ measure + group'
 ```
 
+## Grouped map variants
+
+A montage analysis can have one primary test-statistic map plus related effect,
+uncertainty, or custom diagnostic maps. Give the rows one `analysis_id`, mark
+one `role = "primary"`, and describe values with the generic `quantity` field:
+
+```r
+maps <- data.frame(
+  analysis_id = "faces",
+  map_id = c("faces_z", "faces_estimate", "faces_se"),
+  path = c("faces_z.nii.gz", "faces_beta.nii.gz", "faces_se.nii.gz"),
+  role = c("primary", "auxiliary", "auxiliary"),
+  quantity = c("test_statistic", "estimate", "standard_error"),
+  distribution = c("z", NA, NA),
+  label = c("Z statistic", "Effect estimate", "Standard error")
+)
+
+render_montage_report(maps, "faces.html", bg = anatomical_volume)
+```
+
+HTML uses tabs for two to four variants and a select control for larger groups.
+PDF, print, and no-JavaScript output show every map in primary-first order.
+Built-in profiles choose thresholding, robust limits, and palette families;
+`montage_map_profile()` supports namespaced custom quantities without a global
+registry. See `vignette("montage-report", package = "neuromosaic")`.
+
+For optional voxel-level exploration, keep the same report call and add an
+interactive volume configuration:
+
+```r
+render_montage_report(
+  maps,
+  "faces.html",
+  bg = anatomical_volume,
+  interactive = montage_interactive(
+    assets = "embed",  # one file that can be opened directly from an HPC system
+    controls = c("threshold", "palette", "opacity")
+  )
+)
+```
+
+The static montage remains the report default and the print/failure fallback.
+Opening the lazy orthogonal viewer exposes the same primary and subsidiary maps,
+resolved limits, threshold, palette, and opacity; reader changes are exploratory
+and reset exactly for each map. The static and interactive selectors stay in
+sync, while each map retains its own temporary controls for that browser page.
+Hiding or leaving the page disposes the viewer and its cached browser resources;
+reopening starts from the currently selected map's report defaults.
+
+Use `assets = "bundle"` for a hosted report with smaller HTML and a complete
+`<report>_files/interactive/` companion tree; serve the HTML and directory
+together over HTTP. Embedded reports enforce `max_embed_mb` against the actual
+base64 payload. Neither mode requires a CDN or other external browser request.
+Both modes disclose that voxel values are recoverable from the report artifact.
+Static intensity-dependent alpha ramps are approximated by uniform interactive
+opacity, so the contract is semantic parity rather than pixel identity and the
+static montage remains authoritative.
+
+As a reproducible reference, one background plus eight dense FLOAT64 maps used
+29.39 MiB after gzip and base64 on a `91 x 109 x 91` lattice and 234.88 MiB at
+`182 x 218 x 182`. With the default two-map cache, measured Chromium backing
+storage plateaued at 21.00 MiB and 167.01 MiB respectively when switching from
+four to eight maps. See the benchmark scripts under `tools/`; real data can
+compress differently and the browser measure excludes driver-specific GPU
+memory.
+
+Repository browser checks use the installed Playwright Chromium and generate
+their reports from current R sources:
+
+```sh
+node ~/.local/share/agent-policy/browser-automation-guard.mjs --audit
+npm run verify:interactive
+npm run test:e2e
+node ~/.local/share/agent-policy/browser-automation-guard.mjs --audit
+```
+
+`npm run test:e2e` covers both embedded `file://` output and companion assets
+served from a local static HTTP server. It owns and closes that server and its
+browser processes for the duration of the run.
+
+The larger payload/timing benchmark is reproducible with
+`npm run benchmark:interactive`; run the same browser guard audits around it.
+Its generated CSV and JSON stay under the ignored
+`e2e/.artifacts/benchmark/` directory.
+
 ## Atlas Specs
 
 Built-in CLI atlas specs currently include:

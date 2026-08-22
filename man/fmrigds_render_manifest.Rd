@@ -10,9 +10,13 @@ fmrigds_render_manifest(
   materialize_dir = NULL,
   map_id_cols = NULL,
   label_cols = map_id_cols,
+  analysis_id_cols = map_id_cols,
   stat_kind = .fmrigds_default_stat_kind(assay),
+  quantity = NULL,
+  distribution = NULL,
+  role = "primary",
   units = assay,
-  signed = TRUE,
+  signed = NULL,
   threshold = NULL,
   p = NULL,
   tail = "two_sided",
@@ -35,7 +39,19 @@ temporary directory.}
 `label`. Defaults prefer `contrast/model/variant`, falling back to
 `contrast/subject`.}
 
-\item{stat_kind, units, signed, threshold, p, tail, connectivity, min_cluster_size}{Default render-manifest policy columns.}
+\item{analysis_id_cols}{Metadata columns defining associated-map groups.}
+
+\item{stat_kind}{Legacy statistic-kind compatibility field.}
+
+\item{quantity}{Generic scientific quantity, including custom namespaced
+values.}
+
+\item{distribution}{Optional z or t distribution for test statistics.}
+
+\item{role}{Role within each analysis group.}
+
+\item{units, signed, threshold, p, tail, connectivity, min_cluster_size}{Default
+render-manifest policy columns.}
 
 \item{level}{Manifest `level` value. Defaults to `"group"`.}
 

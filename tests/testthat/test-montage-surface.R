@@ -166,6 +166,35 @@ test_that("surf_montage delegates projection to plot_brain without a hook", {
   expect_gt(res$n_suprathreshold, 0)
 })
 
+test_that("surf_montage supports continuous parcel maps and explicit support", {
+  captured <- new.env(parent = emptyenv())
+  plot_fun <- function(..., vals, lim) {
+    captured$vals <- vals
+    captured$lim <- lim
+    ggplot2::ggplot(data.frame(x = 1, y = 1), ggplot2::aes(x, y)) +
+      ggplot2::geom_point()
+  }
+  result <- surf_montage(
+    vals = c(-0.8, 0.6),
+    surfatlas = make_toy_surfatlas(),
+    output_file = tempfile("surface-continuous-", fileext = ".png"),
+    threshold = NULL,
+    limits = c(-1, 1),
+    support_mask = c(TRUE, FALSE),
+    plot_fun = plot_fun,
+    width = 320,
+    height = 220,
+    res = 72
+  )
+
+  expect_identical(result$display_mode, "continuous")
+  expect_true(is.na(result$threshold))
+  expect_equal(result$limits, c(-1, 1))
+  expect_equal(result$n_suprathreshold, 1L)
+  expect_equal(captured$lim, c(-1, 1))
+  expect_true(is.na(captured$vals[[2]]))
+})
+
 test_that("continuous montage requests publication semantics and overlay legend", {
   inputs <- make_toy_cluster_report_inputs()
   captured <- new.env(parent = emptyenv())

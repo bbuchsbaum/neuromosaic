@@ -217,6 +217,12 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
   section_notes <- .cli_read_narrative_table(section_notes_path, "section-notes")
   interludes_path <- .cli_opt_scalar(opts, "interludes", NULL)
   interludes <- .cli_read_narrative_table(interludes_path, "interludes")
+  profiles_path <- .cli_opt_scalar(opts, "map_profiles", NULL)
+  profiles <- .cli_read_map_profiles(profiles_path)
+  map_selector <- .cli_opt_scalar(opts, "map_selector", "auto")
+  if (!map_selector %in% c("auto", "tabs", "select", "none")) {
+    .cli_abort("Option '--map-selector' must be auto, tabs, select, or none.")
+  }
 
   layout <- .cli_parse_layout(.cli_opt_scalar(opts, "layout", NULL))
   default_p <- .cli_opt_numeric(opts, "p", 0.005)
@@ -249,6 +255,7 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     load_maps = validate_maps,
     default_p = default_p
   )
+  manifest <- resolve_montage_profiles(manifest, profiles = profiles)
 
   list(
     type = "montage_report",
@@ -263,6 +270,8 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
       section_notes = section_notes,
       interludes = interludes,
       policy = policy,
+      profiles = profiles,
+      map_selector = map_selector,
       bg = background,
       surfatlas = surfatlas,
       atlas = atlas,
@@ -286,6 +295,11 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
       NULL
     } else {
       normalizePath(labels_path, mustWork = TRUE)
+    },
+    profiles_path = if (is.null(profiles_path) || !nzchar(profiles_path)) {
+      NULL
+    } else {
+      normalizePath(profiles_path, mustWork = TRUE)
     },
     background_path = if (is.null(background) || !nzchar(background)) {
       NULL
@@ -362,7 +376,10 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
 
 .cli_montage_manifest_overrides <- function(opts) {
   overrides <- list()
-  for (field in c("stat_kind", "units", "tail", "connectivity")) {
+  for (field in c(
+    "quantity", "distribution", "role", "analysis_id", "profile",
+    "stat_kind", "units", "tail", "connectivity"
+  )) {
     value <- .cli_opt_scalar(opts, field, NULL)
     if (!is.null(value) && nzchar(value)) {
       overrides[[field]] <- value
@@ -392,6 +409,46 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     return(NULL)
   }
   overrides
+}
+
+.cli_read_map_profiles <- function(path) {
+  if (is.null(path) || !nzchar(path)) return(NULL)
+  if (!file.exists(path)) {
+    .cli_abort(
+      paste0("Map profiles file not found: ", path),
+      class = "neuromosaic_error_cli_invalid_manifest"
+    )
+  }
+  raw <- yaml::read_yaml(path)
+  entries <- if (is.list(raw) && "profiles" %in% names(raw)) {
+    raw$profiles
+  } else {
+    raw
+  }
+  if (!is.list(entries) || length(entries) == 0L) {
+    .cli_abort("Map profiles YAML must contain a non-empty mapping.")
+  }
+  if (is.null(names(entries)) || any(!nzchar(names(entries)))) {
+    .cli_abort("Every map profile YAML entry must have a name.")
+  }
+  profiles <- lapply(seq_along(entries), function(i) {
+    entry <- entries[[i]]
+    if (!is.list(entry)) {
+      .cli_abort("Each map profile YAML entry must be a mapping.")
+    }
+    entry$id <- NULL
+    args <- c(list(id = names(entries)[[i]]), entry)
+    tryCatch(
+      do.call(montage_map_profile, args),
+      error = function(e) {
+        .cli_abort(paste0(
+          "Invalid map profile '", names(entries)[[i]], "': ",
+          conditionMessage(e)
+        ))
+      }
+    )
+  })
+  stats::setNames(profiles, names(entries))
 }
 
 .cli_read_render_manifest <- function(path) {
@@ -426,12 +483,15 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
   }
 
   label_fields <- intersect(
-    c("label", "description", "short", "legend_semantics"),
+    c(
+      "label", "analysis_label", "selector_label", "description", "short",
+      "legend_semantics"
+    ),
     names(labels)
   )
   if (length(label_fields) == 0L) {
     .cli_abort(
-      "Labels table must contain at least one of: label, description, short, legend_semantics.",
+      "Labels table must contain at least one supported label or description column.",
       class = "neuromosaic_error_cli_invalid_manifest"
     )
   }
@@ -613,7 +673,8 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
   report_spec <- .cli_prepare_montage_report(opts)
   report_args <- report_spec$args
   keep <- c(
-    "manifest", "title", "layout", "policy", "bg", "surfatlas", "atlas",
+    "manifest", "title", "layout", "policy", "profiles", "map_selector",
+    "bg", "surfatlas", "atlas",
     "render_volume", "render_surface", "render_peaks", "cache_dir",
     "materialize_recipes", "overwrite_recipes", "cache_surface",
     "image_width", "image_height", "image_res", "max_clusters", "validate"
@@ -1495,9 +1556,16 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
     "  --interludes <file>            Optional CSV/TSV of inter-map narrative: map_id, text, position\n",
     "  --layout <a/b/c>               Nested report layout columns, e.g. contrast/model/variant\n",
     "  --cap-within <a/b>             Manifest columns that share a color cap\n",
+    "  --analysis-id <id>             Override/default associated-map group id\n",
+    "  --role <primary|auxiliary>     Override/default role within a group\n",
+    "  --quantity <name>              Generic quantity or namespaced custom quantity\n",
+    "  --distribution <z|t>           Test-statistic sampling distribution\n",
+    "  --profile <name>               Display profile id for overridden rows\n",
+    "  --map-profiles <yaml>          Caller-defined display profile mappings\n",
+    "  --map-selector <style>         auto, tabs, select, or none; default auto\n",
     "  --background <file>            Optional background image for validate-time grid QC\n",
     "                                 and volume montage rendering\n",
-    "  --stat-kind <z|t|beta|cope>    Override/default statistic kind\n",
+    "  --stat-kind <z|t|beta|cope>    Legacy statistic-kind override\n",
     "  --units <text>                 Override/default display units\n",
     "  --threshold <num>              Override/default numeric threshold\n",
     "  --p <num>                      Default p-value for validate-time threshold derivation\n",
@@ -1819,6 +1887,8 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
 
   if (identical(spec$type, "montage_report")) {
     layout <- spec$args$layout
+    groups <- .montage_analysis_groups(spec$args$manifest)
+    modes <- table(spec$args$manifest$effective_display_mode)
     lines <- c(
       lines,
       paste0("Output file: ", spec$args$output_file),
@@ -1829,6 +1899,13 @@ cli_main <- function(args = commandArgs(trailingOnly = TRUE),
       if (!is.null(spec$atlas)) {
         paste0("Atlas: ", spec$atlas)
       },
+      paste0("Analysis groups: ", length(groups)),
+      paste0(
+        "Display modes: ",
+        paste(paste(names(modes), as.integer(modes), sep = "="),
+              collapse = ", ")
+      ),
+      paste0("Map selector: ", spec$args$map_selector),
       paste0("Map count: ", nrow(spec$args$manifest)),
       paste0("Layout: ", if (length(layout) > 0L) {
         paste(layout, collapse = " / ")

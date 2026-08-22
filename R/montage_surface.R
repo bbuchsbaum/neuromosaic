@@ -12,10 +12,13 @@
 #' @param surfatlas Surface atlas with `lh_atlas`/`rh_atlas` geometry.
 #' @param output_file PNG or PDF output path. PDF embeds the rasterized cortical
 #'   panels while retaining vector text, orientation marks, and legend.
-#' @param threshold Positive numeric overlay threshold.
+#' @param threshold Positive numeric overlay threshold, or `NULL`/`NA` for a
+#'   continuous map.
 #' @param tail Tail mode.
 #' @param signed Logical; use symmetric overlay limits?
 #' @param cap Optional shared cap for surface overlay colors.
+#' @param limits Optional finite increasing display limits.
+#' @param support_mask Optional logical/numeric mask in source-value order.
 #' @param views Surface views passed to `neuroatlas::plot_brain()`.
 #' @param hemis Hemispheres passed to `neuroatlas::plot_brain()`.
 #' @param surface Surface geometry name for `plot_brain()`.
@@ -77,6 +80,8 @@ surf_montage <- function(stat = NULL,
                          tail = c("two_sided", "positive", "negative"),
                          signed = TRUE,
                          cap = NULL,
+                         limits = NULL,
+                         support_mask = NULL,
                          views = c("lateral", "medial"),
                          hemis = c("left", "right"),
                          surface = "inflated",
@@ -148,9 +153,11 @@ surf_montage <- function(stat = NULL,
   if (!inherits(surfatlas, "surfatlas")) {
     stop("'surfatlas' must inherit from class 'surfatlas'.", call. = FALSE)
   }
-  if (!is.numeric(threshold) || length(threshold) != 1L ||
-      !is.finite(threshold) || threshold <= 0) {
-    stop("'threshold' must be a positive number.", call. = FALSE)
+  continuous <- is.null(threshold) ||
+    (length(threshold) == 1L && is.na(threshold))
+  if (!continuous && (!is.numeric(threshold) || length(threshold) != 1L ||
+                      !is.finite(threshold) || threshold <= 0)) {
+    stop("'threshold' must be NULL/NA or a positive number.", call. = FALSE)
   }
   if (!is.logical(signed) || length(signed) != 1L || is.na(signed)) {
     stop("'signed' must be TRUE or FALSE.", call. = FALSE)
@@ -159,6 +166,7 @@ surf_montage <- function(stat = NULL,
                         !is.finite(cap) || cap <= 0)) {
     stop("'cap' must be NULL or a positive number.", call. = FALSE)
   }
+  limits <- .validate_montage_limits(limits)
 
   if (has_vals && !is.null(projection)) {
     stop("'projection' is only supported with volumetric 'stat'.", call. = FALSE)
@@ -170,15 +178,26 @@ surf_montage <- function(stat = NULL,
     stat <- .load_overlay_neurovol(stat, "stat")
     as.numeric(as.array(stat))
   }
-  supra <- .suprathreshold_mask(values, threshold = threshold, tail = tail)
+  support <- .normalize_montage_support_mask(support_mask, length(values))
+  supra <- if (continuous) {
+    is.finite(values)
+  } else {
+    .suprathreshold_mask(values, threshold = threshold, tail = tail)
+  }
+  supra <- supra & support
   n_supra <- sum(supra, na.rm = TRUE)
   if (n_supra == 0L) {
-    msg <- paste0(
-      "No finite suprathreshold ",
-      if (has_vals) "parcels" else "voxels",
-      " for threshold ", threshold,
-      " and tail '", tail, "'."
-    )
+    msg <- if (continuous) {
+      paste0("No finite display ", if (has_vals) "parcels" else "voxels",
+             " for the continuous overlay.")
+    } else {
+      paste0(
+        "No finite suprathreshold ",
+        if (has_vals) "parcels" else "voxels",
+        " for threshold ", threshold,
+        " and tail '", tail, "'."
+      )
+    }
     if (identical(empty, "error")) {
       stop(msg, call. = FALSE)
     }
@@ -188,9 +207,13 @@ surf_montage <- function(stat = NULL,
   if (has_vals) {
     display_vals <- values
     display_vals[!supra] <- NA_real_
-    cap <- cap %||% .stat_montage_default_cap(display_vals, signed = signed)
-    display_vals <- .clip_montage_overlay(display_vals, cap = cap,
-                                          signed = signed)
+    if (is.null(limits)) {
+      cap <- cap %||% .stat_montage_default_cap(display_vals, signed = signed)
+      limits <- if (isTRUE(signed)) c(-cap, cap) else c(0, cap)
+    } else {
+      cap <- max(abs(limits))
+    }
+    display_vals <- .clip_montage_limits(display_vals, limits)
     plot_vals <- display_vals
     overlay_payload <- NULL
     result_overlay <- NULL
@@ -206,8 +229,13 @@ surf_montage <- function(stat = NULL,
     supra_arr <- array(supra, dim = dim(stat_arr))
     display_arr <- stat_arr
     display_arr[!supra_arr] <- NA_real_
-    cap <- cap %||% .stat_montage_default_cap(display_arr, signed = signed)
-    display_arr <- .clip_montage_overlay(display_arr, cap = cap, signed = signed)
+    if (is.null(limits)) {
+      cap <- cap %||% .stat_montage_default_cap(display_arr, signed = signed)
+      limits <- if (isTRUE(signed)) c(-cap, cap) else c(0, cap)
+    } else {
+      cap <- max(abs(limits))
+    }
+    display_arr <- .clip_montage_limits(display_arr, limits)
     display_vol <- neuroim2::NeuroVol(display_arr, space = neuroim2::space(stat))
 
     # Volume -> surface projection. By default delegate to neuroatlas::plot_brain,
@@ -232,9 +260,10 @@ surf_montage <- function(stat = NULL,
       # plot_brain has no tail channel and gates on |value|, so for a one-sided
       # tail we must drop the wrong-signed voxels here or they would render.
       overlay_arr <- stat_arr
-      if (identical(tail, "positive")) {
+      overlay_arr[!support] <- NA_real_
+      if (!continuous && identical(tail, "positive")) {
         overlay_arr[stat_arr < 0] <- NA_real_
-      } else if (identical(tail, "negative")) {
+      } else if (!continuous && identical(tail, "negative")) {
         overlay_arr[stat_arr > 0] <- NA_real_
       }
       overlay_payload <- neuroim2::NeuroVol(
@@ -260,12 +289,12 @@ surf_montage <- function(stat = NULL,
       diagnostics <- .overlay_projection_diagnostics(
         cluster_vol = display_vol,
         projection = projection,
-        threshold = threshold,
+        threshold = if (continuous) 0 else threshold,
         sampling = sampling,
         fun = fun
       )
-      overlay_payload <- .clip_surface_overlay(
-        projection$overlay, cap = cap, signed = signed
+      overlay_payload <- .clip_surface_overlay_limits(
+        projection$overlay, limits = limits
       )
       result_overlay <- overlay_payload
       surface_space_out <- projection$meta$surface_space %||% surface_space
@@ -281,13 +310,7 @@ surf_montage <- function(stat = NULL,
   # Match the color limits to the rendered sign: symmetric for signed maps, and
   # for unsigned maps the half-range that holds the retained tail so negative
   # one-sided effects are not clamped to a [0, cap] scale.
-  overlay_lim <- if (isTRUE(signed)) {
-    c(-cap, cap)
-  } else if (identical(tail, "negative")) {
-    c(-cap, 0)
-  } else {
-    c(0, cap)
-  }
+  overlay_lim <- limits
 
   render_device_used <- .open_surface_montage_device(
     filename = output_file,
@@ -322,7 +345,9 @@ surf_montage <- function(stat = NULL,
         colorbar_source = "overlay",
         overlay_title = "Statistic",
         overlay = overlay_payload,
-        overlay_threshold = max(abs(threshold), .Machine$double.eps),
+        overlay_threshold = if (continuous) NULL else {
+          max(abs(threshold), .Machine$double.eps)
+        },
         overlay_alpha = overlay_alpha,
         overlay_palette = overlay_palette,
         overlay_lim = overlay_lim,
@@ -352,10 +377,12 @@ surf_montage <- function(stat = NULL,
       image = normalizePath(output_file, mustWork = FALSE),
       overlay = result_overlay,
       diagnostics = diagnostics,
-      threshold = threshold,
+      threshold = if (continuous) NA_real_ else threshold,
+      display_mode = if (continuous) "continuous" else "thresholded",
       tail = tail,
       signed = signed,
       cap = cap,
+      limits = limits,
       n_suprathreshold = n_supra,
       surface_space = surface_space_out,
       vals = if (has_vals) plot_vals else NULL,
@@ -517,5 +544,12 @@ surf_montage <- function(stat = NULL,
       return(values)
     }
     .clip_montage_overlay(as.numeric(values), cap = cap, signed = signed)
+  })
+}
+
+.clip_surface_overlay_limits <- function(overlay, limits) {
+  lapply(overlay, function(values) {
+    if (is.null(values)) return(values)
+    .clip_montage_limits(as.numeric(values), limits)
   })
 }

@@ -76,6 +76,46 @@ test_that("stat_montage clips overlays to a shared cap", {
   expect_lte(max(abs(values), na.rm = TRUE), 4)
 })
 
+test_that("stat_montage renders continuous maps with explicit limits", {
+  inputs <- make_toy_cluster_report_inputs()
+  values <- as.array(inputs$stat_map) / 10
+  continuous <- neuroim2::NeuroVol(values, neuroim2::space(inputs$stat_map))
+
+  out <- stat_montage(
+    inputs$stat_map,
+    continuous,
+    threshold = NULL,
+    signed = TRUE,
+    limits = c(-0.4, 0.4),
+    draw = FALSE
+  )
+  displayed <- as.numeric(out$overlay)
+
+  expect_identical(out$display_mode, "continuous")
+  expect_true(is.na(out$threshold))
+  expect_equal(out$limits, c(-0.4, 0.4))
+  expect_true(all(displayed[is.finite(displayed)] >= -0.4))
+  expect_true(all(displayed[is.finite(displayed)] <= 0.4))
+  expect_equal(out$n_suprathreshold, sum(is.finite(as.numeric(continuous))))
+})
+
+test_that("stat_montage applies an explicit support mask", {
+  inputs <- make_toy_cluster_report_inputs()
+  support <- rep(FALSE, length(inputs$stat_map))
+  support[[which.max(as.numeric(inputs$stat_map))]] <- TRUE
+
+  out <- stat_montage(
+    inputs$stat_map,
+    inputs$stat_map,
+    threshold = NULL,
+    limits = c(-6, 6),
+    support_mask = support,
+    draw = FALSE
+  )
+
+  expect_equal(sum(is.finite(as.numeric(out$overlay))), 1L)
+})
+
 test_that("stat_montage validates inputs and can restamp via prepare_overlay", {
   inputs <- make_toy_cluster_report_inputs()
   expect_error(

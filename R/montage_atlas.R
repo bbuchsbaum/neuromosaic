@@ -76,11 +76,27 @@ montage_peak_table <- function(stat,
   stat_maps <- lapply(seq_len(nrow(manifest)), function(i) {
     .montage_manifest_stat_source(manifest, i)
   })
+  support_masks <- .montage_render_support_masks(manifest, stat_maps)
 
   for (i in seq_len(nrow(manifest))) {
     map_id <- as.character(manifest$map_id[[i]])
+    if (!identical(manifest$effective_display_mode[[i]], "thresholded")) {
+      panels[[map_id]]$peaks <- list(
+        n_clusters = NA_integer_,
+        threshold = NA_real_,
+        note = "Peak tables are not generated for continuous map variants."
+      )
+      next
+    }
+    stat <- stat_maps[[i]]
+    if (!is.null(support_masks[[i]])) {
+      values <- as.array(stat)
+      mask <- array(support_masks[[i]], dim = dim(values))
+      values[!mask] <- NA_real_
+      stat <- neuroim2::NeuroVol(values, space = neuroim2::space(stat))
+    }
     peaks <- montage_peak_table(
-      stat = stat_maps[[i]],
+      stat = stat,
       atlas = atlas,
       threshold = manifest$effective_threshold[[i]],
       tail = manifest$effective_tail[[i]],

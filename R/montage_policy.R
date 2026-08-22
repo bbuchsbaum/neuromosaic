@@ -55,7 +55,10 @@
 #' @param tail Default cluster tail policy.
 #' @param connectivity Default cluster connectivity policy.
 #' @param min_cluster_size Default minimum cluster size.
-#' @param cap_within Character vector of manifest columns that share color caps.
+#' @param cap_within Character vector of manifest columns that may share color
+#'   caps. Requested groups are automatically partitioned by quantity, resolved
+#'   profile, units, scale type, and center so incompatible maps never share a
+#'   scale.
 #' @param cap Optional fixed color cap (magnitude). When supplied, every cap
 #'   group uses this value and the robust quantile default is ignored. `NULL`
 #'   (default) derives a cap per group from the data.
@@ -211,6 +214,16 @@ resolve_montage_policy <- function(manifest, policy = montage_policy(),
   }
   empty <- match.arg(empty)
   manifest <- validate_manifest(manifest, check_files = FALSE, empty = empty)
+  if (!is.null(stat_maps)) {
+    stat_maps <- .normalize_montage_profile_values(stat_maps, manifest)
+    .validate_montage_group_sources(manifest, stat_maps)
+    stat_maps <- .montage_profile_values_with_analysis_masks(
+      manifest, stat_maps
+    )
+  }
+  if (!"effective_display_mode" %in% names(manifest)) {
+    manifest <- resolve_montage_profiles(manifest, map_values = stat_maps)
+  }
   .check_policy_columns(manifest, policy$cap_within, "cap_within")
   .check_policy_columns(manifest, policy$layout, "layout")
 
@@ -230,23 +243,27 @@ resolve_montage_policy <- function(manifest, policy = montage_policy(),
   q <- .policy_column_or_default(manifest, "q", policy$q %||% NA_real_)
   df <- if ("df" %in% names(manifest)) manifest$df else rep(NA_real_, n)
 
+  thresholded <- manifest$effective_display_mode == "thresholded"
   threshold <- rep(NA_real_, n)
   has_threshold <- if ("threshold" %in% names(manifest)) {
     !is.na(manifest$threshold)
   } else {
     rep(FALSE, n)
   }
-  threshold[has_threshold] <- manifest$threshold[has_threshold]
-  if (any(!has_threshold)) {
-    threshold[!has_threshold] <- policy$threshold_fun(
-      stat_kind = manifest$stat_kind[!has_threshold],
-      df = df[!has_threshold],
-      p = p[!has_threshold],
-      tail = tail[!has_threshold]
+  threshold[has_threshold & thresholded] <- manifest$threshold[
+    has_threshold & thresholded
+  ]
+  derive <- thresholded & !has_threshold
+  if (any(derive)) {
+    threshold[derive] <- policy$threshold_fun(
+      stat_kind = manifest$stat_kind[derive],
+      df = df[derive],
+      p = p[derive],
+      tail = tail[derive]
     )
   }
 
-  fdr_rows <- !has_threshold & !is.na(q)
+  fdr_rows <- thresholded & !has_threshold & !is.na(q)
   if (any(fdr_rows)) {
     threshold[fdr_rows] <- .montage_fdr_thresholds(
       manifest = manifest,
@@ -420,7 +437,39 @@ resolve_montage_policy <- function(manifest, policy = montage_policy(),
   if (length(cap_within) == 0L) {
     return(as.character(manifest$map_id))
   }
-  apply(manifest[, cap_within, drop = FALSE], 1L, function(row) {
+  requested <- apply(manifest[, cap_within, drop = FALSE], 1L, function(row) {
     paste(as.character(row), collapse = "/")
   })
+  units <- if ("effective_units" %in% names(manifest)) {
+    manifest$effective_units
+  } else if ("units" %in% names(manifest)) {
+    manifest$units
+  } else {
+    rep("", nrow(manifest))
+  }
+  units[is.na(units)] <- ""
+  center <- if ("effective_center" %in% names(manifest)) {
+    manifest$effective_center
+  } else {
+    rep(NA_real_, nrow(manifest))
+  }
+  scale <- if ("effective_scale" %in% names(manifest)) {
+    manifest$effective_scale
+  } else {
+    ifelse(manifest$signed, "diverging", "sequential")
+  }
+  profile_id <- if ("effective_profile_id" %in% names(manifest)) {
+    manifest$effective_profile_id
+  } else {
+    manifest$quantity
+  }
+  signature <- paste(
+    manifest$quantity,
+    profile_id,
+    units,
+    scale,
+    ifelse(is.na(center), "none", signif(center, 8)),
+    sep = "/"
+  )
+  paste(requested, signature, sep = "::")
 }

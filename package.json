@@ -1,0 +1,20 @@
+{
+  "name": "neuromosaic-browser-tests",
+  "private": true,
+  "scripts": {
+    "vendor:neuroimjs": "node tools/vendor-neuroimjs.mjs",
+    "benchmark:interactive:prepare": "RGL_USE_NULL=TRUE Rscript tools/benchmark-interactive-browser-fixtures.R",
+    "benchmark:interactive:browser": "node tools/benchmark-interactive-browser.mjs",
+    "benchmark:interactive": "npm run benchmark:interactive:prepare && npm run benchmark:interactive:browser",
+    "verify:interactive": "npm run test:js",
+    "test:js": "node --test tests/js/*.test.cjs",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed --workers=1",
+    "test:e2e:ui": "playwright test --ui --workers=1",
+    "test:e2e:install": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "neuroimjs": "0.3.0"
+  }
+}

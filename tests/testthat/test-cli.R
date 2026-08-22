@@ -207,6 +207,9 @@ test_that("cli help exposes the montage report dispatch contract", {
   expect_match(montage_help, "validate_manifest", fixed = TRUE)
   expect_match(montage_help, "--cache-dir", fixed = TRUE)
   expect_match(montage_help, "--no-cache-surface", fixed = TRUE)
+  expect_match(montage_help, "--quantity", fixed = TRUE)
+  expect_match(montage_help, "--map-profiles", fixed = TRUE)
+  expect_match(montage_help, "--map-selector", fixed = TRUE)
   expect_match(explore_help, "--style montage", fixed = TRUE)
   expect_match(explore_help, "--render-manifest", fixed = TRUE)
 })
@@ -282,6 +285,61 @@ test_that("cli_main prepares montage report specs without a stat map", {
   expect_false(spec$args$render_peaks)
   expect_true(spec$args$materialize_recipes)
   expect_true(spec$args$cache_surface)
+})
+
+test_that("cli_main resolves grouped custom quantities and map profiles", {
+  fixture <- make_cli_montage_fixture()
+  grouped <- data.frame(
+    analysis_id = c("faces", "faces"),
+    map_id = c("faces_z", "faces_reliability"),
+    path = c(fixture$stat_map_path, fixture$stat_map_path),
+    role = c("primary", "auxiliary"),
+    quantity = c("test_statistic", "mylab:reliability"),
+    distribution = c("z", NA),
+    threshold = c(3, NA),
+    label = c("Z statistic", "Reliability"),
+    stringsAsFactors = FALSE
+  )
+  manifest_path <- file.path(fixture$root, "grouped.tsv")
+  utils::write.table(grouped, manifest_path, sep = "\t", row.names = FALSE,
+                     quote = FALSE)
+  profiles_path <- file.path(fixture$root, "profiles.yml")
+  yaml::write_yaml(list(profiles = list(
+    `mylab:reliability` = list(
+      label = "Split-half reliability",
+      scale = "diverging",
+      center = 0,
+      domain = c(-1, 1),
+      units = "correlation"
+    )
+  )), profiles_path)
+
+  spec <- cli_main(c(
+    "report", "--style", "montage",
+    "--render-manifest", manifest_path,
+    "--map-profiles", profiles_path,
+    "--map-selector", "select"
+  ), execute = FALSE)
+
+  expect_equal(length(neuromosaic:::.montage_analysis_groups(
+    spec$args$manifest
+  )), 1L)
+  expect_identical(spec$args$map_selector, "select")
+  expect_identical(
+    spec$args$manifest$effective_profile_source,
+    c("builtin", "user")
+  )
+  expect_equal(spec$args$manifest$effective_lower[[2]], -1)
+  expect_equal(spec$args$manifest$effective_upper[[2]], 1)
+
+  dry <- capture.output(cli_main(c(
+    "report", "--style", "montage",
+    "--render-manifest", manifest_path,
+    "--map-profiles", profiles_path,
+    "--dry-run"
+  )))
+  expect_true(any(grepl("Analysis groups: 1", dry, fixed = TRUE)))
+  expect_true(any(grepl("Display modes:", dry, fixed = TRUE)))
 })
 
 test_that("cli_main prepares montage explorer specs without a stat map", {
@@ -813,9 +871,14 @@ test_that("cli_main montage report writes qmd source without stat-map", {
 
   qmd <- paste(readLines(result, warn = FALSE), collapse = "\n")
   expect_match(qmd, "expects the sidecar file", fixed = TRUE)
-  sidecar <- readRDS(sub("\\.qmd$", "_report-data.rds", result))
+  sidecar_path <- sub("\\.qmd$", "_report-data.rds", result)
+  sidecar <- readRDS(sidecar_path)
   expect_identical(sidecar$params$title, "CLI Montage")
-  expect_true(file.exists(sidecar$panels$contrast_a_model_1$volume_image))
+  expect_false(grepl("^(/|[A-Za-z]:)", sidecar$panels$contrast_a_model_1$volume_image))
+  expect_true(file.exists(file.path(
+    dirname(sidecar_path),
+    sidecar$panels$contrast_a_model_1$volume_image
+  )))
   expect_gt(sidecar$panels$contrast_a_model_1$volume$n_suprathreshold, 0)
   expect_true("atlas_label" %in% names(sidecar$panels$contrast_a_model_1$peak_table))
   expect_gt(nrow(sidecar$panels$contrast_a_model_1$peak_table), 0)

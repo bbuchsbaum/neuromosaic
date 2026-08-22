@@ -94,9 +94,14 @@ test_that("render_montage_report materializes recipes into qmd sidecar data", {
     image_res = 72
   )
 
-  rd <- readRDS(sub("\\.qmd$", "_report-data.rds", out))
-  expect_true(file.exists(rd$manifest$path[[1]]))
-  expect_true(startsWith(rd$manifest$path[[1]], normalizePath(cache_dir)))
+  sidecar <- sub("\\.qmd$", "_report-data.rds", out)
+  rd <- readRDS(sidecar)
+  expect_false("path" %in% names(rd$manifest))
+  expect_false("recipe" %in% names(rd$manifest))
   expect_false(is.na(rd$manifest$map_hash[[1]]))
-  expect_true(file.exists(rd$panels$recipe_render$volume_image))
+  expect_false(grepl("^(/|[A-Za-z]:)", rd$panels$recipe_render$volume_image))
+  expect_true(file.exists(file.path(
+    dirname(sidecar),
+    rd$panels$recipe_render$volume_image
+  )))
 })

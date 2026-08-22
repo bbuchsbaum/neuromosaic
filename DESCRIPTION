@@ -25,6 +25,7 @@ Imports:
     ggplot2,
     ggiraph,
     gt,
+    jsonlite,
     knitr,
     methods,
     neuroatlas,
@@ -40,6 +41,7 @@ Imports:
     withr,
     yaml
 Suggests:
+    albersdown,
     DT,
     flextable,
     fmrigds,

@@ -74,6 +74,34 @@ test_that("render_montage_report writes qmd source and sidecar data", {
   expect_identical(rd$params$title, "Fixture Montage")
   expect_identical(rd$params$layout, c("contrast", "model"))
   expect_identical(names(rd$panels), manifest$map_id)
+  expect_false(any(c("path", "recipe", "stat_map", "mask") %in%
+                   names(rd$manifest)))
+})
+
+test_that("qmd sidecars copy external panel images into relative companions", {
+  manifest <- make_montage_render_manifest()
+  source_image <- tempfile("external-panel-", fileext = ".png")
+  writeBin(charToRaw("deterministic panel fixture"), source_image)
+  panels <- stats::setNames(lapply(manifest$map_id, function(map_id) {
+    list(volume_image = source_image)
+  }), manifest$map_id)
+  output_dir <- tempfile("portable-qmd-")
+  dir.create(output_dir)
+  output <- file.path(output_dir, "report.qmd")
+
+  render_montage_report(
+    manifest,
+    output_file = output,
+    panels = panels,
+    materialize_recipes = FALSE
+  )
+  rd <- readRDS(file.path(output_dir, "report_report-data.rds"))
+  paths <- vapply(rd$panels, `[[`, character(1), "volume_image")
+
+  expect_true(all(!grepl("^/", paths)))
+  expect_true(all(grepl("report_files/qmd-images/", paths, fixed = TRUE)))
+  expect_true(all(file.exists(file.path(output_dir, paths))))
+  expect_length(unique(paths), 1L)
 })
 
 test_that("render_montage_report stores one shared SurfaceScene", {
@@ -151,6 +179,63 @@ test_that("render_montage_report renders fixture HTML through Rmd template", {
   expect_match(html, "contrast-a")
 })
 
+test_that("grouped HTML contains one progressively enhanced full-panel selector", {
+  skip_if_not_installed("rmarkdown")
+  skip_if_not(rmarkdown::pandoc_available(), "pandoc is required for render tests")
+  manifest <- data.frame(
+    analysis_id = rep("faces", 3L),
+    map_id = c("faces_z", "faces_estimate", "faces_se"),
+    role = c("primary", "auxiliary", "auxiliary"),
+    quantity = c("test_statistic", "estimate", "standard_error"),
+    distribution = c("z", NA, NA),
+    threshold = c(3, NA, NA),
+    label = c("Z statistic", "Estimate", "Standard error"),
+    stringsAsFactors = FALSE
+  )
+  manifest$recipe <- I(lapply(seq_len(3L), function(i) function(row) i))
+  panels <- stats::setNames(lapply(manifest$map_id, function(id) {
+    list(table = data.frame(Item = id, stringsAsFactors = FALSE))
+  }), manifest$map_id)
+  html_out <- tempfile("montage-group-selector-", fileext = ".html")
+
+  result <- render_montage_report(
+    manifest,
+    output_file = html_out,
+    panels = panels,
+    materialize_recipes = FALSE,
+    check_files = FALSE,
+    quiet = TRUE
+  )
+  html <- paste(readLines(result, warn = FALSE), collapse = "\n")
+
+  expect_equal(length(gregexpr(
+    "<section class=\"nm-analysis-group\" data-nm-map-group=",
+    html, fixed = TRUE
+  )[[1]]), 1L)
+  expect_equal(length(gregexpr("<article class=\"nm-map-variant\"", html,
+                               fixed = TRUE)[[1]]), 3L)
+  expect_equal(length(gregexpr("class=\"nm-map-tab\" role=\"tab\"", html,
+                               fixed = TRUE)[[1]]), 3L)
+  expect_match(html, "DOMContentLoaded", fixed = TRUE)
+  expect_false(grepl("<article[^>]* hidden", html))
+  expect_match(html, "Z statistic", fixed = TRUE)
+  expect_match(html, "Standard error", fixed = TRUE)
+})
+
+test_that("group view metadata does not partially match panel image fields", {
+  groups <- list(list(primary_map_id = "faces_z"))
+  panels <- list(faces_z = list(
+    volume_image = "faces-volume.png",
+    surface_image = "faces-surface.png"
+  ))
+
+  attached <- neuromosaic:::.attach_montage_group_views(groups, panels)
+
+  expect_null(attached[[1]]$view$zlevels)
+  expect_null(attached[[1]]$view$surface_views)
+  expect_null(attached[[1]]$view$surface_hemis)
+})
+
 test_that("render_montage_report resolves labeller policy and volume panels", {
   inputs <- make_toy_cluster_report_inputs()
   tmpdir <- tempfile("montage-render-volume-")
@@ -198,12 +283,112 @@ test_that("render_montage_report resolves labeller policy and volume panels", {
   image_path <- rd$panels$faces_m1$volume_image
 
   expect_true(file.exists(result))
-  expect_true(file.exists(image_path))
+  expect_true(file.exists(file.path(dirname(sidecar), image_path)))
   expect_identical(rd$manifest$label, "Contrast faces")
   expect_true("effective_threshold" %in% names(rd$manifest))
   expect_identical(rd$params$layout, c("contrast", "model"))
   expect_s3_class(rd$params$policy, "montage_policy")
   expect_gt(rd$panels$faces_m1$volume$n_suprathreshold, 0)
+})
+
+test_that("grouped reports render auxiliary maps continuously on primary views", {
+  inputs <- make_toy_cluster_report_inputs()
+  estimate <- neuroim2::NeuroVol(
+    as.array(inputs$stat_map) / 5,
+    neuroim2::space(inputs$stat_map)
+  )
+  se <- neuroim2::NeuroVol(
+    abs(as.array(inputs$stat_map)) / 20 + 0.1,
+    neuroim2::space(inputs$stat_map)
+  )
+  manifest <- data.frame(
+    analysis_id = rep("faces", 3L),
+    map_id = c("faces_z", "faces_estimate", "faces_se"),
+    role = c("primary", "auxiliary", "auxiliary"),
+    quantity = c("test_statistic", "estimate", "standard_error"),
+    distribution = c("z", NA, NA),
+    threshold = c(3, NA, NA),
+    label = c("Z statistic", "Estimate", "Standard error"),
+    stringsAsFactors = FALSE
+  )
+  manifest$stat_map <- I(list(inputs$stat_map, estimate, se))
+  out <- tempfile("montage-grouped-", fileext = ".qmd")
+
+  result <- suppressMessages(render_montage_report(
+    manifest,
+    output_file = out,
+    bg = inputs$stat_map,
+    materialize_recipes = FALSE,
+    render_peaks = FALSE,
+    volume_args = list(
+      ov_cmap = "blue-red",
+      ov_alpha = 0.55,
+      ov_alpha_mode = "binary"
+    ),
+    image_width = 360,
+    image_height = 260,
+    image_res = 72
+  ))
+  sidecar <- sub("\\.qmd$", "_report-data.rds", result)
+  rd <- readRDS(sidecar)
+
+  expect_identical(rd$groups$faces$primary_map_id, "faces_z")
+  expect_identical(rd$params$map_selector, "auto")
+  expect_true(is.na(rd$manifest$effective_threshold[[2]]))
+  expect_identical(rd$panels$faces_estimate$volume$display_mode, "continuous")
+  expect_equal(
+    rd$panels$faces_estimate$volume$n_suprathreshold,
+    sum(is.finite(as.numeric(estimate)))
+  )
+  expect_identical(
+    rd$panels$faces_z$volume$zlevels,
+    rd$panels$faces_estimate$volume$zlevels
+  )
+  expect_identical(
+    rd$panels$faces_z$volume$initial_world_coord,
+    rd$panels$faces_se$volume$initial_world_coord
+  )
+  expect_identical(
+    rd$groups$faces$view$initial_world_coord,
+    rd$panels$faces_z$volume$initial_world_coord
+  )
+  expect_identical(
+    rd$groups$faces$view$zlevel_bookmarks,
+    rd$panels$faces_z$volume$zlevel_bookmarks
+  )
+  expect_true(all(vapply(rd$panels, function(x) {
+    identical(x$volume$palette, "blue-red") &&
+      identical(x$volume$alpha, 0.55) &&
+      identical(x$volume$alpha_mode, "binary")
+  }, logical(1))))
+  expect_true(all(vapply(rd$panels, function(x) {
+    file.exists(file.path(dirname(sidecar), x$volume_image))
+  }, logical(1))))
+})
+
+test_that("layout fields are invariant within a toggle group", {
+  manifest <- data.frame(
+    analysis_id = c("faces", "faces"),
+    map_id = c("faces_z", "faces_se"),
+    role = c("primary", "auxiliary"),
+    quantity = c("test_statistic", "standard_error"),
+    distribution = c("z", NA),
+    model = c("m1", "m2"),
+    label = c("Z", "SE"),
+    stringsAsFactors = FALSE
+  )
+  manifest$recipe <- I(list(function(row) 1, function(row) 2))
+
+  expect_error(
+    render_montage_report(
+      manifest,
+      tempfile(fileext = ".qmd"),
+      layout = "model",
+      materialize_recipes = FALSE,
+      check_files = FALSE
+    ),
+    "must be invariant"
+  )
 })
 
 test_that("render_montage_report adds surface panels with the shared cap", {
@@ -269,8 +454,8 @@ test_that("render_montage_report adds surface panels with the shared cap", {
   rd <- readRDS(sidecar)
   panel <- rd$panels$faces_m1
 
-  expect_true(file.exists(panel$volume_image))
-  expect_true(file.exists(panel$surface_image))
+  expect_true(file.exists(file.path(dirname(sidecar), panel$volume_image)))
+  expect_true(file.exists(file.path(dirname(sidecar), panel$surface_image)))
   expect_equal(panel$surface$surface_space, "fsLR-32k")
   expect_equal(panel$surface$cap, panel$volume$cap)
   expect_gt(panel$surface$n_suprathreshold, 0)
@@ -335,7 +520,7 @@ test_that("render_montage_report forwards parcel_values to surface vals (#7)", {
 
   expect_null(captured$stat)
   expect_equal(captured$vals, manifest$parcel_values[[1]])
-  expect_true(file.exists(panel$surface_image))
+  expect_true(file.exists(file.path(dirname(sidecar), panel$surface_image)))
   expect_false("volume_image" %in% names(panel))
   expect_identical(panel$surface$diagnostics$projection, "parcel_values")
   expect_false(is.na(rd$manifest$map_hash[[1]]))
@@ -600,6 +785,8 @@ test_that("montage report rmarkdown output formats are explicit", {
 
   expect_s3_class(html_format, "rmarkdown_output_format")
   expect_s3_class(pdf_format, "rmarkdown_output_format")
+  expect_false(any(grepl("mathjax", html_format$pandoc$args,
+                         ignore.case = TRUE)))
   expect_equal(pdf_format$pandoc$latex_engine, "xelatex")
   expect_true("--number-sections" %in% pdf_format$pandoc$args)
 })
@@ -651,6 +838,16 @@ test_that(".montage_shared_caps uses a robust quantile, not the raw maximum", {
     manifest, list(vol), policy = montage_policy(cap_quantile = 0.5, cap_floor = 10)
   )
   expect_gte(floored[["m"]], 10)
+
+  support <- rep(TRUE, length(vol))
+  support[[64]] <- FALSE
+  masked <- .montage_shared_caps(
+    manifest,
+    list(vol),
+    policy = montage_policy(cap_quantile = 1),
+    support_masks = list(support)
+  )
+  expect_equal(masked[["m"]], 4.5)
 })
 
 test_that("render_montage_report forwards volume_args and validates passthrough", {

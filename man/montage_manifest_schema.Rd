@@ -11,7 +11,7 @@ A data frame with columns `field`, `required`, `type`, and `role`.
 }
 \description{
 Returns the formal schema for multi-map montage render manifests. A render
-manifest has one row per statistical map and is distinct from the
+manifest has one row per map variant and is distinct from the
 per-observation `nftab`/`--design` manifest used by the existing cluster
 report path.
 }

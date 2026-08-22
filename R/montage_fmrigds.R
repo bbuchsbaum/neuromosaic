@@ -12,8 +12,14 @@
 #' @param map_id_cols,label_cols GDS metadata columns used to build `map_id` and
 #'   `label`. Defaults prefer `contrast/model/variant`, falling back to
 #'   `contrast/subject`.
-#' @param stat_kind,units,signed,threshold,p,tail,connectivity,min_cluster_size
-#'   Default render-manifest policy columns.
+#' @param analysis_id_cols Metadata columns defining associated-map groups.
+#' @param quantity Generic scientific quantity, including custom namespaced
+#'   values.
+#' @param distribution Optional z or t distribution for test statistics.
+#' @param role Role within each analysis group.
+#' @param stat_kind Legacy statistic-kind compatibility field.
+#' @param units,signed,threshold,p,tail,connectivity,min_cluster_size Default
+#'   render-manifest policy columns.
 #' @param level Manifest `level` value. Defaults to `"group"`.
 #' @param validate Logical; run [validate_manifest()] before returning?
 #' @param check_files Logical; require materialized paths to exist?
@@ -25,9 +31,13 @@ fmrigds_render_manifest <- function(gds,
                                     materialize_dir = NULL,
                                     map_id_cols = NULL,
                                     label_cols = map_id_cols,
+                                    analysis_id_cols = map_id_cols,
                                     stat_kind = .fmrigds_default_stat_kind(assay),
+                                    quantity = NULL,
+                                    distribution = NULL,
+                                    role = "primary",
                                     units = assay,
-                                    signed = TRUE,
+                                    signed = NULL,
                                     threshold = NULL,
                                     p = NULL,
                                     tail = "two_sided",
@@ -54,6 +64,9 @@ fmrigds_render_manifest <- function(gds,
       call. = FALSE
     )
   }
+  if (is.null(quantity) && is.null(stat_kind)) {
+    quantity <- .fmrigds_default_quantity(assay)
+  }
 
   materialize_dir <- materialize_dir %||%
     tempfile(paste0("neuromosaic-fmrigds-", assay, "-"))
@@ -70,15 +83,24 @@ fmrigds_render_manifest <- function(gds,
   map_id_cols <- .fmrigds_default_cols(map_id_cols, flat)
   map_id_cols <- .fmrigds_ensure_unique_id_cols(flat, map_id_cols)
   label_cols <- .fmrigds_default_cols(label_cols, flat)
+  analysis_id_cols <- .fmrigds_default_cols(analysis_id_cols, flat)
   .nf_render_check_cols(flat, map_id_cols, "map_id_cols")
   .nf_render_check_cols(flat, label_cols, "label_cols")
+  .nf_render_check_cols(flat, analysis_id_cols, "analysis_id_cols")
 
   out <- flat[, setdiff(names(flat), "vol"), drop = FALSE]
   out$map_id <- .nf_render_row_ids(out, map_id_cols)
+  out$analysis_id <- .nf_render_row_ids(out, analysis_id_cols)
+  out$role <- role
   out$label <- .nf_render_row_labels(out, label_cols)
-  out$stat_kind <- stat_kind
-  out$units <- units %||% assay
-  out$signed <- signed
+  out$selector_label <- assay
+  if (!is.null(quantity)) out$quantity <- quantity
+  if (!is.null(distribution)) out$distribution <- distribution
+  if (!is.null(stat_kind) && (is.null(quantity) || !missing(stat_kind))) {
+    out$stat_kind <- stat_kind
+  }
+  out$units <- units %||% quantity %||% assay
+  if (!is.null(signed)) out$signed <- signed
   out$tail <- tail
   out$connectivity <- connectivity
   out$min_cluster_size <- min_cluster_size
@@ -102,7 +124,15 @@ fmrigds_render_manifest <- function(gds,
   if (assay %in% c("t", "z", "beta", "cope")) {
     return(assay)
   }
-  "beta"
+  NULL
+}
+
+.fmrigds_default_quantity <- function(assay) {
+  normalized <- .normalize_montage_quantity(tolower(as.character(assay)))
+  if (normalized %in% .montage_manifest_builtin_quantities) {
+    return(normalized)
+  }
+  paste0("assay:", tolower(as.character(assay)))
 }
 
 .fmrigds_flatten_vols <- function(x, depth = 1L, keys = list()) {
