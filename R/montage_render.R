@@ -147,6 +147,12 @@
 #' @param surface_scene Optional `neurosurf::SurfaceScene` rendered once as the
 #'   report's shared lazy interactive viewer. Static per-panel surface figures
 #'   remain in the report as print and failure fallbacks.
+#' @param surface Optional [montage_surface()] configuration. Unlike the legacy
+#'   `surface_scene` sidecar, this builds one multi-layer `SurfaceScene` per
+#'   analysis from the resolved manifest and associates every layer with its
+#'   `map_id`. Static surface panels are required and remain authoritative.
+#'   Surface typed arrays can be compressed into the HTML for direct `file://`
+#'   viewing or written once as relative content-addressed bundle assets.
 #'
 #' @return The path to the rendered report (invisibly).
 #' @export
@@ -189,7 +195,8 @@ render_montage_report <- function(manifest,
                                   load_maps = FALSE,
                                   provenance = NULL,
                                   surface_scene = NULL,
-                                  interactive = NULL) {
+                                  interactive = NULL,
+                                  surface = NULL) {
   volume_args <- .validate_montage_passthrough(
     volume_args, stat_montage, c("bg", "stat", "draw"), "volume_args"
   )
@@ -207,6 +214,16 @@ render_montage_report <- function(manifest,
       !inherits(interactive, "montage_interactive")) {
     stop("'interactive' must be NULL or created by montage_interactive().",
          call. = FALSE)
+  }
+  if (!is.null(surface) && !inherits(surface, "montage_surface")) {
+    stop("'surface' must be NULL or created by montage_surface().",
+         call. = FALSE)
+  }
+  if (!is.null(surface) && !is.null(surface_scene)) {
+    stop(
+      "Supply either 'surface = montage_surface(...)' or the legacy ",
+      "'surface_scene', not both.", call. = FALSE
+    )
   }
   if (!is.null(interactive) && !isTRUE(render_volume)) {
     stop(
@@ -306,9 +323,17 @@ render_montage_report <- function(manifest,
     check_files = check_files,
     load_maps = load_maps,
     provenance = provenance,
-    surface_scene = surface_scene
+    surface_scene = surface_scene,
+    surface = if (ext %in% c("html", "qmd")) surface else NULL
   )
+  report_data$params$surface_requested <- !is.null(surface)
   report_data$params$interactive_requested <- !is.null(interactive)
+  # Keep an exact, named `surface = NULL` entry when no grouped interactive
+  # surface was requested. Assigning NULL with `$<-` removes the entry, after
+  # which `$surface` partially matches the legacy `surface_scene` field.
+  report_data["surface"] <- list(.package_montage_surface_report(
+    report_data[["surface"]], output_file = output_file
+  ))
   report_data$interactive <- if (!is.null(interactive) &&
                                  ext %in% c("html", "qmd")) {
     .prepare_montage_interactive_report(
@@ -348,6 +373,49 @@ render_montage_report <- function(manifest,
       character(1)
     ), collapse = "; ")
   }
+  if (!is.null(report_data$surface)) {
+    report_data$provenance$interactive_surface_engine <-
+      "neurosurf SurfaceScene / surfview"
+    report_data$provenance$interactive_surface_scene_count <-
+      length(report_data$surface$scenes)
+    report_data$provenance$interactive_surface_layer_count <- sum(vapply(
+      report_data$surface$scenes,
+      function(group) group$layer_count,
+      integer(1)
+    ))
+    report_data$provenance$interactive_surface_projection <-
+      report_data$surface$projection
+    surface_summary <- report_data$surface$summary
+    report_data$provenance$interactive_surface_packaging <- paste0(
+      surface_summary$packaging, " / ", surface_summary$compression
+    )
+    report_data$provenance$interactive_surface_asset_count <-
+      surface_summary$asset_count
+    report_data$provenance$interactive_surface_compressed_bytes <-
+      surface_summary$compressed_bytes
+    report_data$provenance$interactive_surface_uncompressed_bytes <-
+      surface_summary$uncompressed_bytes
+    report_data$provenance$interactive_surface_runtime <- paste0(
+      "surfview ", report_data$surface$runtime$version,
+      " / neurosurf ", report_data$surface$runtime$neurosurf_version,
+      " / adapter ", report_data$surface$runtime$adapter_version
+    )
+    report_data$provenance$interactive_surface_runtime_sha256 <-
+      report_data$surface$runtime$sha256
+    report_data$provenance$interactive_surface_adapter_sha256 <-
+      report_data$surface$runtime$adapter_sha256
+    report_data$provenance$interactive_surface_transformations <- paste(
+      unique(unlist(lapply(
+        report_data$surface$assets, `[[`, "transformations"
+      ))),
+      collapse = ", "
+    )
+    report_data$provenance$interactive_surface_asset_hashes <- paste(vapply(
+      report_data$surface$assets,
+      function(asset) paste0(asset$asset_id, "=", asset$hash),
+      character(1)
+    ), collapse = "; ")
+  }
 
   if (ext == "qmd") {
     return(invisible(.write_montage_report_qmd(
@@ -363,8 +431,12 @@ render_montage_report <- function(manifest,
 
   has_interactive_bundle <- !is.null(report_data$interactive) &&
     identical(report_data$interactive$summary$packaging, "bundle")
+  has_surface_bundle <- !is.null(report_data$surface) &&
+    identical(report_data$surface$summary$packaging, "bundle")
   output_format <- .montage_rmarkdown_output_format(
-    ext, latex_engine, self_contained = !has_interactive_bundle
+    ext,
+    latex_engine,
+    self_contained = !(has_interactive_bundle || has_surface_bundle)
   )
   withr::with_dir(output_dir, {
     rmarkdown::render(
@@ -444,7 +516,8 @@ render_montage_report <- function(manifest,
                                          check_files,
                                          load_maps,
                                          provenance,
-                                         surface_scene = NULL) {
+                                         surface_scene = NULL,
+                                         surface = NULL) {
   if (!is.null(surface_scene) && !methods::is(surface_scene, "SurfaceScene")) {
     stop("'surface_scene' must be NULL or a neurosurf::SurfaceScene.",
          call. = FALSE)
@@ -492,6 +565,7 @@ render_montage_report <- function(manifest,
   }
   policy$layout <- layout
   profile_values <- if (isTRUE(render_volume) || isTRUE(render_surface) ||
+                        !is.null(surface) ||
                         isTRUE(render_peaks) ||
                         .montage_policy_uses_fdr(manifest, policy)) {
     lapply(seq_len(nrow(manifest)), function(i) {
@@ -594,6 +668,13 @@ render_montage_report <- function(manifest,
 
   groups <- .montage_analysis_groups(manifest)
   groups <- .attach_montage_group_views(groups, panels)
+  surface_report <- .prepare_montage_surface_report(
+    manifest = manifest,
+    panels = panels,
+    surfatlas = surfatlas,
+    surface = surface,
+    surface_args = surface_args
+  )
 
   list(
     manifest = manifest,
@@ -604,6 +685,7 @@ render_montage_report <- function(manifest,
     section_notes = narratives$section_notes,
     interludes = narratives$interludes,
     surface_scene = surface_scene,
+    surface = surface_report,
     params = list(
       title = title,
       layout = layout,
@@ -1153,8 +1235,23 @@ render_montage_report <- function(manifest,
         threshold = eff_threshold,
         display_mode = manifest$effective_display_mode[[i]],
         tail = eff_tail,
+        signed = base_args$signed,
         cap = eff_cap,
-        limits = base_args$limits,
+        limits = .montage_cached_surface_limits(
+          limits = base_args$limits,
+          cap = eff_cap,
+          signed = base_args$signed,
+          tail = eff_tail,
+          fallback = c(
+            manifest$effective_lower[[i]], manifest$effective_upper[[i]]
+          )
+        ),
+        palette = base_args$overlay_palette,
+        alpha = if (!is.null(source_args$vals)) {
+          1
+        } else {
+          base_args$overlay_alpha %||% 0.85
+        },
         support = manifest$effective_support[[i]],
         n_suprathreshold = n_supra,
         surface_space = NA_character_,
@@ -1173,8 +1270,15 @@ render_montage_report <- function(manifest,
       threshold = result$threshold,
       display_mode = result$display_mode,
       tail = result$tail,
+      signed = base_args$signed,
       cap = result$cap,
       limits = result$limits,
+      palette = base_args$overlay_palette,
+      alpha = if (!is.null(source_args$vals)) {
+        1
+      } else {
+        base_args$overlay_alpha %||% 0.85
+      },
       support = manifest$effective_support[[i]],
       n_suprathreshold = result$n_suprathreshold,
       surface_space = result$surface_space,
@@ -1185,6 +1289,22 @@ render_montage_report <- function(manifest,
   }
 
   panels
+}
+
+.montage_cached_surface_limits <- function(limits,
+                                           cap,
+                                           signed,
+                                           tail,
+                                           fallback) {
+  if (!is.null(limits) && length(limits) == 2L && all(is.finite(limits))) {
+    return(as.numeric(limits))
+  }
+  if (!is.null(cap) && length(cap) == 1L && is.finite(cap) && cap > 0) {
+    if (isTRUE(signed)) return(c(-cap, cap))
+    if (identical(tail, "negative")) return(c(-cap, 0))
+    return(c(0, cap))
+  }
+  as.numeric(fallback)
 }
 
 .montage_manifest_stat_source <- function(manifest, row) {

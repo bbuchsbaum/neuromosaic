@@ -43,7 +43,8 @@ render_montage_report(
   load_maps = FALSE,
   provenance = NULL,
   surface_scene = NULL,
-  interactive = NULL
+  interactive = NULL,
+  surface = NULL
 )
 }
 \arguments{
@@ -185,6 +186,13 @@ as the static panels; reader changes are exploratory and reset exactly per
 map. HTML can bundle relative compressed NIfTI assets or embed them for
 direct `file://` viewing. QMD preserves the scene and assets for a later
 HTML render. PDF remains static and does not include browser runtime code.}
+
+\item{surface}{Optional [montage_surface()] configuration. Unlike the legacy
+`surface_scene` sidecar, this builds one multi-layer `SurfaceScene` per
+analysis from the resolved manifest and associates every layer with its
+`map_id`. Static surface panels are required and remain authoritative.
+Surface typed arrays can be compressed into the HTML for direct `file://`
+viewing or written once as relative content-addressed bundle assets.}
 }
 \value{
 The path to the rendered report (invisibly).

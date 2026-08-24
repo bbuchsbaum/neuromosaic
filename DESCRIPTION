@@ -20,6 +20,7 @@ Depends:
     R (>= 4.1.0)
 Imports:
     assertthat,
+    digest,
     dplyr,
     gifti,
     ggplot2,

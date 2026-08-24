@@ -38,6 +38,9 @@ fmt <- neuromosaic::montage_report_formatters(
 interactive_hooks <- neuromosaic::montage_interactive_report_hooks(
   rd$interactive, is_html = is_html
 )
+surface_hooks <- neuromosaic::montage_surface_report_hooks(
+  rd$surface, is_html = is_html
+)
 ```
 
 # `r rd$params$title`
@@ -49,6 +52,7 @@ fmt$emit_intro()
 fmt$emit_report_overview()
 fmt$emit_qc_summary(qc)
 interactive_hooks$emit_document()
+surface_hooks$emit_document()
 ```
 
 ```{r}
@@ -116,6 +120,7 @@ if (nrow(manifest) == 0L) {
       }
     }
     interactive_hooks$emit_host(as.character(group$analysis_id))
+    surface_hooks$emit_host(as.character(group$analysis_id))
   }
 }
 ```

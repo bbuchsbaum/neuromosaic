@@ -174,6 +174,7 @@ test_that("group selectors are accessible, escaped, and progressively enhanced",
   expect_match(styles, "ArrowRight", fixed = TRUE)
   expect_match(styles, "if(tabs.length===0&&!select)return;", fixed = TRUE)
   expect_match(styles, "nm-map-change", fixed = TRUE)
+  expect_match(styles, "nm-map-request", fixed = TRUE)
   expect_match(styles, "nm-volume-map-request", fixed = TRUE)
   expect_match(styles, ".nm-map-variant[hidden]", fixed = TRUE)
 })

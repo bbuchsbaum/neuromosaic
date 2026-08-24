@@ -14,7 +14,8 @@ module.exports = async function globalSetup() {
     env: {
       ...process.env,
       LANG: "C",
-      LC_ALL: "C"
+      LC_ALL: "C",
+      RGL_USE_NULL: "TRUE"
     }
   });
 
@@ -27,7 +28,10 @@ module.exports = async function globalSetup() {
     "selector-auto.html",
     "selector-none.html",
     "interactive-volume.html",
-    "interactive-volume-bundle.html"
+    "interactive-volume-bundle.html",
+    "interactive-surface.html",
+    "interactive-surface-bundle.html",
+    "interactive-mixed.html"
   ]) {
     const output = resolve(__dirname, ".artifacts", name);
     if (!existsSync(output)) {
