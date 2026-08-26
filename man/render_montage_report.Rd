@@ -221,8 +221,11 @@ derived from a p-value rather than supplied directly. See
 [montage_manifest_schema()] for the full column list and
 [build_manifest()]/[validate_manifest()] for construction and checks. Surface
 reports may use an in-memory `parcel_values` list-column instead of a
-volumetric `path`/`stat_map`; those rows render directly through
-[surf_montage(vals = )] and do not support volume panels or peak tables.
+volumetric `path`/`stat_map`; a parcel-only row renders directly through
+[surf_montage(vals = )]. [parcel_render_manifest()] supplies both aligned
+parcel values and a deterministic atlas-space `stat_map`, enabling the same
+ROI table to drive surface panels, volume panels, peak tables, and interactive
+views.
 
 **Reserved passthrough arguments.** `volume_args` and `surface_args` forward
 styling to [stat_montage()] and [surf_montage()], but renderer-managed

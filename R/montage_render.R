@@ -23,8 +23,11 @@
 #' [montage_manifest_schema()] for the full column list and
 #' [build_manifest()]/[validate_manifest()] for construction and checks. Surface
 #' reports may use an in-memory `parcel_values` list-column instead of a
-#' volumetric `path`/`stat_map`; those rows render directly through
-#' [surf_montage(vals = )] and do not support volume panels or peak tables.
+#' volumetric `path`/`stat_map`; a parcel-only row renders directly through
+#' [surf_montage(vals = )]. [parcel_render_manifest()] supplies both aligned
+#' parcel values and a deterministic atlas-space `stat_map`, enabling the same
+#' ROI table to drive surface panels, volume panels, peak tables, and interactive
+#' views.
 #'
 #' **Reserved passthrough arguments.** `volume_args` and `surface_args` forward
 #' styling to [stat_montage()] and [surf_montage()], but renderer-managed
@@ -579,13 +582,23 @@ render_montage_report <- function(manifest,
     # assets can hide a mismatch. The interactive MVP never restamps or
     # resamples a map, even if a direct stat_montage() caller opts into that
     # legacy behavior.
-    if (isTRUE(render_volume) &&
-        !identical(volume_args$on_mismatch, "restamp")) {
-      .montage_validate_report_volume_geometry(
-        manifest, background = bg, stat_maps = profile_values
-      )
+    validation_values <- profile_values
+    if (isTRUE(render_volume)) {
+      # A parcel manifest can carry both an atlas-ordered parcel vector (the
+      # surface/profile authority) and its deterministic volumetric rendering.
+      # Geometry checks must inspect the latter; using `profile_values` here
+      # would reject the parcel vector before the volume renderer can use the
+      # corresponding NeuroVol.
+      validation_values <- lapply(seq_len(nrow(manifest)), function(i) {
+        .montage_manifest_stat_source(manifest, i)
+      })
+      if (!identical(volume_args$on_mismatch, "restamp")) {
+        .montage_validate_report_volume_geometry(
+          manifest, background = bg, stat_maps = validation_values
+        )
+      }
     }
-    .validate_montage_group_sources(manifest, profile_values)
+    .validate_montage_group_sources(manifest, validation_values)
     profile_values <- .montage_profile_values_with_analysis_masks(
       manifest, profile_values
     )
@@ -1510,8 +1523,8 @@ render_montage_report <- function(manifest,
 
 .montage_surface_palette <- function(palette_family, scale) {
   if (identical(palette_family, "diverging")) return("vik")
-  if (identical(palette_family, "sequential")) return("inferno")
-  palette_family %||% if (identical(scale, "diverging")) "vik" else "inferno"
+  if (identical(palette_family, "sequential")) return("lajolla")
+  palette_family %||% if (identical(scale, "diverging")) "vik" else "lajolla"
 }
 
 .attach_montage_group_views <- function(groups, panels) {

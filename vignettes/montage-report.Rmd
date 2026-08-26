@@ -144,6 +144,58 @@ vector and parse BIDS entities (`contrast-faces_model-m1_stat-z.nii.gz`); see
 `?build_manifest`. However the maps are sourced, `validate_manifest()` enforces
 the contract above before rendering.
 
+### Start from an ROI table
+
+When the analysis result is already reduced to one row per atlas parcel, use
+`parcel_render_manifest()` instead of writing one dense image per metric. The
+adapter aligns every metric through `neuroatlas`, retains named parcel values
+for surface rendering, and creates a `NeuroVol` in the atlas grid for slices,
+peak tables, and optional interactive volume exploration:
+
+```{r parcel-manifest, eval=FALSE}
+atlas <- neuroatlas::get_schaefer_atlas(parcels = "100", networks = "7")
+surface_atlas <- neuroatlas::get_schaefer_surfatlas(
+  parcels = 100,
+  networks = 7
+)
+
+roi_results <- data.frame(
+  id = atlas$ids,
+  z_stat = rnorm(length(atlas$ids)),
+  beta = rnorm(length(atlas$ids)),
+  standard_error = runif(length(atlas$ids), 0.05, 0.3),
+  reliability = runif(length(atlas$ids), 0, 1)
+)
+
+manifest <- parcel_render_manifest(
+  roi_results,
+  atlas,
+  metrics = c("z_stat", "beta", "standard_error", "reliability"),
+  analysis_id = "faces_gt_houses"
+)
+
+render_montage_report(
+  manifest,
+  "parcel-report.html",
+  bg = template_volume,
+  atlas = atlas,
+  surfatlas = surface_atlas,
+  interactive = montage_interactive(),
+  surface = montage_surface()
+)
+```
+
+The first recognizable test-statistic column becomes primary. Common names
+such as `z_stat`, `beta`, and `standard_error` receive the built-in display
+profiles; an unknown numeric column becomes a namespaced custom quantity such
+as `parcel:reliability`. Use `quantity`, `labels`, `units`, or `primary` to
+override any inference. Strict full-atlas coverage is the default;
+`allow_partial = TRUE` keeps missing parcels explicitly `NA`.
+
+The ROI table remains the authoritative result. The parcel vector and volume
+inside the manifest are display representations, so surface and volume panels
+cannot silently disagree about row order or parcel identity.
+
 ## Let the quantity choose the display
 
 You should not need to choose four palettes and four scales for a four-map

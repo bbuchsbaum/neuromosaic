@@ -31,6 +31,7 @@ module.exports = async function globalSetup() {
     "interactive-volume-bundle.html",
     "interactive-surface.html",
     "interactive-surface-bundle.html",
+    "parcel-surface-visual.html",
     "interactive-mixed.html"
   ]) {
     const output = resolve(__dirname, ".artifacts", name);

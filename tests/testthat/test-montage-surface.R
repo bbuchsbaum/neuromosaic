@@ -59,6 +59,18 @@ test_that("surf_montage writes PNG with supplied projection and clipped cap", {
   expect_identical(result$render$limits, c(-4, 4))
 })
 
+test_that("static surface palettes use names accepted by scico", {
+  expect_identical(
+    neuromosaic:::.montage_surface_palette("diverging", "diverging"),
+    "vik"
+  )
+  expect_identical(
+    neuromosaic:::.montage_surface_palette("sequential", "sequential"),
+    "lajolla"
+  )
+  expect_true(all(c("vik", "lajolla") %in% scico::scico_palette_names()))
+})
+
 test_that("surf_montage rejects invalid inputs and empty overlays", {
   inputs <- make_toy_cluster_report_inputs()
   projection <- list(

@@ -35,7 +35,7 @@ surf_montage(
   orientation_labels = TRUE,
   overlay_alpha = 0.85,
   palette = "cork",
-  overlay_palette = if (isTRUE(signed)) "vik" else "inferno",
+  overlay_palette = if (isTRUE(signed)) "vik" else "lajolla",
   width = 3000,
   height = 1875,
   res = 300,

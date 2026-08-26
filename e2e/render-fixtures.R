@@ -328,6 +328,106 @@ render_surface_fixture <- function(filename, assets) {
 render_surface_fixture("interactive-surface.html", "embed")
 render_surface_fixture("interactive-surface-bundle.html", "bundle")
 
+# Exercise the public ROI-table adapter against a real cortical mesh in a
+# browser artifact. The bundled std.8 fsaverage geometry keeps the fixture
+# offline and lightweight while still exposing folds, hemispheres, parcels,
+# camera, shading, and continuous/thresholded colour behavior.
+visual_geometry <- neurosurf::load_fsaverage_std8("inflated")
+make_visual_parcellation <- function(geometry, ids) {
+  xyz <- neurosurf::coords(geometry)
+  region <- 1L + as.integer(xyz[, 2] > stats::median(xyz[, 2])) +
+    2L * as.integer(xyz[, 3] > stats::median(xyz[, 3]))
+  methods::new(
+    "LabeledNeuroSurface",
+    geometry = geometry,
+    indices = as.integer(seq_len(nrow(xyz))),
+    data = as.numeric(ids[region]),
+    labels = paste("Region", ids),
+    cols = c("#31688E", "#35B779", "#FDE725", "#C44E52")
+  )
+}
+visual_surface_atlas <- list(
+  name = "Browser fsaverage std.8 parcellation",
+  ids = seq_len(8L),
+  labels = paste("Region", seq_len(8L)),
+  hemi = rep(c("left", "right"), each = 4L),
+  lh_atlas = make_visual_parcellation(visual_geometry$lh, 1:4),
+  rh_atlas = make_visual_parcellation(visual_geometry$rh, 5:8),
+  surf_type = "inflated",
+  surface_space = "fsaverage-std8"
+)
+class(visual_surface_atlas) <- c(
+  "browser_fsaverage", "surfatlas", "atlas"
+)
+
+# Keep this fixture surface-only so it remains compatible with the oldest
+# supported neuroatlas release; volumetric expansion is covered by the R
+# integration tests against neuroatlas::parcel_volume().
+parcel_results <- data.frame(
+  id = c(8L, 3L, 1L, 6L, 2L, 7L, 4L, 5L),
+  z_stat = c(-5.0, 3.7, 4.8, -3.9, -5.3, 2.1, -4.2, 5.5),
+  beta = c(-0.6, 0.35, 0.8, -0.25, -0.75, 0.2, -0.45, 0.65),
+  standard_error = c(0.31, 0.18, 0.22, 0.28, 0.35, 0.16, 0.26, 0.2),
+  reliability = c(0.88, 0.62, 0.76, 0.55, 0.81, 0.47, 0.69, 0.91)
+)
+parcel_metrics <- c("z_stat", "beta", "standard_error", "reliability")
+parcel_manifest <- neuromosaic::parcel_render_manifest(
+  parcel_results,
+  visual_surface_atlas,
+  metrics = parcel_metrics,
+  analysis_id = "parcel-qa",
+  analysis_label = "Parcel-level visual QA",
+  labels = c(
+    z_stat = "Parcel Z statistic",
+    beta = "Parcel beta estimate",
+    standard_error = "Parcel standard error",
+    reliability = "Parcel reliability"
+  ),
+  units = c(
+    z_stat = "z", beta = "beta", standard_error = "SE",
+    reliability = "agreement"
+  ),
+  threshold = c(
+    z_stat = 3.1, beta = NA_real_, standard_error = NA_real_,
+    reliability = NA_real_
+  ),
+  include_volume = FALSE
+)
+parcel_manifest$description <- paste(
+  "ROI-table display derived from", parcel_manifest$parcel_metric
+)
+
+neuromosaic::render_montage_report(
+  parcel_manifest,
+  output_file = file.path(artifact_dir, "parcel-surface-visual.html"),
+  template = file.path(repo_root, "inst", "templates", "montage_report.Rmd"),
+  title = "Neuromosaic parcel visual QA fixture",
+  intro = paste(
+    "A deterministic report generated from a shuffled ROI table through",
+    "parcel_render_manifest()."
+  ),
+  surfatlas = visual_surface_atlas,
+  surface_args = list(
+    width = 960, height = 600, res = 120, render_device = "png"
+  ),
+  profiles = list(`parcel:reliability` = neuromosaic::montage_map_profile(
+    "parcel:reliability",
+    label = "Reliability",
+    display_mode = "continuous",
+    scale = "sequential",
+    domain = c(0, 1),
+    limits = c(0, 1),
+    palette_family = "sequential",
+    units = "agreement"
+  )),
+  surface = neuromosaic::montage_surface(
+    height = "420px", assets = "embed", max_embed_mb = 5
+  ),
+  materialize_recipes = FALSE,
+  check_files = FALSE,
+  quiet = TRUE
+)
+
 mixed_surface_manifest <- surface_manifest
 mixed_surface_manifest$parcel_values <- NULL
 mixed_surface_manifest$stat_map <- I(list(

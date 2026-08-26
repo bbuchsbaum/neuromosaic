@@ -189,7 +189,13 @@ node ~/.local/share/agent-policy/browser-automation-guard.mjs --audit
 
 `npm run test:e2e` covers both embedded `file://` output and companion assets
 served from a local static HTTP server. It owns and closes that server and its
-browser processes for the duration of the run.
+browser processes for the duration of the run. The parcel-report fixture is
+constructed through `parcel_render_manifest()` from a shuffled ROI table and
+has committed Playwright screenshot baselines for its primary static panel,
+an auxiliary static panel, and an interactive surface state. Refresh those
+baselines deliberately with
+`npx playwright test e2e/parcel-visual.spec.js --update-snapshots` after a
+reviewed visual change.
 
 The larger payload/timing benchmark is reproducible with
 `npm run benchmark:interactive`; run the same browser guard audits around it.
