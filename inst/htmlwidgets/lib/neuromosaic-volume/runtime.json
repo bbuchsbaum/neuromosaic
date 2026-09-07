@@ -1,7 +1,7 @@
 {
   "name": "neuroimjs",
   "version": "0.3.0",
-  "adapter_version": "1.0.0",
+  "adapter_version": "1.1.0",
   "bundle": "neuroimjs-0.3.0.umd.js",
   "sha256": "f9623745f32e70c8960edc27724e6dc2f0281b5bfe4ce7d74eb9b009b8357bef",
   "source_state": "npm:neuroimjs@0.3.0",
@@ -13,8 +13,8 @@
     },
     {
       "path": "adapter.js",
-      "bytes": 19385,
-      "sha256": "6e406160ac830afcb30a79c049bf5b1ec506b78e3eb25642167413340f72b2cf"
+      "bytes": 19407,
+      "sha256": "cfe5f84b296d0b40862b1aad8a7d80eacd76036488db4edf03ba52c6cec98714"
     },
     {
       "path": "adapter.css",

@@ -62,6 +62,9 @@
 #'   requires \pkg{ragg}; \code{"png"} forces the base device; and
 #'   \code{"pdf"} forces Cairo PDF.
 #' @param title,subtitle,caption Plot annotations.
+#' @param legend_title Quantity name for static and interactive legends,
+#'   separate from the panel `title`. `NULL` defaults to `"Statistic"`.
+#' @param units Optional units appended to the colorbar quantity label.
 #' @param plot_fun Advanced/testing hook. Defaults to `neuroatlas::plot_brain`.
 #' @param projection Deprecated advanced/testing hook for a precomputed
 #'   projection payload.
@@ -114,7 +117,10 @@ surf_montage <- function(stat = NULL,
                          plot_fun = NULL,
                          projection = NULL,
                          empty = c("error", "warning"),
-                         vals = NULL) {
+                         vals = NULL,
+                         legend_title = NULL,
+                         units = NULL) {
+  legend <- .montage_legend(legend_title, units)
   tail <- match.arg(tail)
   fun <- match.arg(fun)
   sampling <- match.arg(sampling)
@@ -333,7 +339,7 @@ surf_montage <- function(stat = NULL,
       lim = if (has_vals) overlay_lim else c(0, 0),
       interactive = FALSE,
       colorbar = TRUE,
-      colorbar_title = "Statistic",
+      colorbar_title = legend$text,
       title = title,
       subtitle = subtitle,
       caption = caption
@@ -343,7 +349,7 @@ surf_montage <- function(stat = NULL,
         style = "stat_publication",
         static_backend = "cpu",
         colorbar_source = "overlay",
-        overlay_title = "Statistic",
+        overlay_title = legend$text,
         overlay = overlay_payload,
         overlay_threshold = if (continuous) NULL else {
           max(abs(threshold), .Machine$double.eps)
@@ -389,6 +395,8 @@ surf_montage <- function(stat = NULL,
       views = views,
       hemis = hemis,
       render = list(
+        legend_title = legend$title,
+        units = legend$units,
         device = render_device_used,
         width = width,
         height = height,

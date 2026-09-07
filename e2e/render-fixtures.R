@@ -157,6 +157,7 @@ interactive_manifest <- data.frame(
   distribution = c("z", NA, NA, NA, "z"),
   threshold = c(3.1, NA, NA, NA, 3.1),
   selector_label = c("Z", "Estimate", "SE", "Reliability", "Empty Z"),
+  legend_title = c("Standardized association", NA, NA, NA, NA),
   label = c(
     "Z statistic", "Beta estimate", "Standard error", "Reliability",
     "Empty Z statistic"

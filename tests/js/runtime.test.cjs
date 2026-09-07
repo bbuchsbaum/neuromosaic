@@ -32,3 +32,14 @@ test("the inline browser runtime remains within its reviewed size envelope", () 
     .reduce((sum, file) => sum + file.bytes, 0);
   assert.ok(total < 1.1 * 1024 * 1024, `runtime is ${total} bytes`);
 });
+
+test("the running adapter version agrees with its reproducibility manifest", () => {
+  const { runInNewContext } = require("node:vm");
+  const context = {
+    document: { readyState: "loading", addEventListener() {} },
+    window: { addEventListener() {} }
+  };
+  runInNewContext(readFileSync(resolve(runtimeDir, "adapter.js"), "utf8"), context);
+  assert.equal(context.NeuroMosaicVolumeReport.version, manifest.adapter_version);
+  assert.equal(context.NeuroMosaicVolumeReport.runtimeVersion, manifest.version);
+});

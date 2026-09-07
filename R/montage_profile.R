@@ -7,7 +7,9 @@
 #'
 #' @param id Stable profile identifier. Using a namespaced identifier such as
 #'   `"mylab:reliability"` is recommended for project-specific quantities.
-#' @param label Human-facing quantity label.
+#' @param label Human-facing quantity label used by static and interactive
+#'   legends. This is distinct from the manifest's analysis/panel `label`.
+#'   A manifest `legend_title` overrides this label for an individual map.
 #' @param display_mode Either `"thresholded"` or `"continuous"`.
 #' @param scale Either `"diverging"` or `"sequential"`.
 #' @param center Numeric center for a diverging scale. The current volume and
@@ -312,7 +314,7 @@ resolve_montage_profiles <- function(manifest, profiles = NULL,
 
   list(
     id = profile$id,
-    label = profile$label,
+    label = .profile_row_character(manifest, row, "legend_title") %||% profile$label,
     display_mode = display_mode,
     scale = scale,
     center = center,
@@ -554,4 +556,21 @@ resolve_montage_profiles <- function(manifest, profiles = NULL,
 
 .profile_title <- function(x) {
   tools::toTitleCase(gsub("[_:]", " ", x))
+}
+
+# One quantity/units contract shared by every renderer. Panel and selector titles
+# describe the analysis; they are deliberately not the color-scale authority.
+.montage_legend <- function(legend_title = NULL, units = NULL) {
+  .profile_scalar_character(legend_title, "legend_title")
+  .profile_scalar_character(units, "units")
+  title <- legend_title %||% "Statistic"
+  list(title = title, units = units,
+       text = if (is.null(units)) title else paste0(title, " (", units, ")"))
+}
+
+.montage_row_legend <- function(row) {
+  .montage_legend(
+    .profile_row_character(row, 1L, "effective_profile_label"),
+    .profile_row_character(row, 1L, "effective_units")
+  )
 }

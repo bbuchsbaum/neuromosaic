@@ -157,6 +157,19 @@
 #'   Surface typed arrays can be compressed into the HTML for direct `file://`
 #'   viewing or written once as relative content-addressed bundle assets.
 #'
+#' @details
+#' Quantity legends:
+#' The profile `label` names the scientific quantity; the manifest `label`
+#' names the analysis panel. Set a manifest `legend_title` for a per-map
+#' quantity label and `units` for its units, for example
+#' `legend_title = "Delay coefficient", units = "% signal change"`.
+#' Alternatively supply `montage_map_profile("estimate", label = "Coefficient",
+#' units = "% signal change")` through `profiles`. Static colorbars and
+#' interactive legends use the resolved quantity and units together.
+#' Direct [stat_montage()] and [surf_montage()] calls accept `legend_title`
+#' and `units`; report-level `volume_args`/`surface_args` overrides are also
+#' reflected in their corresponding interactive display metadata.
+#'
 #' @return The path to the rendered report (invisibly).
 #' @export
 render_montage_report <- function(manifest,
@@ -548,6 +561,7 @@ render_montage_report <- function(manifest,
       manifest,
       labeller = labeller,
       check_files = check_files,
+      load_maps = load_maps,
       empty = empty
     )
   } else if (isTRUE(validate)) {
@@ -617,7 +631,8 @@ render_montage_report <- function(manifest,
     manifest,
     policy = policy,
     empty = empty,
-    stat_maps = policy_stat_maps
+    stat_maps = policy_stat_maps,
+    load_maps = load_maps
   )
   manifest <- .apply_montage_shared_profile_limits(manifest, policy)
   missing_layout <- setdiff(layout, names(manifest))
@@ -1095,12 +1110,17 @@ render_montage_report <- function(manifest,
         manifest$effective_scale[[i]]
       ),
       ov_alpha_mode = manifest$effective_alpha_mode[[i]],
+      legend_title = manifest$effective_profile_label[[i]],
+      units = .montage_row_legend(manifest[i, , drop = FALSE])$units,
       title = manifest$label[[i]],
       subtitle = .montage_panel_subtitle(manifest[i, , drop = FALSE]),
       draw = TRUE,
       empty = empty
     )
     call_args <- utils::modifyList(base_args, volume_args)
+    if ("units" %in% names(volume_args)) {
+      call_args["units"] <- volume_args["units"]
+    }
     grDevices::png(
       filename = image_path,
       width = width,
@@ -1188,6 +1208,8 @@ render_montage_report <- function(manifest,
           width = width,
           height = height,
           res = res,
+          legend_title = manifest$effective_profile_label[[i]],
+          units = .montage_row_legend(manifest[i, , drop = FALSE])$units,
           title = manifest$label[[i]],
           subtitle = .montage_panel_subtitle(manifest[i, , drop = FALSE])
         )
@@ -1259,6 +1281,8 @@ render_montage_report <- function(manifest,
             manifest$effective_lower[[i]], manifest$effective_upper[[i]]
           )
         ),
+        legend_title = base_args$legend_title,
+        units = base_args$units,
         palette = base_args$overlay_palette,
         alpha = if (!is.null(source_args$vals)) {
           1
@@ -1286,6 +1310,8 @@ render_montage_report <- function(manifest,
       signed = base_args$signed,
       cap = result$cap,
       limits = result$limits,
+      legend_title = base_args$legend_title,
+      units = base_args$units,
       palette = base_args$overlay_palette,
       alpha = if (!is.null(source_args$vals)) {
         1

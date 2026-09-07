@@ -30,7 +30,7 @@ Imports:
     knitr,
     methods,
     neuroatlas,
-    neuroim2 (>= 0.16),
+    neuroim2 (>= 0.19.0.9000),
     neurosurf,
     rlang,
     scales,

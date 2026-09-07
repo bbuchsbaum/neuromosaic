@@ -153,8 +153,17 @@
       call. = FALSE
     )
   }
-  units <- as.character(row$effective_units[[1L]])
-  if (is.na(units) || !nzchar(units)) units <- NULL
+  legend <- if (!is.null(spec$legend_title)) {
+    .montage_legend(
+      spec$legend_title,
+      if (isTRUE(spec$units_explicit)) spec$units else {
+        spec$units %||% .montage_row_legend(row)$units
+      }
+    )
+  } else {
+    .montage_row_legend(row)
+  }
+  units <- legend$units
   selector_label <- if ("selector_label" %in% names(row)) {
     value <- as.character(row$selector_label[[1L]])
     if (is.na(value) || !nzchar(value)) NULL else value
@@ -177,6 +186,7 @@
       quantity = as.character(row$quantity[[1L]]),
       label = as.character(row$label[[1L]]),
       selector_label = selector_label,
+      legend_title = legend$title,
       units = units,
       display_mode = spec$display_mode,
       threshold = spec$threshold,

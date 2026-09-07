@@ -148,7 +148,7 @@ test_that("VolumeScene schema exposes the versioned generic contract", {
 
   expect_s3_class(schema, "data.frame")
   expect_named(schema, c("object", "field", "required", "type", "role"))
-  expect_equal(nrow(schema), 67L)
+  expect_equal(nrow(schema), 68L)
   expect_true(all(c(
     "analysis_id", "map_id", "quantity", "initial_world_coord",
     "zlevel_bookmarks", "palette", "compressed_bytes", "fingerprint"

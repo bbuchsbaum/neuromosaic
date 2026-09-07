@@ -65,7 +65,7 @@ test("the static report is authoritative until the reader opens the viewer", asy
   await expect(host.locator('[data-view="coronal"]')).toBeVisible();
   await expect(host.locator('[data-view="sagittal"]')).toBeVisible();
   await expect(host.locator("[data-nm-volume-readout]")).toContainText(
-    "Z statistic:"
+    "Standardized association:"
   );
   await expect(host.getByRole("combobox", { name: "Colormap" })).toHaveValue(
     "BlueRed"

@@ -46,7 +46,9 @@ surf_montage(
   plot_fun = NULL,
   projection = NULL,
   empty = c("error", "warning"),
-  vals = NULL
+  vals = NULL,
+  legend_title = NULL,
+  units = NULL
 )
 }
 \arguments{
@@ -147,6 +149,11 @@ projection payload.}
 \item{vals}{Optional numeric vector of per-parcel statistic values. Named
 vectors are matched to `surfatlas$ids`; unnamed vectors must be in
 `surfatlas$ids` order.}
+
+\item{legend_title}{Quantity name for static and interactive legends,
+separate from the panel `title`. `NULL` defaults to `"Statistic"`.}
+
+\item{units}{Optional units appended to the colorbar quantity label.}
 }
 \value{
 A `surf_montage_result` list containing the PNG path, projection,

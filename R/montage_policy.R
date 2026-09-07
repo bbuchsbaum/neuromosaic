@@ -196,11 +196,13 @@ montage_policy <- function(p = 0.005,
 #' @param policy A `montage_policy` object.
 #' @param empty Action when overlay QC finds a map with no suprathreshold
 #'   voxels: `"error"` (default) or `"warning"`. Forwarded to
-#'   [validate_manifest()]; only relevant when a `stat_map` list-column triggers
-#'   overlay checks.
+#'   [validate_manifest()]; relevant when `load_maps = TRUE` or in-memory
+#'   map/parcel sources trigger overlay checks.
 #' @param stat_maps Optional list of statistic maps or numeric statistic
 #'   vectors used to resolve FDR `q` thresholds. Required when `policy$q` or a
 #'   manifest `q` column applies to any row without an explicit `threshold`.
+#' @param load_maps Logical; allow [validate_manifest()] to read path-backed
+#'   maps for overlay QC, including manifests mixing paths and in-memory sources.
 #'
 #' @return The manifest with `effective_threshold`, `effective_tail`,
 #'   `effective_connectivity`, `effective_min_cluster_size`, and `cap_key`
@@ -208,12 +210,15 @@ montage_policy <- function(p = 0.005,
 #' @export
 resolve_montage_policy <- function(manifest, policy = montage_policy(),
                                    empty = c("error", "warning"),
-                                   stat_maps = NULL) {
+                                   stat_maps = NULL,
+                                   load_maps = FALSE) {
   if (!inherits(policy, "montage_policy")) {
     stop("'policy' must be created by montage_policy().", call. = FALSE)
   }
   empty <- match.arg(empty)
-  manifest <- validate_manifest(manifest, check_files = FALSE, empty = empty)
+  manifest <- validate_manifest(
+    manifest, check_files = FALSE, empty = empty, load_maps = load_maps
+  )
   if (!is.null(stat_maps)) {
     stat_maps <- .normalize_montage_profile_values(stat_maps, manifest)
     .validate_montage_group_sources(manifest, stat_maps)

@@ -22,7 +22,9 @@ montage_map_profile(
 \item{id}{Stable profile identifier. Using a namespaced identifier such as
 `"mylab:reliability"` is recommended for project-specific quantities.}
 
-\item{label}{Human-facing quantity label.}
+\item{label}{Human-facing quantity label used by static and interactive
+legends. This is distinct from the manifest's analysis/panel `label`.
+A manifest `legend_title` overrides this label for an individual map.}
 
 \item{display_mode}{Either `"thresholded"` or `"continuous"`.}
 

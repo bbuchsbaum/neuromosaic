@@ -29,7 +29,7 @@ montage_manifest_schema <- function() {
       "display_mode", "scale", "center", "lower", "upper",
       "palette_family", "alpha_mode", "support",
       "p", "q", "threshold", "tail", "connectivity", "min_cluster_size",
-      "level", "label", "description", "n", "subjects"
+      "level", "label", "description", "n", "subjects", "legend_title"
     ),
     required = c(
       TRUE, FALSE, FALSE, FALSE, FALSE, FALSE,
@@ -38,7 +38,7 @@ montage_manifest_schema <- function() {
       FALSE, FALSE, FALSE,
       FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE,
       FALSE, FALSE, FALSE, FALSE, FALSE, FALSE,
-      FALSE, TRUE, FALSE, FALSE, FALSE
+      FALSE, TRUE, FALSE, FALSE, FALSE, FALSE
     ),
     type = c(
       "character", "character", "function/list", "character", "character",
@@ -49,7 +49,7 @@ montage_manifest_schema <- function() {
       "character", "character", "numeric", "numeric", "numeric",
       "character", "character", "character",
       "numeric", "numeric", "numeric", "character", "character", "integer",
-      "character", "character", "character", "integer", "character/list"
+      "character", "character", "character", "integer", "character/list", "character"
     ),
     role = c(
       "stable join key, cache key, figure anchor, and table key",
@@ -89,7 +89,8 @@ montage_manifest_schema <- function() {
       "human-facing panel title",
       "markdown panel description",
       "effective sample size",
-      "subject identifiers or a compact subject summary"
+      "subject identifiers or a compact subject summary",
+      "per-map quantity label overriding the profile label"
     ),
     stringsAsFactors = FALSE
   )

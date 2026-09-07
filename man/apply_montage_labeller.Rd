@@ -9,7 +9,8 @@ apply_montage_labeller(
   labeller = NULL,
   entity_cols = NULL,
   check_files = FALSE,
-  empty = c("error", "warning")
+  empty = c("error", "warning"),
+  load_maps = FALSE
 )
 }
 \arguments{
@@ -26,6 +27,9 @@ function labeller. Defaults to all columns in the row.}
 voxels: `"error"` (default) or `"warning"`. Forwarded to
 [validate_manifest()] so the labeller path honors the same empty-map policy
 as the rest of the report pipeline.}
+
+\item{load_maps}{Logical; allow [validate_manifest()] to read path-backed
+maps for overlay QC after labelling.}
 }
 \value{
 The labelled and validated manifest.

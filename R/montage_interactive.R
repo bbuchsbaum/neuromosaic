@@ -136,7 +136,7 @@ montage_volume_scene_schema <- function() {
     object = c(
       rep("scene", 9), rep("engine", 3), rep("view", 4),
       rep("packaging", 3), rep("background", 1), rep("analysis", 5),
-      rep("map", 8), rep("status", 2), rep("display", 11),
+      rep("map", 9), rep("status", 2), rep("display", 11),
       rep("asset", 13), rep("location", 2), rep("geometry", 6)
     ),
     field = c(
@@ -149,7 +149,7 @@ montage_volume_scene_schema <- function() {
       "analysis_id", "primary_map_id", "initial_world_coord",
       "zlevel_bookmarks", "maps",
       "map_id", "quantity", "label", "units", "asset_id", "display",
-      "status", "selector_label",
+      "status", "selector_label", "legend_title",
       "state", "n_display_voxels",
       "mode", "scale", "center", "limits", "threshold", "tail",
       "palette", "alpha", "alpha_mode", "support", "units",
@@ -164,7 +164,7 @@ montage_volume_scene_schema <- function() {
     required = c(
       rep(TRUE, 9), rep(TRUE, 3), rep(TRUE, 4), rep(TRUE, 3), TRUE,
       rep(TRUE, 5),
-      c(TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, TRUE, FALSE),
+      c(TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE),
       rep(TRUE, 2),
       c(TRUE, TRUE, FALSE, TRUE, FALSE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE),
       rep(TRUE, 13),
@@ -180,7 +180,7 @@ montage_volume_scene_schema <- function() {
       "character",
       "character", "character", "numeric[3]", "numeric[]", "array",
       "character", "character", "character", "character|null", "character",
-      "object", "object", "character|null",
+      "object", "object", "character|null", "character|null",
       "character", "integer",
       "character", "character", "numeric|null", "numeric[2]",
       "numeric|null", "character", "character", "numeric", "character",
@@ -205,7 +205,7 @@ montage_volume_scene_schema <- function() {
       "static montage slice bookmarks", "associated maps",
       "stable map key", "generic or namespaced quantity", "reader label",
       "value units", "volume asset reference", "resolved report defaults",
-      "empty/readiness state", "short selector label",
+      "empty/readiness state", "short selector label", "color-scale quantity label",
       "ready or empty", "displayable voxel count",
       "thresholded or continuous", "diverging or sequential", "scale centre",
       "finite display limits", "display threshold", "tail semantics",
@@ -676,6 +676,9 @@ print.montage_volume_scene <- function(x, ...) {
                                                paste0(label, "$map_id"))
   .montage_scene_scalar_character(x$quantity, paste0(label, "$quantity"))
   .montage_scene_scalar_character(x$label, paste0(label, "$label"))
+  if (!is.null(x$legend_title)) {
+    .montage_scene_scalar_character(x$legend_title, paste0(label, "$legend_title"))
+  }
   if (!is.null(x$units)) {
     .montage_scene_scalar_character(x$units, paste0(label, "$units"))
   }

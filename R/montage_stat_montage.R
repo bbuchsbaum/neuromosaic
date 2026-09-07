@@ -40,6 +40,9 @@
 #'   installed `neuroim2`; otherwise it falls back to `"light"`.
 #' @param on_mismatch Passed to [prepare_overlay()].
 #' @param empty Action when no suprathreshold voxels are present.
+#' @param legend_title Quantity name for the colorbar, separate from the panel
+#'   `title`. `NULL` defaults to `"Statistic"`.
+#' @param units Optional units appended to the colorbar quantity label.
 #' @param draw Passed to `neuroim2::plot_overlay()`.
 #'
 #' @return A `stat_montage_result` list containing the plot object/list and
@@ -69,7 +72,9 @@ stat_montage <- function(bg,
                          style = "report",
                          on_mismatch = c("error", "restamp"),
                          empty = c("error", "warning"),
-                         draw = TRUE) {
+                         draw = TRUE,
+                         legend_title = NULL,
+                         units = NULL) {
   tail <- match.arg(tail)
   ov_alpha_mode <- match.arg(ov_alpha_mode)
   on_mismatch <- match.arg(on_mismatch)
@@ -95,6 +100,10 @@ stat_montage <- function(bg,
     empty = empty
   )
 
+  legend <- .montage_legend(legend_title, units)
+  spec$legend_title <- legend$title
+  spec["units"] <- list(legend$units)
+  spec$units_explicit <- !missing(units)
   plot_style <- .plot_overlay_style(style)
 
   overlay_args <- list(
@@ -124,7 +133,8 @@ stat_montage <- function(bg,
     subtitle = subtitle,
     caption = caption,
     draw = draw,
-    style = plot_style
+    style = plot_style,
+    cbar_title = legend$text
   )
   # alpha_gamma is newer than the oldest neuroim2 we support; only forward it
   # when the installed plot_overlay accepts it, so the call stays portable.

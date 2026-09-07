@@ -28,7 +28,9 @@ stat_montage(
   style = "report",
   on_mismatch = c("error", "restamp"),
   empty = c("error", "warning"),
-  draw = TRUE
+  draw = TRUE,
+  legend_title = NULL,
+  units = NULL
 )
 }
 \arguments{
@@ -86,6 +88,11 @@ installed `neuroim2`; otherwise it falls back to `"light"`.}
 \item{empty}{Action when no suprathreshold voxels are present.}
 
 \item{draw}{Passed to `neuroim2::plot_overlay()`.}
+
+\item{legend_title}{Quantity name for the colorbar, separate from the panel
+`title`. `NULL` defaults to `"Statistic"`.}
+
+\item{units}{Optional units appended to the colorbar quantity label.}
 }
 \value{
 A `stat_montage_result` list containing the plot object/list and

@@ -245,4 +245,16 @@ message telling you to run `quarto render` yourself. The QMD sidecar omits
 source-map paths, executable recipes, and already-materialized map payloads;
 its static images and interactive bundle files use companion-relative paths
 so the QMD, sidecar, and `<report>_files/` directory can move together.
+
+Quantity legends:
+The profile `label` names the scientific quantity; the manifest `label`
+names the analysis panel. Set a manifest `legend_title` for a per-map
+quantity label and `units` for its units, for example
+`legend_title = "Delay coefficient", units = "% signal change"`.
+Alternatively supply `montage_map_profile("estimate", label = "Coefficient",
+units = "% signal change")` through `profiles`. Static colorbars and
+interactive legends use the resolved quantity and units together.
+Direct [stat_montage()] and [surf_montage()] calls accept `legend_title`
+and `units`; report-level `volume_args`/`surface_args` overrides are also
+reflected in their corresponding interactive display metadata.
 }

@@ -1,7 +1,7 @@
 (function (root) {
   "use strict";
 
-  var ADAPTER_VERSION = "1.0.0";
+  var ADAPTER_VERSION = "1.1.0";
   var RUNTIME_VERSION = "0.3.0";
   var OVERLAY_LAYER_ID = "neuromosaic-overlay";
   var states = new WeakMap();
@@ -204,7 +204,7 @@
       return Number(value).toFixed(1);
     });
     state.readout.textContent = "x " + coord[0] + ", y " + coord[1] +
-      ", z " + coord[2] + " mm | " + map.label + ": " + valueText +
+      ", z " + coord[2] + " mm | " + (map.legend_title || map.label) + ": " + valueText +
       (map.units ? " " + map.units : "");
   }
 

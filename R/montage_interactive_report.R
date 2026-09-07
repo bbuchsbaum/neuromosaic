@@ -1,7 +1,7 @@
 # Materialization and HTML emission for optional interactive volume reports.
 
 .montage_neuroimjs_version <- "0.3.0"
-.montage_neuroimjs_adapter_version <- "1.0.0"
+.montage_neuroimjs_adapter_version <- "1.1.0"
 .montage_volume_runtime_dir <- file.path(
   "htmlwidgets", "lib", "neuromosaic-volume"
 )
@@ -254,6 +254,7 @@
     map_id = as.character(row$map_id[[1L]]),
     quantity = as.character(row$quantity[[1L]]),
     label = as.character(row$label[[1L]]),
+    legend_title = metadata$legend_title %||% .montage_row_legend(row)$title,
     units = units,
     asset_id = asset_id,
     display = list(

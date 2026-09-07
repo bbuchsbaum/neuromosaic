@@ -1099,16 +1099,12 @@ montage_surface <- function(geometry = NULL,
     row$effective_palette_family[[1L]], row$effective_scale[[1L]]
   )
   layer_opacity <- opacity %||% metadata$alpha %||% 0.85
-  units <- as.character(row$effective_units[[1L]])
-  if (is.na(units) || !nzchar(units)) units <- NULL
-  selector_label <- if ("selector_label" %in% names(row)) {
-    as.character(row$selector_label[[1L]])
+  legend <- if (!is.null(metadata$legend_title)) {
+    .montage_legend(metadata$legend_title, metadata$units)
   } else {
-    NA_character_
+    .montage_row_legend(row)
   }
-  if (is.na(selector_label) || !nzchar(trimws(selector_label))) {
-    selector_label <- as.character(row$label[[1L]])
-  }
+  units <- legend$units
   layer_id <- paste0("map-", substr(.montage_md5_text(map_id), 1L, 16L))
 
   neurosurf::surface_layer(
@@ -1121,13 +1117,15 @@ montage_surface <- function(geometry = NULL,
     opacity = as.numeric(layer_opacity),
     units = units,
     legend = list(
-      title = selector_label,
+      title = legend$title,
       units = units,
       visible = TRUE
     ),
     metadata = list(
       analysis_id = as.character(row$analysis_id[[1L]]),
       map_id = map_id,
+      selector_label = .profile_row_character(row, 1L, "selector_label") %||%
+        as.character(row$label[[1L]]),
       quantity = as.character(row$quantity[[1L]]),
       display_mode = display_mode,
       tail = tail,
@@ -1250,7 +1248,8 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
   layer_to_map <- as.list(group$layer_to_map)
   labels <- lapply(names(map_to_layer), function(map_id) {
     layer <- group$manifest$layers[[map_to_layer[[map_id]]]]
-    as.character(layer$legend$title %||% layer$label %||% map_id)
+    as.character(layer$metadata$selector_label %||%
+                   layer$legend$title %||% layer$label %||% map_id)
   })
   names(labels) <- names(map_to_layer)
   map_json <- .montage_json_script_escape(as.character(jsonlite::toJSON(

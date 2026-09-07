@@ -14,6 +14,8 @@
 #'   voxels: `"error"` (default) or `"warning"`. Forwarded to
 #'   [validate_manifest()] so the labeller path honors the same empty-map policy
 #'   as the rest of the report pipeline.
+#' @param load_maps Logical; allow [validate_manifest()] to read path-backed
+#'   maps for overlay QC after labelling.
 #'
 #' @return The labelled and validated manifest.
 #' @export
@@ -21,7 +23,8 @@ apply_montage_labeller <- function(manifest,
                                    labeller = NULL,
                                    entity_cols = NULL,
                                    check_files = FALSE,
-                                   empty = c("error", "warning")) {
+                                   empty = c("error", "warning"),
+                                   load_maps = FALSE) {
   if (!is.data.frame(manifest)) {
     stop("'manifest' must be a data frame.", call. = FALSE)
   }
@@ -29,7 +32,9 @@ apply_montage_labeller <- function(manifest,
   manifest <- as.data.frame(manifest, stringsAsFactors = FALSE)
 
   if (is.null(labeller)) {
-    return(validate_manifest(manifest, check_files = check_files, empty = empty))
+    return(validate_manifest(
+      manifest, check_files = check_files, empty = empty, load_maps = load_maps
+    ))
   }
   if (is.function(labeller)) {
     manifest <- .apply_function_labeller(manifest, labeller, entity_cols)
@@ -40,7 +45,9 @@ apply_montage_labeller <- function(manifest,
          call. = FALSE)
   }
 
-  validate_manifest(manifest, check_files = check_files, empty = empty)
+  validate_manifest(
+    manifest, check_files = check_files, empty = empty, load_maps = load_maps
+  )
 }
 
 .apply_function_labeller <- function(manifest, labeller, entity_cols) {
