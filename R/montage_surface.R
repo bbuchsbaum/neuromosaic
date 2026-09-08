@@ -47,6 +47,12 @@
 #' @param cortex_mask_source Provenance label for an explicit mask.
 #' @param anatomy_metric Optional lh/rh sulcal-depth or curvature metric.
 #' @param anatomy_metric_source Provenance label for an explicit anatomy metric.
+#' @param appearance Publication shading or FreeSurfer-style cortical contrast
+#'   for vertex overlays. The latter defaults to opaque heat colors.
+#' @param anatomy_style Continuous or binary folding contrast. NULL uses the
+#'   appearance default. These options apply to the CPU vertex renderer.
+#' @param anatomy_midpoint,anatomy_invert Anatomical boundary and polarity;
+#'   see [neurosurf::normalize_surface_anatomy()].
 #' @param medial_wall Medial-wall display policy.
 #' @param camera Strict canonical or slightly oblique presentation camera.
 #' @param orientation_labels Draw anterior/posterior marks.
@@ -119,7 +125,11 @@ surf_montage <- function(stat = NULL,
                          empty = c("error", "warning"),
                          vals = NULL,
                          legend_title = NULL,
-                         units = NULL) {
+                         units = NULL,
+                         appearance = c("publication", "freesurfer"),
+                         anatomy_style = NULL,
+                         anatomy_midpoint = NULL,
+                         anatomy_invert = FALSE) {
   legend <- .montage_legend(legend_title, units)
   tail <- match.arg(tail)
   fun <- match.arg(fun)
@@ -130,6 +140,15 @@ surf_montage <- function(stat = NULL,
   camera <- match.arg(camera)
   empty <- match.arg(empty)
   render_device <- match.arg(render_device)
+  appearance <- match.arg(appearance)
+  if (is.null(anatomy_style)) {
+    anatomy_style <- if (appearance == "freesurfer") "binary" else "publication"
+  }
+  anatomy_style <- match.arg(anatomy_style, c("publication", "continuous", "binary"))
+  if (appearance == "freesurfer") {
+    if (missing(overlay_alpha)) overlay_alpha <- 1
+    if (missing(overlay_palette)) overlay_palette <- neurosurf::surface_heat_colors(signed)
+  }
   if (identical(interpolation, "linear") && identical(aggregate, "mode")) {
     stop("aggregate = 'mode' is invalid with linear interpolation.",
          call. = FALSE)
@@ -367,6 +386,11 @@ surf_montage <- function(stat = NULL,
         cortex_mask_source = cortex_mask_source,
         anatomy_metric = anatomy_metric,
         anatomy_metric_source = anatomy_metric_source,
+        anatomy_style = anatomy_style,
+        anatomy_midpoint = anatomy_midpoint,
+        anatomy_invert = anatomy_invert,
+        anatomy_range = if (appearance == "freesurfer") c(0.25, 0.75) else c(0.72, 0.90),
+        overlay_alpha_ramp = if (appearance == "freesurfer") 0 else NULL,
         medial_wall = medial_wall,
         camera = camera,
         orientation_labels = orientation_labels

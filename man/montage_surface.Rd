@@ -23,7 +23,10 @@ montage_surface(
   preset = "paper-light",
   height = "600px",
   fallback = NULL,
-  alt_text = NULL
+  alt_text = NULL,
+  anatomy_style = c("auto", "continuous", "binary", "none"),
+  anatomy_midpoint = NULL,
+  anatomy_invert = NULL
 )
 }
 \arguments{
@@ -39,7 +42,8 @@ support-masked, but not thresholded, so browser threshold exploration can
 retain the original vertex values. Every report map must be present.}
 
 \item{curvature}{Optional unilateral numeric vector or named left/right list
-with one value per vertex.}
+with one value per vertex. By default anatomy is resolved from the atlas
+or matching white geometry, as in the static renderer.}
 
 \item{projection}{Whether volumetric manifest rows should be projected
 automatically or rejected. Projection is never inferred unless this
@@ -78,6 +82,12 @@ remain present separately in the report.}
 
 \item{alt_text}{Optional alternative text. When omitted it is generated per
 analysis group.}
+
+\item{anatomy_style}{Folding contrast: auto selects binary for the
+freesurfer preset and continuous otherwise; none disables the underlay.}
+
+\item{anatomy_midpoint, anatomy_invert}{Anatomical dark/light boundary and
+polarity passed to [neurosurf::normalize_surface_anatomy()].}
 }
 \value{
 A validated `montage_surface` value object.

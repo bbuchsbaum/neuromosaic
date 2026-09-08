@@ -1,3 +1,30 @@
+test_that("cortical contrast forwards appearance and respects explicit overlay choices", {
+  inputs <- make_toy_cluster_report_inputs()
+  captured <- NULL
+  draw <- function(...) {
+    captured <<- list(...)
+    ggplot2::ggplot(data.frame(x = 1, y = 1), ggplot2::aes(x, y)) +
+      ggplot2::geom_point()
+  }
+  args <- list(stat = inputs$stat_map, surfatlas = make_toy_surfatlas(),
+    output_file = tempfile(fileext = ".png"), threshold = 3, cap = 5,
+    appearance = "freesurfer", plot_fun = draw, width = 100, height = 100,
+    res = 72)
+  do.call(surf_montage, args)
+  expect_identical(captured$anatomy_style, "binary")
+  expect_equal(captured$anatomy_range, c(.25, .75))
+  expect_equal(captured$overlay_alpha, 1)
+  expect_equal(captured$overlay_alpha_ramp, 0)
+  expect_length(captured$overlay_palette, 256)
+  expect_equal(captured$overlay_threshold, 3)
+  expect_equal(captured$overlay_lim, c(-5, 5))
+  args$overlay_alpha <- .6
+  args$overlay_palette <- "vik"
+  do.call(surf_montage, args)
+  expect_equal(captured$overlay_alpha, .6)
+  expect_identical(captured$overlay_palette, "vik")
+})
+
 test_that("surf_montage writes PNG with supplied projection and clipped cap", {
   inputs <- make_toy_cluster_report_inputs()
   output_file <- tempfile("surface-montage-", fileext = ".png")

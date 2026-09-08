@@ -48,7 +48,11 @@ surf_montage(
   empty = c("error", "warning"),
   vals = NULL,
   legend_title = NULL,
-  units = NULL
+  units = NULL,
+  appearance = c("publication", "freesurfer"),
+  anatomy_style = NULL,
+  anatomy_midpoint = NULL,
+  anatomy_invert = FALSE
 )
 }
 \arguments{
@@ -154,6 +158,15 @@ vectors are matched to `surfatlas$ids`; unnamed vectors must be in
 separate from the panel `title`. `NULL` defaults to `"Statistic"`.}
 
 \item{units}{Optional units appended to the colorbar quantity label.}
+
+\item{appearance}{Publication shading or FreeSurfer-style cortical contrast
+for vertex overlays. The latter defaults to opaque heat colors.}
+
+\item{anatomy_style}{Continuous or binary folding contrast. NULL uses the
+appearance default. These options apply to the CPU vertex renderer.}
+
+\item{anatomy_midpoint, anatomy_invert}{Anatomical boundary and polarity;
+see [neurosurf::normalize_surface_anatomy()].}
 }
 \value{
 A `surf_montage_result` list containing the PNG path, projection,

@@ -1216,6 +1216,12 @@ render_montage_report <- function(manifest,
       ),
       surface_args
     )
+    if (identical(surface_args$appearance, "freesurfer") &&
+        is.null(surface_args$overlay_palette)) {
+      base_args$overlay_palette <- neurosurf::surface_heat_colors(
+        base_args$signed
+      )
+    }
     eff_threshold <- base_args$threshold
     eff_tail <- base_args$tail
     eff_cap <- base_args$cap

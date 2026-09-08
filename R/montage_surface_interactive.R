@@ -35,7 +35,12 @@
 #'   support-masked, but not thresholded, so browser threshold exploration can
 #'   retain the original vertex values. Every report map must be present.
 #' @param curvature Optional unilateral numeric vector or named left/right list
-#'   with one value per vertex.
+#'   with one value per vertex. By default anatomy is resolved from the atlas
+#'   or matching white geometry, as in the static renderer.
+#' @param anatomy_style Folding contrast: auto selects binary for the
+#'   freesurfer preset and continuous otherwise; none disables the underlay.
+#' @param anatomy_midpoint,anatomy_invert Anatomical dark/light boundary and
+#'   polarity passed to [neurosurf::normalize_surface_anatomy()].
 #' @param projection Whether volumetric manifest rows should be projected
 #'   automatically or rejected. Projection is never inferred unless this
 #'   configuration object is supplied to the report renderer.
@@ -86,7 +91,13 @@ montage_surface <- function(geometry = NULL,
                             preset = "paper-light",
                             height = "600px",
                             fallback = NULL,
-                            alt_text = NULL) {
+                            alt_text = NULL,
+                            anatomy_style = c("auto", "continuous", "binary", "none"),
+                            anatomy_midpoint = NULL,
+                            anatomy_invert = NULL) {
+  anatomy_style <- match.arg(anatomy_style)
+  neurosurf::normalize_surface_anatomy(c(-1, 1), midpoint = anatomy_midpoint,
+                                      invert = anatomy_invert %||% FALSE)
   projection <- match.arg(projection)
   fun <- match.arg(fun)
   sampling <- match.arg(sampling)
@@ -154,6 +165,9 @@ montage_surface <- function(geometry = NULL,
       geometry = geometry,
       values = values,
       curvature = curvature,
+      anatomy_style = anatomy_style,
+      anatomy_midpoint = anatomy_midpoint,
+      anatomy_invert = anatomy_invert,
       projection = projection,
       fun = fun,
       sampling = sampling,
@@ -315,6 +329,7 @@ montage_surface <- function(geometry = NULL,
   .validate_montage_surface_topology(
     geometry, atlas_geometry, context = "interactive surface geometry"
   )
+  anatomy <- .montage_surface_anatomy(surfatlas, geometry, surface, surface_args)
 
   custom_values <- surface$values
   if (!is.null(custom_values)) {
@@ -409,7 +424,8 @@ montage_surface <- function(geometry = NULL,
         panel = panels[[map_id]],
         values = projected[[map_id]],
         provenance = provenance[[map_id]],
-        opacity = surface$opacity
+        opacity = surface$opacity %||% if (surface$preset == "freesurfer") 1 else NULL,
+        heat = surface$preset == "freesurfer"
       )
     })
     layer_ids <- vapply(layers, `[[`, character(1), "name")
@@ -427,7 +443,7 @@ montage_surface <- function(geometry = NULL,
       geometry,
       list(
         layers = layers,
-        curvature = surface$curvature,
+        curvature = anatomy$curvature,
         selected_layer = primary_layer,
         id = paste0(
           "neuromosaic-surface-",
@@ -439,6 +455,7 @@ montage_surface <- function(geometry = NULL,
         ),
         provenance = list(
           package = "neuromosaic",
+          anatomy = anatomy$provenance,
           projection_is_display_only = TRUE
         ),
         fallback = fallback,
@@ -1082,7 +1099,8 @@ montage_surface <- function(geometry = NULL,
                                          panel,
                                          values,
                                          provenance,
-                                         opacity = NULL) {
+                                         opacity = NULL,
+                                         heat = FALSE) {
   map_id <- as.character(row$map_id[[1L]])
   metadata <- panel[["surface"]] %||% list()
   limits <- metadata$limits
@@ -1098,6 +1116,11 @@ montage_surface <- function(geometry = NULL,
   palette <- metadata$palette %||% .montage_surface_palette(
     row$effective_palette_family[[1L]], row$effective_scale[[1L]]
   )
+  if (heat) palette <- if (identical(row$effective_scale[[1L]], "diverging")) {
+    "surface-heat"
+  } else {
+    "surface-heat-positive"
+  }
   layer_opacity <- opacity %||% metadata$alpha %||% 0.85
   legend <- if (!is.null(metadata$legend_title)) {
     .montage_legend(metadata$legend_title, metadata$units)
@@ -1160,6 +1183,9 @@ montage_surface <- function(geometry = NULL,
 }
 
 .montage_surface_browser_palette <- function(palette, scale) {
+  if (is.character(palette) && length(palette) > 1L && !anyNA(palette)) {
+    return(palette)
+  }
   fallback <- if (identical(scale, "diverging")) "RdBu" else "inferno"
   if (!is.character(palette) || length(palette) != 1L || is.na(palette)) {
     return(fallback)
@@ -1173,6 +1199,7 @@ montage_surface <- function(geometry = NULL,
   )
   if (key %in% names(aliases)) return(unname(aliases[[key]]))
   supported <- c(
+    "surface-heat", "surface-heat-positive",
     "bone", "copper", "greys", "greens", "picnic", "portland",
     "blackbody", "jet", "hot", "cool", "spring", "summer", "autumn",
     "winter", "hsv", "rainbow", "viridis", "inferno", "magma",
@@ -1180,6 +1207,37 @@ montage_surface <- function(geometry = NULL,
   )
   if (key %in% supported) return(key)
   fallback
+}
+
+.montage_surface_anatomy <- function(surfatlas, geometry, surface, surface_args) {
+  style <- surface$anatomy_style %||% "auto"
+  if (style == "none") return(list(curvature = NULL, provenance = list(style = "none")))
+  if (style == "auto") {
+    style <- surface_args$anatomy_style %||%
+      if (surface$preset == "freesurfer") "binary" else "continuous"
+    if (style == "publication") style <- "continuous"
+  }
+  metric <- surface$curvature %||% surface_args$anatomy_metric
+  if (!is.null(metric)) {
+    metric <- .normalize_montage_surface_values(metric, geometry, "anatomy")
+  }
+  provenance <- list()
+  curvature <- lapply(names(geometry), function(hemi) {
+    resolved <- neuroatlas::surface_anatomy(
+      surfatlas, hemi, metric = if (is.null(metric)) NULL else metric[[hemi]],
+      source = surface_args$anatomy_metric_source
+    )
+    midpoint <- surface$anatomy_midpoint %||% surface_args$anatomy_midpoint
+    invert <- surface$anatomy_invert %||% surface_args$anatomy_invert %||% FALSE
+    provenance[[hemi]] <<- c(resolved$provenance, list(
+      style = style,
+      midpoint = midpoint %||% stats::median(resolved$metric),
+      invert = invert
+    ))
+    neurosurf::normalize_surface_anatomy(resolved$metric, style, midpoint, invert)
+  })
+  names(curvature) <- names(geometry)
+  list(curvature = curvature, provenance = provenance)
 }
 
 .montage_surface_analysis_label <- function(manifest, group) {

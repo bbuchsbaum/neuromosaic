@@ -65,6 +65,31 @@ make_interactive_surface_manifest <- function() {
   manifest
 }
 
+test_that("atlas anatomy is shared, centered, and explicitly switchable", {
+  atlas <- make_interactive_surface_atlas()
+  atlas$anatomy_metric <- list(lh = c(0, 0.2, 0.8, 1), rh = c(1, 0.8, 0.2, 0))
+  geometry <- .montage_surface_atlas_geometry(atlas)
+  continuous <- .montage_surface_anatomy(atlas, geometry, montage_surface(), list())
+  expect_lt(min(continuous$curvature$left), 0)
+  expect_gt(max(continuous$curvature$left), 0)
+  binary <- .montage_surface_anatomy(
+    atlas, geometry, montage_surface(preset = "freesurfer"), list()
+  )
+  expect_equal(binary$curvature$left, c(-.5, -.5, .5, .5))
+  expect_equal(binary$curvature$right, -binary$curvature$left)
+  expect_identical(binary$provenance$left$style, "binary")
+  expect_equal(binary$provenance$left$midpoint, .5)
+  none <- .montage_surface_anatomy(
+    atlas, geometry, montage_surface(anatomy_style = "none"), list()
+  )
+  expect_null(none$curvature)
+  expect_identical(.montage_surface_browser_palette(c("#000000", "#ffffff"),
+    "diverging"), c("#000000", "#ffffff"))
+  atlas$anatomy_metric$lh[1] <- NA_real_
+  expect_error(.montage_surface_anatomy(atlas, geometry, montage_surface(), list()),
+               "one finite")
+})
+
 make_interactive_surface_panels <- function(map_ids, image) {
   stats::setNames(lapply(map_ids, function(map_id) {
     list(surface_image = image)
