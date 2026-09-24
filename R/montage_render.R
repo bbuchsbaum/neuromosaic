@@ -140,7 +140,9 @@
 #' @param cache_surface Logical; reuse existing surface PNGs keyed by map hash,
 #'   threshold, and color cap.
 #' @param image_width,image_height,image_res PNG device settings for generated
-#'   volume and surface montage panels.
+#'   volume and surface montage panels. The defaults fill the HTML report's
+#'   ~880 px content column at 2x pixel density, with panel text near the
+#'   report's own caption size.
 #' @param max_clusters Maximum number of atlas-annotated clusters per panel.
 #' @param quiet Logical; suppress render progress messages? Default `TRUE`.
 #' @param validate Logical; run [validate_manifest()] before rendering?
@@ -201,9 +203,9 @@ render_montage_report <- function(manifest,
                                   materialize_recipes = TRUE,
                                   overwrite_recipes = FALSE,
                                   cache_surface = TRUE,
-                                  image_width = 1400,
-                                  image_height = 1000,
-                                  image_res = 144,
+                                  image_width = 1760,
+                                  image_height = 1200,
+                                  image_res = 190,
                                   max_clusters = 20L,
                                   quiet = TRUE,
                                   validate = TRUE,
@@ -477,10 +479,12 @@ render_montage_report <- function(manifest,
                                              latex_engine = "xelatex",
                                              self_contained = TRUE) {
   if (identical(ext, "html")) {
+    # The report ships its own stylesheet and contents sidebar
+    # (inst/report/), so no Bootstrap theme or pandoc TOC is needed.
     return(rmarkdown::html_document(
-      toc = TRUE,
-      toc_float = TRUE,
-      theme = "flatly",
+      toc = FALSE,
+      theme = NULL,
+      highlight = NULL,
       self_contained = isTRUE(self_contained),
       mathjax = NULL
     ))
@@ -1110,10 +1114,10 @@ render_montage_report <- function(manifest,
         manifest$effective_scale[[i]]
       ),
       ov_alpha_mode = manifest$effective_alpha_mode[[i]],
-      legend_title = manifest$effective_profile_label[[i]],
+      legend_title = .montage_row_legend_title(manifest[i, , drop = FALSE]),
       units = .montage_row_legend(manifest[i, , drop = FALSE])$units,
-      title = manifest$label[[i]],
-      subtitle = .montage_panel_subtitle(manifest[i, , drop = FALSE]),
+      # The report's heading and variant tab already name the map, so the
+      # panel carries no title of its own (volume_args can still add one).
       draw = TRUE,
       empty = empty
     )
@@ -1208,10 +1212,8 @@ render_montage_report <- function(manifest,
           width = width,
           height = height,
           res = res,
-          legend_title = manifest$effective_profile_label[[i]],
-          units = .montage_row_legend(manifest[i, , drop = FALSE])$units,
-          title = manifest$label[[i]],
-          subtitle = .montage_panel_subtitle(manifest[i, , drop = FALSE])
+          legend_title = .montage_row_legend_title(manifest[i, , drop = FALSE]),
+          units = .montage_row_legend(manifest[i, , drop = FALSE])$units
         )
       ),
       surface_args
@@ -1896,4 +1898,17 @@ render_montage_report <- function(manifest,
   prefix <- paste0(sub("/+$", "", directory), "/")
   if (!startsWith(path, prefix)) return(NULL)
   gsub("\\\\", "/", substring(path, nchar(prefix) + 1L))
+}
+
+# Colour-bar quantity name. A test statistic with a known distribution is
+# named like the report's spec line ("Z-statistic"), not "Test statistic".
+.montage_row_legend_title <- function(row) {
+  label <- row$effective_profile_label[[1L]]
+  quantity <- if ("quantity" %in% names(row)) row$quantity[[1L]] else NA
+  dist <- if ("distribution" %in% names(row)) row$distribution[[1L]] else NA
+  if (identical(as.character(quantity), "test_statistic") &&
+      length(dist) == 1L && !is.na(dist) && nzchar(dist)) {
+    return(paste0(toupper(as.character(dist)), "-statistic"))
+  }
+  label
 }

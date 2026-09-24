@@ -52,7 +52,9 @@ surf_montage(
   appearance = c("publication", "freesurfer"),
   anatomy_style = NULL,
   anatomy_midpoint = NULL,
-  anatomy_invert = FALSE
+  anatomy_invert = FALSE,
+  parcel_backend = c("cpu", "ggplot"),
+  parcel_style = NULL
 )
 }
 \arguments{
@@ -121,7 +123,11 @@ without treating parcel label zero as a universal medial wall.}
 
 \item{medial_wall}{Medial-wall display policy.}
 
-\item{camera}{Strict canonical or slightly oblique presentation camera.}
+\item{camera}{Strict canonical or slightly oblique presentation camera.
+Honoured by volumetric `stat` maps and by the default CPU parcel
+renderer; `parcel_backend = "ggplot"` always renders canonically and
+warns on `"presentation"`. `medial_wall` and `orientation_labels` apply
+only to `stat` maps.}
 
 \item{orientation_labels}{Draw anterior/posterior marks.}
 
@@ -167,6 +173,14 @@ appearance default. These options apply to the CPU vertex renderer.}
 
 \item{anatomy_midpoint, anatomy_invert}{Anatomical boundary and polarity;
 see [neurosurf::normalize_surface_anatomy()].}
+
+\item{parcel_backend}{Renderer for parcel-valued `vals`. `"cpu"` (default)
+uses the deferred parcel renderer in [neuroatlas::plot_brain()]: smooth
+antialiased parcel edges, a sulcal-depth underlay, and an automatic
+panel layout. `"ggplot"` keeps the historical polygon renderer.}
+
+\item{parcel_style}{Optional `neurosurf::surface_parcel_style()` settings
+for the CPU parcel renderer.}
 }
 \value{
 A `surf_montage_result` list containing the PNG path, projection,

@@ -375,3 +375,95 @@ test_that("surf_montage drops wrong-signed voxels for one-sided tails", {
   expect_false(any(neg[is.finite(neg)] > 0))   # no positive clusters leak in
   expect_true(any(neg[is.finite(neg)] < -3))    # negative suprathreshold kept
 })
+
+test_that("parcel-valued surf_montage uses the CPU parcel renderer by default", {
+  captured <- new.env(parent = emptyenv())
+  plot_fun <- function(...) {
+    captured$args <- list(...)
+    ggplot2::ggplot(data.frame(x = 1, y = 1), ggplot2::aes(x, y)) +
+      ggplot2::geom_point()
+  }
+  run <- function(threshold = 3, ...) {
+    surf_montage(
+      vals = c(4.5, -5.5), surfatlas = make_toy_surfatlas(),
+      output_file = tempfile("surface-parcel-cpu-", fileext = ".png"),
+      threshold = threshold, plot_fun = plot_fun,
+      width = 320, height = 220, res = 72, ...
+    )
+  }
+
+  res <- expect_no_warning(run(camera = "presentation"))
+  expect_identical(captured$args$static_backend, "cpu")
+  expect_identical(captured$args$camera, "presentation")
+  expect_identical(captured$args$bg, "#FBFBF8")
+  expect_true(captured$args$colorbar)
+  expect_identical(captured$args$vals_threshold, 3)
+  expect_null(captured$args$panel_layout)
+  expect_null(captured$args$style)
+  expect_identical(res$render$backend, "cpu_deferred_parcels")
+  expect_identical(res$render$parcel_backend, "cpu")
+  expect_identical(res$render$camera, "presentation")
+  expect_null(res$render$panel_layout)
+
+  style <- list(gyrus = 0.95)
+  run(threshold = NULL, parcel_style = style)
+  expect_null(captured$args$vals_threshold)
+  expect_identical(captured$args$parcel_style, style)
+})
+
+test_that("parcel_backend = 'ggplot' keeps the polygon renderer and records applied camera", {
+  captured <- new.env(parent = emptyenv())
+  plot_fun <- function(...) {
+    captured$args <- list(...)
+    ggplot2::ggplot(data.frame(x = 1, y = 1), ggplot2::aes(x, y)) +
+      ggplot2::geom_point()
+  }
+  run <- function(...) {
+    surf_montage(
+      vals = c(4.5, -5.5), surfatlas = make_toy_surfatlas(),
+      output_file = tempfile("surface-parcel-layout-", fileext = ".png"),
+      threshold = 3, plot_fun = plot_fun, parcel_backend = "ggplot",
+      width = 320, height = 220, res = 72, ...
+    )
+  }
+
+  res <- expect_no_warning(run())
+  expect_identical(captured$args$panel_layout, "presentation")
+  expect_true(captured$args$background)
+  expect_identical(captured$args$bg, "#FBFBF8")
+  expect_null(captured$args$style)
+  expect_null(captured$args$static_backend)
+  expect_false(any(c("camera", "medial_wall", "orientation_labels") %in%
+                     names(captured$args)))
+  expect_identical(res$render$backend, "ggplot")
+  expect_identical(res$render$camera, "canonical")
+  expect_identical(res$render$panel_layout, "presentation")
+  expect_true(is.na(res$render$medial_wall))
+  expect_false(res$render$orientation_labels)
+
+  expect_warning(
+    res <- run(camera = "presentation", orientation_labels = TRUE),
+    "ignored by parcel_backend = 'ggplot'"
+  )
+  expect_identical(res$render$camera, "canonical")
+  expect_false(res$render$orientation_labels)
+})
+
+test_that("volumetric surf_montage forwards and records the requested camera", {
+  captured <- new.env(parent = emptyenv())
+  plot_fun <- function(...) {
+    captured$args <- list(...)
+    ggplot2::ggplot(data.frame(x = 1, y = 1), ggplot2::aes(x, y)) +
+      ggplot2::geom_point()
+  }
+  res <- expect_no_warning(surf_montage(
+    stat = make_toy_cluster_report_inputs()$stat_map,
+    surfatlas = make_toy_surfatlas(),
+    output_file = tempfile("surface-camera-", fileext = ".png"),
+    threshold = 3, camera = "presentation", plot_fun = plot_fun,
+    width = 320, height = 220, res = 72
+  ))
+  expect_identical(captured$args$camera, "presentation")
+  expect_null(captured$args$panel_layout)
+  expect_identical(res$render$camera, "presentation")
+})

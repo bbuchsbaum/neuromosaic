@@ -55,6 +55,10 @@
 #'   see [neurosurf::normalize_surface_anatomy()].
 #' @param medial_wall Medial-wall display policy.
 #' @param camera Strict canonical or slightly oblique presentation camera.
+#'   Honoured by volumetric `stat` maps and by the default CPU parcel
+#'   renderer; `parcel_backend = "ggplot"` always renders canonically and
+#'   warns on `"presentation"`. `medial_wall` and `orientation_labels` apply
+#'   only to `stat` maps.
 #' @param orientation_labels Draw anterior/posterior marks.
 #' @param overlay_alpha Surface overlay alpha. The publication default leaves
 #'   a small amount of anatomical context visible beneath the statistic.
@@ -75,6 +79,12 @@
 #' @param projection Deprecated advanced/testing hook for a precomputed
 #'   projection payload.
 #' @param empty Action when no suprathreshold voxels are present.
+#' @param parcel_backend Renderer for parcel-valued `vals`. `"cpu"` (default)
+#'   uses the deferred parcel renderer in [neuroatlas::plot_brain()]: smooth
+#'   antialiased parcel edges, a sulcal-depth underlay, and an automatic
+#'   panel layout. `"ggplot"` keeps the historical polygon renderer.
+#' @param parcel_style Optional `neurosurf::surface_parcel_style()` settings
+#'   for the CPU parcel renderer.
 #' @param vals Optional numeric vector of per-parcel statistic values. Named
 #'   vectors are matched to `surfatlas$ids`; unnamed vectors must be in
 #'   `surfatlas$ids` order.
@@ -129,7 +139,9 @@ surf_montage <- function(stat = NULL,
                          appearance = c("publication", "freesurfer"),
                          anatomy_style = NULL,
                          anatomy_midpoint = NULL,
-                         anatomy_invert = FALSE) {
+                         anatomy_invert = FALSE,
+                         parcel_backend = c("cpu", "ggplot"),
+                         parcel_style = NULL) {
   legend <- .montage_legend(legend_title, units)
   tail <- match.arg(tail)
   fun <- match.arg(fun)
@@ -193,6 +205,15 @@ surf_montage <- function(stat = NULL,
   }
   limits <- .validate_montage_limits(limits)
 
+  parcel_backend <- match.arg(parcel_backend)
+  parcel_cpu <- has_vals && identical(parcel_backend, "cpu")
+  if (has_vals && !parcel_cpu && identical(camera, "presentation")) {
+    warning(
+      "camera = 'presentation' is ignored by parcel_backend = 'ggplot', ",
+      "which always uses canonical projections.",
+      call. = FALSE
+    )
+  }
   if (has_vals && !is.null(projection)) {
     stop("'projection' is only supported with volumetric 'stat'.", call. = FALSE)
   }
@@ -336,6 +357,7 @@ surf_montage <- function(stat = NULL,
   # for unsigned maps the half-range that holds the retained tail so negative
   # one-sided effects are not clamped to a [0, cap] scale.
   overlay_lim <- limits
+  montage_bg <- "#FBFBF8"
 
   render_device_used <- .open_surface_montage_device(
     filename = output_file,
@@ -343,10 +365,14 @@ surf_montage <- function(stat = NULL,
     height = height,
     res = res,
     device = render_device,
-    background = "#FBFBF8"
+    background = montage_bg
   )
   plot_anatomy_provenance <- NULL
-  plot_backend <- if (has_vals) "ggplot" else "cpu_barycentric"
+  plot_backend <- if (!has_vals) "cpu_barycentric" else if (parcel_cpu) {
+    "cpu_deferred_parcels"
+  } else {
+    "ggplot"
+  }
   tryCatch({
     plot_args <- list(
       surfatlas = surfatlas,
@@ -363,7 +389,27 @@ surf_montage <- function(stat = NULL,
       subtitle = subtitle,
       caption = caption
     )
-    if (!has_vals) {
+    if (parcel_cpu) {
+      # Deferred CPU parcel renderer: smooth parcel edges, sulcal underlay,
+      # and a layout sized to the device. Sub-threshold parcels are already
+      # NA; the threshold only greys the matching band of the colorbar.
+      plot_args <- c(plot_args, list(
+        static_backend = "cpu",
+        camera = camera,
+        bg = montage_bg,
+        vals_threshold = if (continuous) NULL else threshold,
+        parcel_style = parcel_style
+      ))
+    } else if (has_vals) {
+      # Match the stat path's presentation layout, shaded cortex backdrop, and
+      # page colour without its stat_publication preset, which would zero the
+      # parcel fill alpha.
+      plot_args <- c(plot_args, list(
+        panel_layout = "presentation",
+        background = TRUE,
+        bg = montage_bg
+      ))
+    } else {
       plot_args <- c(plot_args, list(
         style = "stat_publication",
         static_backend = "cpu",
@@ -425,8 +471,10 @@ surf_montage <- function(stat = NULL,
         width = width,
         height = height,
         res = res,
-        background = "#FBFBF8",
+        background = montage_bg,
+        panel_layout = if (has_vals && !parcel_cpu) "presentation" else NULL,
         style = if (has_vals) "parcel_values" else "stat_publication",
+        parcel_backend = if (has_vals) parcel_backend else NULL,
         backend = plot_backend,
         colorbar_source = if (has_vals) "base" else "overlay",
         palette = if (has_vals) overlay_palette else palette,
@@ -440,9 +488,11 @@ surf_montage <- function(stat = NULL,
           surface_smooth_fwhm = surface_smooth_fwhm
         ),
         anatomy = plot_anatomy_provenance,
-        medial_wall = medial_wall,
-        camera = camera,
-        orientation_labels = orientation_labels
+        # The parcel ggplot path cannot honour the CPU-only camera,
+        # medial-wall, and orientation-label controls; record what was applied.
+        medial_wall = if (has_vals) NA_character_ else medial_wall,
+        camera = if (has_vals && !parcel_cpu) "canonical" else camera,
+        orientation_labels = if (has_vals) FALSE else orientation_labels
       )
     ),
     class = "surf_montage_result"

@@ -172,7 +172,10 @@ test_that("group selectors are accessible, escaped, and progressively enhanced",
   expect_false(grepl(" hidden", variant, fixed = TRUE))
   expect_match(styles, "DOMContentLoaded", fixed = TRUE)
   expect_match(styles, "ArrowRight", fixed = TRUE)
-  expect_match(styles, "if(tabs.length===0&&!select)return;", fixed = TRUE)
+  expect_match(
+    styles,
+    "if\\s*\\(tabs\\.length\\s*===\\s*0\\s*&&\\s*!select\\)\\s*return;"
+  )
   expect_match(styles, "nm-map-change", fixed = TRUE)
   expect_match(styles, "nm-map-request", fixed = TRUE)
   expect_match(styles, "nm-volume-map-request", fixed = TRUE)
@@ -369,4 +372,173 @@ test_that("montage report templates use the shared formatter factory", {
   expect_false(grepl("summary_tbl <- data.frame", qmd_text, fixed = TRUE))
   expect_false(grepl("Field = fields\\[keep\\]", qmd_text))
   expect_false(grepl("Value = values\\[keep\\]", qmd_text))
+})
+
+test_that("report header summarises shared variants and escapes the title", {
+  manifest <- data.frame(
+    map_id = c("a1", "a2", "b1", "b2"),
+    analysis_id = c("a", "a", "b", "b"),
+    label = c("Q within", "Uncorrected", "Q within", "Uncorrected"),
+    selector_label = c("Q within", "Uncorrected", "Q within", "Uncorrected"),
+    model = c("A", "A", "B", "B"),
+    stringsAsFactors = FALSE
+  )
+  groups <- list(
+    list(analysis_id = "a", analysis_label = "Model A", map_ids = c("a1", "a2")),
+    list(analysis_id = "b", analysis_label = "Model B", map_ids = c("b1", "b2"))
+  )
+  fmt <- montage_report_formatters(manifest = manifest, layout = "model",
+                                   is_html = TRUE, groups = groups)
+  out <- paste(capture.output(fmt$emit_report_header("A <b> title", "2026-01-01")),
+               collapse = "\n")
+  expect_match(out, "A &lt;b&gt; title", fixed = TRUE)
+  expect_match(out, "models ×", fixed = TRUE)
+  expect_match(out, ">2</span><span class=\"nm-overview-label\">variants", fixed = TRUE)
+  expect_match(out, "2026-01-01", fixed = TRUE)
+
+  # Without shared variants the summary falls back to counts.
+  fmt_flat <- montage_report_formatters(manifest = manifest[1, ], is_html = TRUE)
+  flat <- paste(capture.output(fmt_flat$emit_report_header("T")), collapse = "\n")
+  expect_match(flat, "analysis</span>", fixed = TRUE)
+  expect_match(flat, "map</span>", fixed = TRUE)
+
+  md <- montage_report_formatters(manifest = manifest, is_html = FALSE)
+  expect_identical(capture.output(md$emit_report_header("Plain")), c("# Plain", ""))
+})
+
+test_that("summary matrix and global controls appear only for shared variants", {
+  manifest <- data.frame(
+    map_id = c("a1", "a2", "b1", "b2"),
+    analysis_id = c("a", "a", "b", "b"),
+    label = c("Within", "Unc", "Within", "Unc"),
+    selector_label = c("Within", "Unc", "Within", "Unc"),
+    effective_threshold = c(3, 2, 3, 2),
+    stringsAsFactors = FALSE
+  )
+  manifest$parcel_values <- list(
+    c(`1` = 3.5, `2` = NA, `3` = -1),
+    c(`1` = 3.5, `2` = 2.5, `3` = -1),
+    c(`1` = NA, `2` = NA, `3` = NA),
+    c(`1` = -2.2, `2` = NA, `3` = NA)
+  )
+  groups <- list(
+    list(analysis_id = "a", analysis_label = "VGG low (block1, DCT6)",
+         map_ids = c("a1", "a2"), primary_map_id = "a1"),
+    list(analysis_id = "b", analysis_label = "CLIP", map_ids = c("b1", "b2"),
+         primary_map_id = "b1")
+  )
+  panels <- list(a1 = list(surface_image = "x.png"), a2 = list(),
+                 b1 = list(surface = list(n_suprathreshold = 0L)), b2 = "junk")
+  fmt <- montage_report_formatters(manifest = manifest, layout = "model",
+                                   is_html = TRUE, groups = groups,
+                                   panels = panels)
+  matrix_html <- paste(capture.output(fmt$emit_summary_matrix()), collapse = "\n")
+  expect_match(matrix_html, "nm-summary-table", fixed = TRUE)
+  expect_match(matrix_html, "VGG low<span class=\"nm-row-detail\">block1, DCT6</span>",
+               fixed = TRUE)
+  expect_match(matrix_html, "data-nm-goto-map=\"a2\"", fixed = TRUE)
+  # a1: one parcel >= 3 (3.5); a2: two parcels >= 2; b1: surface says 0.
+  expect_match(matrix_html, "nm-cell-n\">1<", fixed = TRUE)
+  expect_match(matrix_html, "nm-cell-n\">2<", fixed = TRUE)
+  expect_match(matrix_html, "nm-cell-empty\">0<", fixed = TRUE)
+  expect_match(matrix_html, "max 3.50", fixed = TRUE)
+  expect_match(matrix_html, "<th scope=\"col\">Model</th>", fixed = TRUE)
+
+  controls <- paste(capture.output(fmt$emit_maps_controls()), collapse = "\n")
+  expect_match(controls, "data-nm-global-tabs", fixed = TRUE)
+  expect_match(controls, "data-nm-label=\"Unc\"", fixed = TRUE)
+
+  # Tabs carry counts and mark empty variants.
+  start <- paste(capture.output(fmt$emit_group_start(groups[[2]], 3L, 3:4)),
+                 collapse = "\n")
+  expect_match(start, "data-nm-empty=\"true\"", fixed = TRUE)
+  expect_match(start, "nm-tab-count", fixed = TRUE)
+
+  # Mismatched variant sets: no matrix, no global control.
+  manifest$selector_label[4] <- "Other"
+  fmt2 <- montage_report_formatters(manifest = manifest, is_html = TRUE,
+                                    groups = groups, panels = panels)
+  expect_length(capture.output(fmt2$emit_summary_matrix()), 0L)
+  expect_length(capture.output(fmt2$emit_maps_controls()), 0L)
+  none <- montage_report_formatters(manifest = manifest[1:2, ], is_html = TRUE,
+                                    groups = groups[1], map_selector = "none")
+  expect_length(capture.output(none$emit_maps_controls()), 0L)
+
+  # Markdown output gets a plain pipe table.
+  manifest$selector_label[4] <- "Unc"
+  md <- montage_report_formatters(manifest = manifest, is_html = FALSE,
+                                  groups = groups, panels = panels)
+  md_out <- capture.output(md$emit_summary_matrix())
+  expect_true(any(grepl("^\\| *Analysis", md_out)))
+})
+
+test_that("tables align numbers, keep decimals consistent, and report empties", {
+  fmt <- montage_report_formatters(is_html = TRUE)
+  parcel <- data.frame(parcel_id = c(3L, 7L), parcel = c("Vis_1", "Temp_2"),
+                       hemisphere = c("left", "right"), network = c("Vis", "Default"),
+                       value = c(-3.2, 3.08))
+  attr(parcel, "n_total") <- 5L
+  class(parcel) <- c("montage_parcel_table", class(parcel))
+  html <- paste(capture.output(fmt$emit_table(parcel)), collapse = "\n")
+  expect_match(html, "<th scope=\"col\">Parcel</th>", fixed = TRUE)
+  expect_match(html, "<td class=\"num\">−3.20</td>", fixed = TRUE)
+  expect_match(html, "<td class=\"num\">3.08</td>", fixed = TRUE)
+  expect_match(html, "Strongest 2 of 5 surviving parcels.", fixed = TRUE)
+
+  empty <- parcel[0, ]
+  class(empty) <- class(parcel)
+  expect_match(paste(capture.output(fmt$emit_table(empty)), collapse = ""),
+               "No parcels survive this threshold.", fixed = TRUE)
+  expect_match(paste(capture.output(fmt$emit_table(data.frame())), collapse = ""),
+               "No clusters survive this threshold.", fixed = TRUE)
+  md <- montage_report_formatters(is_html = FALSE)
+  expect_identical(capture.output(md$emit_table(data.frame()))[1],
+                   "*No clusters survive this threshold.*")
+})
+
+test_that("parcel peak tables follow the tail and threshold, strongest first", {
+  atlas <- list(ids = 1:4, labels = c("A", "B", "C", "D"),
+                hemi = c("left", "left", "right", "right"),
+                network = c("Vis", "Vis", "Default", "Default"))
+  values <- c(`1` = 3.5, `2` = -4, `3` = 1, `4` = NA)
+  two <- .montage_parcel_peak_table(values, atlas, threshold = 2,
+                                    tail = "two_sided")
+  expect_identical(two$parcel, c("B", "A"))
+  expect_identical(attr(two, "n_total"), 2L)
+  pos <- .montage_parcel_peak_table(values, atlas, threshold = 2, tail = "positive")
+  expect_identical(pos$parcel, "A")
+  neg <- .montage_parcel_peak_table(values, atlas, threshold = 2, tail = "negative")
+  expect_identical(neg$network, "Vis")
+  top1 <- .montage_parcel_peak_table(values, atlas, threshold = 0.5,
+                                     tail = "two_sided", max_rows = 1L)
+  expect_identical(nrow(top1), 1L)
+  expect_identical(attr(top1, "n_total"), 3L)
+  bare <- .montage_parcel_peak_table(values, list(ids = 1:4), 2, "two_sided")
+  expect_true(all(is.na(bare$parcel)))
+})
+
+test_that("spec line omits voxel connectivity for parcel maps", {
+  row <- data.frame(map_id = "p", quantity = "test_statistic",
+                    distribution = "z", effective_threshold = 2.9,
+                    effective_tail = "two_sided",
+                    effective_connectivity = "18-connect",
+                    effective_min_cluster_size = 1L)
+  row$parcel_values <- list(c(`1` = 3))
+  fmt <- montage_report_formatters(is_html = TRUE)
+  out <- paste(capture.output(fmt$emit_metadata(row)), collapse = "")
+  expect_false(grepl("18-connect", out, fixed = TRUE))
+  expect_match(out, "<span>Z-statistic</span>", fixed = TRUE)
+  row$parcel_values <- list(NULL)
+  voxel <- paste(capture.output(fmt$emit_metadata(row)), collapse = "")
+  expect_match(voxel, "18-connect", fixed = TRUE)
+})
+
+test_that("pluralisation and label splitting cover edge cases", {
+  expect_identical(.montage_report_plural("model"), "models")
+  expect_identical(.montage_report_plural("analysis"), "analyses")
+  expect_identical(.montage_report_plural("class"), "classes")
+  expect_identical(.montage_report_plural("study"), "studies")
+  expect_identical(.montage_report_plural("box"), "boxes")
+  expect_identical(.montage_report_split_label("Plain"), "Plain")
+  expect_identical(.montage_report_split_label("(only)"), "(only)")
 })

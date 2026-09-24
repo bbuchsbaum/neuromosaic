@@ -1,0 +1,492 @@
+/* neuromosaic montage report. Self-contained: system fonts only, no CDN. */
+:root {
+  --nm-page: #FBFBF8;          /* matches the figure canvas so panels sit flush */
+  --nm-surface: #FFFFFF;
+  --nm-ink: #1C2226;
+  --nm-ink-2: #3E4952;
+  --nm-muted: #66717B;
+  --nm-rule: #E2E5E6;
+  --nm-rule-strong: #C9CFD2;
+  --nm-accent: #2F6F73;
+  --nm-accent-ink: #235559;
+  --nm-accent-soft: #E4EFEF;
+  --nm-control: #EEF1F1;
+  --nm-warn-bg: #FFF6E8;
+  --nm-warn-ink: #7A4206;
+  --nm-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
+    Helvetica, Arial, sans-serif;
+  --nm-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --nm-sidebar: 248px;
+  --nm-measure: 880px;
+}
+
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  box-sizing: border-box;
+  max-width: calc(var(--nm-sidebar) + var(--nm-measure) + 56px);
+  margin: 0 auto;
+  padding: 40px 28px 96px calc(var(--nm-sidebar) + 56px);
+  background: var(--nm-page);
+  color: var(--nm-ink);
+  font: 15px/1.6 var(--nm-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+/* pandoc's title block is replaced by .nm-report-header */
+body > h1.title, body > h4.date, body > h4.author, #header, #TOC { display: none; }
+
+/* Contents sidebar (built by montage-report.js from the document headings) */
+.nm-toc {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: var(--nm-sidebar);
+  box-sizing: border-box;
+  margin-left: calc(-1 * (var(--nm-sidebar) + 56px));
+  padding: 40px 12px 40px 0;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.nm-toc .nm-toc-title {
+  display: block;
+  margin: 4px 0 12px;
+  padding: 0 0 0 14px;
+  border: 0;
+  color: var(--nm-muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+.nm-toc ol { list-style: none; margin: 0; padding: 0; }
+.nm-toc li { margin: 0; }
+.nm-toc a {
+  display: block;
+  padding: 4px 10px 4px 12px;
+  border-left: 2px solid transparent;
+  color: var(--nm-muted);
+  text-decoration: none;
+}
+.nm-toc a:hover { color: var(--nm-ink); background: rgba(47, 111, 115, 0.05); }
+.nm-toc a[aria-current="true"] {
+  color: var(--nm-accent-ink);
+  border-left-color: var(--nm-accent);
+  font-weight: 600;
+}
+.nm-toc .nm-toc-section > a {
+  margin-top: 14px;
+  color: var(--nm-ink-2);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.nm-toc .nm-toc-section:first-child > a { margin-top: 0; }
+.nm-toc .nm-toc-sub a { font-size: 13px; line-height: 1.4; }
+
+/* Header */
+.nm-report-header { margin: 0 0 28px; }
+.nm-eyebrow {
+  color: var(--nm-muted);
+  font: 500 11.5px/1.4 var(--nm-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.nm-report-title {
+  max-width: 40ch;
+  margin: 6px 0 0;
+  color: var(--nm-ink);
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.018em;
+  text-wrap: balance;
+}
+.nm-report-overview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 10px 0 0;
+  color: var(--nm-muted);
+  font-size: 13.5px;
+}
+.nm-overview-card { display: inline-flex; gap: 6px; align-items: baseline; }
+.nm-overview-value { color: var(--nm-ink); font-weight: 650; }
+.nm-overview-label { text-transform: lowercase; }
+
+.nm-intro {
+  max-width: 68ch;
+  margin: 0 0 8px;
+  color: var(--nm-ink-2);
+  font-size: 15.5px;
+  line-height: 1.6;
+}
+.nm-intro strong { color: var(--nm-ink); font-weight: 650; }
+.nm-intro p { margin: 0 0 0.8em; }
+
+/* Top-level sections (Maps, Provenance, Session info) */
+.section.level1 > h1 {
+  margin: 40px 0 4px;
+  padding-top: 18px;
+  border-top: 1px solid var(--nm-rule-strong);
+  color: var(--nm-ink-2);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Analysis sections */
+.nm-analysis-group, .nm-panel-heading { scroll-margin-top: 72px; }
+.nm-analysis-group {
+  margin: 0;
+  padding: 36px 0 16px;
+  border-top: 1px solid var(--nm-rule);
+}
+h1 + .nm-analysis-group, h1 + div + .nm-analysis-group { border-top: 0; }
+.nm-panel-heading { margin: 0 0 10px; }
+.nm-layout-path {
+  color: var(--nm-muted);
+  font: 500 11px/1.4 var(--nm-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.nm-panel-title {
+  margin: 2px 0 0;
+  color: var(--nm-ink);
+  font-size: 20px;
+  font-weight: 620;
+  line-height: 1.25;
+  letter-spacing: -0.005em;
+}
+.nm-variant-title {
+  margin: 14px 0 2px;
+  color: var(--nm-ink);
+  font-size: 15px;
+  font-weight: 620;
+}
+/* With working tabs the selected tab already names the variant. */
+.nm-js .nm-map-tabs ~ .nm-map-variant .nm-variant-title {
+  clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden;
+  position: absolute; white-space: nowrap; width: 1px;
+}
+
+/* Variant selector: a segmented control */
+.nm-map-selector { display: none; margin: 4px 0 10px; }
+.nm-js .nm-map-selector { display: flex; }
+.nm-map-tabs {
+  display: none;
+  flex-wrap: wrap;
+  gap: 2px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--nm-control);
+}
+.nm-js .nm-map-tabs { display: inline-flex; }
+.nm-map-tab {
+  appearance: none;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nm-ink-2);
+  cursor: pointer;
+  font: 500 13px/1.3 var(--nm-sans);
+  padding: 6px 12px;
+}
+.nm-map-tab:hover { color: var(--nm-ink); background: rgba(255, 255, 255, 0.55); }
+.nm-map-tab[aria-selected="true"] {
+  background: var(--nm-surface);
+  color: var(--nm-ink);
+  font-weight: 620;
+  box-shadow: 0 1px 2px rgba(28, 34, 38, 0.12), 0 0 0 1px rgba(28, 34, 38, 0.04);
+}
+.nm-map-tab:focus-visible, .nm-map-select:focus-visible, .nm-toc a:focus-visible {
+  outline: 2px solid var(--nm-accent);
+  outline-offset: 2px;
+}
+.nm-map-select {
+  background: var(--nm-surface);
+  border: 1px solid var(--nm-rule-strong);
+  border-radius: 7px;
+  color: var(--nm-ink);
+  font: 500 13.5px/1.3 var(--nm-sans);
+  padding: 6px 10px;
+}
+.nm-map-variant { margin: 0 0 18px; }
+.nm-analysis-group .nm-map-tabs {
+  gap: 20px;
+  width: 100%;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border-bottom: 1px solid var(--nm-rule);
+}
+.nm-analysis-group .nm-map-tab {
+  margin-bottom: -1px;
+  padding: 6px 0 8px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+}
+.nm-analysis-group .nm-map-tab:hover { background: transparent; color: var(--nm-ink); }
+.nm-analysis-group .nm-map-tab[aria-selected="true"] {
+  border-bottom-color: var(--nm-accent);
+  background: transparent;
+  box-shadow: none;
+  color: var(--nm-ink);
+}
+.nm-tab-count {
+  display: inline-block;
+  min-width: 1.4em;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(28, 34, 38, 0.07);
+  color: var(--nm-ink-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.6;
+  text-align: center;
+}
+.nm-map-tab[aria-selected="true"] .nm-tab-count { background: var(--nm-accent-soft); color: var(--nm-accent-ink); }
+.nm-map-tab[data-nm-empty="true"] { color: var(--nm-muted); }
+.nm-map-tab[data-nm-empty="true"] .nm-tab-count { background: transparent; color: var(--nm-muted); }
+
+/* One switch for every section, pinned while scrolling through the maps. */
+.nm-maps-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: none;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px 12px;
+  margin: 8px 0 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--nm-rule);
+  background: var(--nm-page);
+}
+.nm-js .nm-maps-bar { display: flex; }
+.nm-maps-bar-label {
+  color: var(--nm-muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.nm-maps-bar-context {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  color: var(--nm-ink);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nm-global-tabs { flex: 0 1 auto; }
+.nm-global-tabs .nm-map-tab[aria-pressed="true"] {
+  background: var(--nm-accent);
+  color: #fff;
+  font-weight: 620;
+  box-shadow: none;
+}
+.nm-maps-bar + .nm-analysis-group { border-top: 0; }
+
+/* Summary matrix */
+.nm-summary { margin: 8px 0 0; }
+.nm-summary-note { margin: 0 0 8px; color: var(--nm-muted); font-size: 13px; }
+.nm-summary-table { min-width: 520px; }
+.nm-summary-table thead th { white-space: normal; vertical-align: bottom; }
+.nm-summary-table td { border-bottom: 1px solid var(--nm-rule); }
+.nm-summary-table tr:last-child th, .nm-summary-table tr:last-child td { border-bottom: 0; }
+.nm-summary-table th[scope="row"] {
+  width: 30%;
+  color: var(--nm-ink);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: normal;
+  border-bottom: 1px solid var(--nm-rule);
+}
+.nm-summary-table td { padding: 0; }
+.nm-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 7px 10px;
+  color: inherit;
+  text-decoration: none;
+}
+.nm-cell:hover { background: var(--nm-accent-soft); }
+.nm-cell:focus-visible { outline: 2px solid var(--nm-accent); outline-offset: -2px; }
+.nm-cell-n { color: var(--nm-ink); font-size: 14px; font-weight: 650; }
+.nm-cell-max { color: var(--nm-muted); font-size: 11.5px; }
+.nm-cell-empty { color: #A3ABB1; }
+.nm-row-detail { display: block; color: var(--nm-muted); font-size: 12px; font-weight: 400; white-space: nowrap; }
+.nm-table-note { margin: -20px 0 28px; color: var(--nm-muted); font-size: 12.5px; }
+
+.nm-empty {
+  display: inline-block;
+  margin: 4px 0 12px;
+  padding: 6px 12px;
+  border: 1px solid var(--nm-rule-strong);
+  border-radius: 6px;
+  color: var(--nm-ink-2);
+  font-size: 13.5px;
+}
+
+/* Spec line: the map's statistical definition */
+.nm-panel-meta {
+  margin: 10px 0 6px;
+  color: var(--nm-muted);
+  font: 11.5px/1.6 var(--nm-mono);
+  font-style: normal;
+}
+.nm-panel-meta > span:not(.nm-sep) { white-space: nowrap; }
+.nm-sep { color: #A3ABB1; }
+.nm-map-variant > p:not([class]) { max-width: 72ch; color: var(--nm-ink-2); }
+
+/* Figures */
+.nm-figure { margin: 0 0 16px; }
+.nm-figure-empty { max-width: 360px; opacity: 0.5; }
+.nm-figure img, body > img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Tables */
+.nm-table, body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0 22px;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.nm-table th, body table th {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--nm-rule-strong);
+  color: var(--nm-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+.nm-table td, body table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--nm-rule);
+  color: var(--nm-ink-2);
+  vertical-align: top;
+}
+.nm-table .num { text-align: right; }
+.nm-peak-table td:first-child { color: var(--nm-ink); font-weight: 600; }
+.nm-peak-table { width: auto; min-width: min(640px, 100%); }
+.nm-table-wrap { margin: 0 0 28px; }
+.nm-table-wrap > table { margin: 0; }
+.nm-table tr:last-child td { border-bottom: 0; }
+.nm-table-wrap { overflow-x: auto; }
+#provenance table th:first-child, #provenance table td:first-child { width: 180px; color: var(--nm-muted); }
+.nm-peak-table { font-size: 12.5px; }
+
+/* Status and notes */
+.nm-qc-section { margin: 22px 0 26px; }
+.nm-status {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.nm-status-ok { background: #E5F2EA; color: #1C5E37; }
+.nm-status-warning { background: var(--nm-warn-bg); color: var(--nm-warn-ink); }
+.nm-status-muted { background: #EDF0F1; color: var(--nm-muted); }
+.nm-caution, .nm-section-note, .nm-interlude {
+  max-width: 72ch;
+  margin: 10px 0 16px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+.nm-caution { background: var(--nm-warn-bg); color: var(--nm-warn-ink); }
+.nm-caution strong { margin-right: 6px; }
+.nm-section-note { background: var(--nm-accent-soft); color: var(--nm-accent-ink); }
+.nm-interlude { background: #F1F3F4; color: var(--nm-ink-2); }
+
+/* Session info and code output */
+body pre {
+  overflow-x: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--nm-rule);
+  border-radius: 6px;
+  background: var(--nm-surface);
+  color: var(--nm-ink-2);
+  font: 11.5px/1.5 var(--nm-mono);
+}
+body pre code { font: inherit; white-space: pre; }
+details.nm-details > summary {
+  cursor: pointer;
+  color: var(--nm-ink-2);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.nm-sr-only {
+  clip: rect(0, 0, 0, 0); clip-path: inset(50%); height: 1px; overflow: hidden;
+  position: absolute; white-space: nowrap; width: 1px;
+}
+
+/* Narrow screens: sidebar collapses; content takes the full width. */
+@media (max-width: 1000px) {
+  body { padding: 28px 18px 72px; }
+  .nm-toc { display: none; }
+  .nm-report-title { font-size: 24px; }
+  .nm-panel-title { font-size: 19px; }
+  body table:not(.nm-table) { display: block; overflow-x: auto; }
+}
+@media (max-width: 600px) {
+  .nm-js .nm-map-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    width: 100%;
+    box-sizing: border-box;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .nm-map-tabs::-webkit-scrollbar { display: none; }
+  .nm-map-tab { flex: 0 0 auto; white-space: nowrap; }
+  .nm-summary-table th[scope="row"] { width: auto; min-width: 9em; }
+  .nm-summary .nm-table-wrap {
+    -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent);
+    mask-image: linear-gradient(90deg, #000 85%, transparent);
+  }
+  .nm-maps-bar-context { display: none; }
+  .nm-maps-bar { flex-wrap: wrap; }
+  .nm-cell { padding: 6px 8px; }
+  .nm-maps-bar-label { width: 100%; }
+  .nm-intro { line-height: 1.55; }
+}
+
+@media print {
+  @page { margin: 14mm; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { padding: 0; max-width: none; font-size: 10.5pt; }
+  .nm-maps-bar { display: none !important; }
+  .nm-figure, table { break-inside: avoid; }
+  .nm-panel-title, .nm-variant-title, .section.level1 > h1 { break-after: avoid; }
+  .nm-toc, .nm-map-selector { display: none !important; }
+  .nm-map-variant[hidden] { display: block !important; }
+  .nm-js .nm-map-tabs ~ .nm-map-variant .nm-variant-title {
+    position: static; clip: auto; clip-path: none; height: auto; width: auto;
+  }
+  .nm-analysis-group { break-inside: avoid-page; }
+}

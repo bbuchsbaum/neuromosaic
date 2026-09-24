@@ -107,7 +107,19 @@ montage_peak_table <- function(stat,
     )
     panels[[map_id]]$peak_table <- peaks
     if (is.null(panels[[map_id]]$table)) {
-      panels[[map_id]]$table <- peaks
+      # Parcel maps report surviving parcels by atlas name: voxel clusters of
+      # a parcel-valued volume merge neighbouring parcels and split others.
+      parcel_values <- .montage_row_parcel_values(manifest, i)
+      panels[[map_id]]$table <- if (!is.null(parcel_values)) {
+        .montage_parcel_peak_table(
+          parcel_values, atlas,
+          threshold = manifest$effective_threshold[[i]],
+          tail = manifest$effective_tail[[i]],
+          max_rows = max_clusters
+        )
+      } else {
+        peaks
+      }
     }
     panels[[map_id]]$peaks <- list(
       n_clusters = nrow(peaks),
@@ -256,4 +268,51 @@ montage_peak_table <- function(stat,
   }
   length(x) == 0L || all(is.na(x)) ||
     all(!nzchar(trimws(as.character(x))))
+}
+
+.montage_row_parcel_values <- function(manifest, i) {
+  if (!"parcel_values" %in% names(manifest)) return(NULL)
+  values <- manifest$parcel_values[[i]]
+  if (is.null(values) || !length(values) || is.null(names(values))) return(NULL)
+  values
+}
+
+# Surviving parcels of a parcel-valued map, strongest first, labelled from the
+# atlas. `n_total` records how many survived before truncation to `max_rows`.
+.montage_parcel_peak_table <- function(values, atlas, threshold, tail,
+                                       max_rows = 20L) {
+  ids <- suppressWarnings(as.integer(names(values)))
+  values <- as.numeric(values)
+  keep <- is.finite(values) & !is.na(ids)
+  if (is.finite(threshold)) {
+    keep <- keep & switch(
+      as.character(tail),
+      positive = values >= threshold,
+      negative = values <= -threshold,
+      abs(values) >= threshold
+    )
+  }
+  atlas_ids <- suppressWarnings(as.integer(atlas$ids))
+  pick <- function(field) {
+    x <- atlas[[field]]
+    if (is.null(x) || length(x) != length(atlas_ids)) {
+      return(rep(NA_character_, sum(keep)))
+    }
+    as.character(x[match(ids[keep], atlas_ids)])
+  }
+  out <- data.frame(
+    parcel_id = ids[keep],
+    parcel = pick("labels"),
+    hemisphere = pick("hemi"),
+    network = pick("network"),
+    value = values[keep],
+    stringsAsFactors = FALSE
+  )
+  out <- out[order(-abs(out$value)), , drop = FALSE]
+  n_total <- nrow(out)
+  out <- utils::head(out, max_rows)
+  rownames(out) <- NULL
+  attr(out, "n_total") <- n_total
+  class(out) <- c("montage_parcel_table", class(out))
+  out
 }
