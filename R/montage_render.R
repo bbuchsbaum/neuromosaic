@@ -1904,6 +1904,13 @@ render_montage_report <- function(manifest,
 # named like the report's spec line ("Z-statistic"), not "Test statistic".
 .montage_row_legend_title <- function(row) {
   label <- row$effective_profile_label[[1L]]
+  # A manifest legend_title is the documented per-map override (#24).
+  if ("legend_title" %in% names(row)) {
+    own <- row$legend_title[[1L]]
+    if (length(own) == 1L && !is.na(own) && nzchar(trimws(own))) {
+      return(as.character(own))
+    }
+  }
   quantity <- if ("quantity" %in% names(row)) row$quantity[[1L]] else NA
   dist <- if ("distribution" %in% names(row)) row$distribution[[1L]] else NA
   if (identical(as.character(quantity), "test_statistic") &&

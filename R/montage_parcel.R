@@ -329,11 +329,13 @@ parcel_render_manifest <- function(data,
     ))
   }
 
+  # Unknown metrics get no units: the column name is an identifier, not a
+  # unit, and would otherwise surface on colour bars (#24).
   list(
     quantity = paste0("parcel:", .safe_file_stem(normalized)),
     distribution = NULL,
     label = .parcel_render_pretty_metric(metric),
-    units = metric
+    units = NA_character_
   )
 }
 

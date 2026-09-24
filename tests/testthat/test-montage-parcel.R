@@ -234,3 +234,39 @@ test_that("parcel manifests render through the grouped report path", {
   expect_false(any(c("stat_map", "parcel_values") %in%
                    names(report_data$manifest)))
 })
+
+test_that("unknown parcel metrics carry no units, so column names stay off legends (#24)", {
+  inputs <- make_toy_cluster_report_inputs()
+  results <- tibble::tibble(id = c(2L, 1L), qmap05 = c(-3.1, 2.4),
+                            reliability = c(0.6, 0.7))
+  manifest <- parcel_render_manifest(
+    results, inputs$atlas, analysis_id = "x",
+    quantity = c(qmap05 = "test_statistic", reliability = "parcel:reliability"),
+    distribution = c(qmap05 = "z", reliability = NA),
+    include_volume = FALSE
+  )
+  expect_true(all(is.na(manifest$units)))
+  legend <- .montage_legend("Z-statistic", NULL)
+  expect_identical(legend$text, "Z-statistic")
+  # Explicit units are still honoured.
+  with_units <- parcel_render_manifest(
+    results, inputs$atlas, analysis_id = "x", metrics = "qmap05",
+    units = "z", include_volume = FALSE
+  )
+  expect_identical(with_units$units, "z")
+})
+
+test_that("a manifest legend_title wins over the derived colour-bar title (#24)", {
+  row <- data.frame(effective_profile_label = "Test statistic",
+                    quantity = "test_statistic", distribution = "z",
+                    legend_title = "signed z", stringsAsFactors = FALSE)
+  expect_identical(.montage_row_legend_title(row), "signed z")
+  row$legend_title <- NA_character_
+  expect_identical(.montage_row_legend_title(row), "Z-statistic")
+  row$legend_title <- "  "
+  expect_identical(.montage_row_legend_title(row), "Z-statistic")
+  row$legend_title <- NULL
+  row$quantity <- "estimate"
+  row$effective_profile_label <- "Beta estimate"
+  expect_identical(.montage_row_legend_title(row), "Beta estimate")
+})
