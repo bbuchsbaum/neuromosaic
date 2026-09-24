@@ -141,14 +141,24 @@ body > h1.title, body > h4.date, body > h4.author, #header, #TOC { display: none
 }
 
 /* Analysis sections */
-.nm-analysis-group, .nm-panel-heading { scroll-margin-top: 72px; }
+.nm-analysis-group, .nm-panel-heading { scroll-margin-top: 8px; }
 .nm-analysis-group {
   margin: 0;
-  padding: 36px 0 16px;
+  padding: 26px 0 16px;
   border-top: 1px solid var(--nm-rule);
 }
 h1 + .nm-analysis-group, h1 + div + .nm-analysis-group { border-top: 0; }
-.nm-panel-heading { margin: 0 0 10px; }
+.nm-panel-heading { margin: 0 0 6px; }
+/* Each model's name and variant tabs stay pinned while its maps scroll by;
+   the next model's head pushes it away. */
+.nm-group-head {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin: 0 0 4px;
+  padding: 10px 0 0;
+  background: var(--nm-page);
+}
 .nm-layout-path {
   color: var(--nm-muted);
   font: 500 11px/1.4 var(--nm-mono);
@@ -170,7 +180,7 @@ h1 + .nm-analysis-group, h1 + div + .nm-analysis-group { border-top: 0; }
   font-weight: 620;
 }
 /* With working tabs the selected tab already names the variant. */
-.nm-js .nm-map-tabs ~ .nm-map-variant .nm-variant-title {
+.nm-js .nm-group-head:has(.nm-map-tabs) ~ .nm-map-variant .nm-variant-title {
   clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden;
   position: absolute; white-space: nowrap; width: 1px;
 }
@@ -255,16 +265,13 @@ h1 + .nm-analysis-group, h1 + div + .nm-analysis-group { border-top: 0; }
 }
 .nm-map-tab[aria-selected="true"] .nm-tab-count { background: var(--nm-accent-soft); color: var(--nm-accent-ink); }
 .nm-map-tab[data-nm-empty="true"] { color: var(--nm-muted); }
-.nm-map-tab[data-nm-empty="true"] .nm-tab-count { background: transparent; color: var(--nm-muted); }
+.nm-map-tab[data-nm-empty="true"] .nm-tab-count { background: transparent; color: var(--nm-muted); opacity: 0.6; }
 
 /* One switch for every section, pinned while scrolling through the maps. */
 .nm-maps-bar {
-  position: sticky;
-  top: 0;
-  z-index: 5;
   display: none;
   align-items: center;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 6px 12px;
   margin: 8px 0 0;
   padding: 10px 0;
@@ -278,17 +285,6 @@ h1 + .nm-analysis-group, h1 + div + .nm-analysis-group { border-top: 0; }
   font-weight: 650;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-.nm-maps-bar-context {
-  flex: 1 1 0;
-  min-width: 0;
-  overflow: hidden;
-  text-align: right;
-  color: var(--nm-ink);
-  font-size: 13px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .nm-global-tabs { flex: 0 1 auto; }
 .nm-global-tabs .nm-map-tab[aria-pressed="true"] {
@@ -389,7 +385,14 @@ h1 + .nm-analysis-group, h1 + div + .nm-analysis-group { border-top: 0; }
 }
 .nm-table .num { text-align: right; }
 .nm-peak-table td:first-child { color: var(--nm-ink); font-weight: 600; }
-.nm-peak-table { width: auto; min-width: min(640px, 100%); }
+.nm-peak-table { width: auto; min-width: min(36rem, 100%); }
+.nm-table caption {
+  caption-side: top;
+  padding: 0 0 6px;
+  color: var(--nm-muted);
+  font-size: 12.5px;
+  text-align: left;
+}
 .nm-table-wrap { margin: 0 0 28px; }
 .nm-table-wrap > table { margin: 0; }
 .nm-table tr:last-child td { border-bottom: 0; }
@@ -464,12 +467,22 @@ details.nm-details > summary {
   }
   .nm-map-tabs::-webkit-scrollbar { display: none; }
   .nm-map-tab { flex: 0 0 auto; white-space: nowrap; }
-  .nm-summary-table th[scope="row"] { width: auto; min-width: 9em; }
-  .nm-summary .nm-table-wrap {
+  .nm-summary-table { min-width: 0; }
+  .nm-summary-table th[scope="row"] {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    width: auto;
+    min-width: 7.5em;
+    background: var(--nm-page);
+  }
+  .nm-summary-table th, .nm-summary-table .nm-cell { padding-inline: 6px; }
+  .nm-cell-max { font-size: 10.5px; }
+  .nm-summary .nm-table-wrap.is-clipped {
     -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent);
     mask-image: linear-gradient(90deg, #000 85%, transparent);
   }
-  .nm-maps-bar-context { display: none; }
+  .nm-group-head { position: static; }
   .nm-maps-bar { flex-wrap: wrap; }
   .nm-cell { padding: 6px 8px; }
   .nm-maps-bar-label { width: 100%; }
@@ -485,7 +498,7 @@ details.nm-details > summary {
   .nm-panel-title, .nm-variant-title, .section.level1 > h1 { break-after: avoid; }
   .nm-toc, .nm-map-selector { display: none !important; }
   .nm-map-variant[hidden] { display: block !important; }
-  .nm-js .nm-map-tabs ~ .nm-map-variant .nm-variant-title {
+  .nm-js .nm-group-head:has(.nm-map-tabs) ~ .nm-map-variant .nm-variant-title {
     position: static; clip: auto; clip-path: none; height: auto; width: auto;
   }
   .nm-analysis-group { break-inside: avoid-page; }

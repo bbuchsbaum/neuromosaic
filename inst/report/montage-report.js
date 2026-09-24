@@ -182,28 +182,15 @@ document.addEventListener('DOMContentLoaded', function () {
     reflect();
   }
 
-  // Name the section under the sticky bar so the reader keeps their place.
-  var context = document.querySelector('[data-nm-bar-context]');
-  if (context && groups.length && 'IntersectionObserver' in window) {
-    var titleOf = function (g) {
-      var t = g.querySelector('.nm-panel-title');
-      return t ? t.textContent : '';
+  // Fade the right edge of a scrolling table only while columns remain hidden.
+  document.querySelectorAll('.nm-table-wrap').forEach(function (wrap) {
+    var check = function () {
+      wrap.classList.toggle('is-clipped', wrap.scrollLeft + wrap.clientWidth < wrap.scrollWidth - 1);
     };
-    var onScreen = new Map();
-    var update = function () {
-      var best = null;
-      onScreen.forEach(function (top, g) { if (best === null || top < best.top) best = { g: g, top: top }; });
-      context.textContent = best ? titleOf(best.g) : '';
-    };
-    var watcher = new IntersectionObserver(function (entries) {
-      entries.forEach(function (e) {
-        if (e.isIntersecting) onScreen.set(e.target, e.boundingClientRect.top);
-        else onScreen.delete(e.target);
-      });
-      update();
-    }, { rootMargin: '-80px 0px -55% 0px' });
-    groups.forEach(function (g) { watcher.observe(g); });
-  }
+    wrap.addEventListener('scroll', check, { passive: true });
+    window.addEventListener('resize', check);
+    check();
+  });
 
   document.querySelectorAll('[data-nm-goto-group]').forEach(function (cell) {
     cell.addEventListener('click', function (e) {

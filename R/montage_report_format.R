@@ -512,9 +512,9 @@ montage_report_formatters <- function(manifest = NULL,
   if (inherits(tbl, "montage_parcel_table")) {
     out <- data.frame(
       Parcel = tbl$parcel,
-      Network = tbl$network,
-      Hemisphere = tbl$hemisphere,
       Value = round(tbl$value, 2),
+      Network = tbl$network,
+      Hemi = .montage_report_hemi_short(tbl$hemisphere),
       ID = tbl$parcel_id,
       check.names = FALSE
     )
@@ -590,7 +590,13 @@ montage_report_formatters <- function(manifest = NULL,
     )
     n_total <- attr(tbl, "n_total")
     if (isTRUE(is_html)) {
-      cat(.montage_report_html_table(formatted, class = "nm-table nm-peak-table"),
+      caption <- if (inherits(tbl, "montage_parcel_table")) {
+        n_all <- n_total %||% nrow(tbl)
+        paste0(n_all, if (n_all == 1L) " surviving parcel" else " surviving parcels",
+               ", strongest first")
+      }
+      cat(.montage_report_html_table(formatted, class = "nm-table nm-peak-table",
+                                     caption = caption),
           "\n", sep = "")
       if (!is.null(n_total) && n_total > nrow(tbl)) {
         cat("<p class=\"nm-table-note\">Strongest ", nrow(tbl), " of ",
@@ -609,7 +615,7 @@ montage_report_formatters <- function(manifest = NULL,
 
 # Minimal accessible HTML table: numeric columns are right-aligned via a
 # class rather than by column position.
-.montage_report_html_table <- function(df, class = "nm-table") {
+.montage_report_html_table <- function(df, class = "nm-table", caption = NULL) {
   num <- vapply(df, is.numeric, logical(1))
   esc <- .montage_report_html_escape
   # One decimal count per column so values align on the point.
@@ -641,6 +647,7 @@ montage_report_formatters <- function(manifest = NULL,
     }, ""), collapse = ""), "</tr>")
   }, "")
   paste0("<div class=\"nm-table-wrap\"><table class=\"", class, "\">",
+         if (!is.null(caption)) paste0("<caption>", esc(caption), "</caption>"),
          head, "<tbody>", paste(body, collapse = ""), "</tbody></table></div>")
 }
 
@@ -870,7 +877,7 @@ montage_report_formatters <- function(manifest = NULL,
     .montage_report_html_escape(group$analysis_id),
     "\" aria-label=\"",
     .montage_report_html_escape(group_label),
-    "\">\n",
+    "\">\n<div class=\"nm-group-head\">\n",
     sep = ""
   )
   .montage_report_emit_panel_heading(
@@ -885,7 +892,10 @@ montage_report_formatters <- function(manifest = NULL,
   )
 
   style <- .montage_report_selector_style(map_selector, length(rows))
-  if (identical(style, "none")) return(invisible(NULL))
+  if (identical(style, "none")) {
+    cat("</div>\n")
+    return(invisible(NULL))
+  }
   labels <- vapply(rows, function(i) {
     label <- .montage_report_scalar(manifest[i, , drop = FALSE],
                                     "selector_label")
@@ -931,7 +941,7 @@ montage_report_formatters <- function(manifest = NULL,
         sep = ""
       )
     }
-    cat("</div>\n")
+    cat("</div>\n</div>\n")
   } else {
     select_id <- .montage_report_dom_id(
       "nm-select", group$analysis_id, "selector"
@@ -952,7 +962,7 @@ montage_report_formatters <- function(manifest = NULL,
         sep = ""
       )
     }
-    cat("</select></div>\n")
+    cat("</select></div>\n</div>\n")
   }
   invisible(NULL)
 }
@@ -1256,7 +1266,7 @@ montage_report_formatters <- function(manifest = NULL,
     paste0("<button type=\"button\" class=\"nm-map-tab\" aria-pressed=\"false\" ",
            "data-nm-label=\"", esc(labels), "\">", esc(labels), "</button>",
            collapse = ""),
-    "</div><span class=\"nm-maps-bar-context\" data-nm-bar-context></span></div>\n\n",
+    "</div></div>\n\n",
     sep = ""
   )
   invisible(NULL)
@@ -1283,4 +1293,11 @@ montage_report_formatters <- function(manifest = NULL,
     return(as.character(dist))
   }
   "Value"
+}
+
+.montage_report_hemi_short <- function(hemi) {
+  h <- tolower(as.character(hemi))
+  out <- ifelse(h %in% c("left", "lh", "l"), "L",
+                ifelse(h %in% c("right", "rh", "r"), "R", as.character(hemi)))
+  out
 }
