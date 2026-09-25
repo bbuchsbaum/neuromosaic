@@ -75,14 +75,14 @@ test("parcel report surface view matches the selected metric baseline", async ({
     "data-nm-surface-map", "parcel-qa_standard_error"
   );
 
-  await router.getByRole("radio", { name: "Surface", exact: true }).check();
-  await expect(host.locator("[data-nm-surface-status]")).toContainText(
-    "Interactive surface ready",
-    { timeout: 20_000 }
-  );
-  await expect(host.locator("canvas")).toBeVisible();
+  await router.getByRole("radio", { name: "3D surface", exact: true }).check();
+  await expect(host).toHaveAttribute("data-nm-surface-ready", "true", {
+    timeout: 20_000
+  });
+  await expect(host.locator("[data-nm-surface-status]")).toBeHidden();
+  await expect(host.locator(".nm-surface-widget canvas")).toBeVisible();
   await expect(host.getByRole("combobox", {
-    name: "Surface colormap"
+    name: "Surface colour map", includeHidden: true
   })).toHaveValue("inferno");
   await settleFrames(page);
 

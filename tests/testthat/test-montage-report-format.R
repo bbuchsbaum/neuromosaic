@@ -97,6 +97,9 @@ test_that("montage_report_formatters emits styled HTML overview and QC", {
   summary <- paste(capture.output(fmt$emit_qc_summary(qc)), collapse = "\n")
 
   expect_match(summary, "nm-qc-section", fixed = TRUE)
+  # Wide QC tables scroll inside their own wrapper on narrow screens.
+  expect_match(summary, "<div class=\"nm-table-wrap\">\\s*<table[^>]*nm-qc-table",
+               perl = TRUE)
   expect_match(summary, "nm-status-warning", fixed = TRUE)
   expect_match(summary, "nm-status-ok", fixed = TRUE)
   expect_match(summary, "Input N", fixed = TRUE)

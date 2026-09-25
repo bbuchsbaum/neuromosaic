@@ -740,7 +740,9 @@ montage_report_formatters <- function(manifest = NULL,
     cat(
       "<p class=\"nm-panel-meta\">",
       paste0("<span>", .montage_report_html_escape(parts), "</span>",
-             collapse = "<span class=\"nm-sep\" aria-hidden=\"true\"> \u00b7 </span>"),
+             # An entity, not a literal middle dot: cat() in a C locale
+             # would print "<U+00B7>".
+             collapse = "<span class=\"nm-sep\" aria-hidden=\"true\"> &middot; </span>"),
       "</p>\n\n",
       sep = ""
     )
@@ -791,7 +793,10 @@ montage_report_formatters <- function(manifest = NULL,
       .montage_report_html_escape(display[["Status"]]),
       "</span>"
     )
-    cat("\n\n<section class=\"nm-qc-section\">\n<h2>Effective N / QC</h2>\n")
+    # The wrapper scrolls wide QC tables inside themselves on narrow screens
+    # instead of widening the page (as the other report tables do).
+    cat("\n\n<section class=\"nm-qc-section\">\n<h2>Effective N / QC</h2>\n",
+        "<div class=\"nm-table-wrap\">\n", sep = "")
     cat(
       knitr::kable(
         display_html,
@@ -802,7 +807,7 @@ montage_report_formatters <- function(manifest = NULL,
       ),
       sep = "\n"
     )
-    cat("\n</section>\n\n")
+    cat("\n</div>\n</section>\n\n")
   } else {
     cat("\n\n## Effective N / QC\n\n")
     cat(knitr::kable(display, format = "pipe", row.names = FALSE), sep = "\n")
