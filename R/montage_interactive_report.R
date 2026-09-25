@@ -139,7 +139,7 @@
       engine_version = .montage_neuroimjs_version,
       adapter_version = .montage_neuroimjs_adapter_version,
       runtime_sha256 =
-        "219f1eaf33b212f14256eb255dbb5b6c090a8ff71335485dc8cbad6a14ebbd33"
+        "0c5176bf47d69c29df10c6e751c8ba9950b0648312fc3f01d4df3c7d9a2c3b48"
     ),
     class = "montage_interactive_report"
   )
