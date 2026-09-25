@@ -539,3 +539,43 @@ test_that("embedded compressed surfaces enforce an explicit byte budget", {
     "raw.*gzip.*base64.*exceeding max_embed_mb"
   )
 })
+
+test_that("surface parcel lookups describe atlas vertices one-to-one", {
+  geometry <- neurosurf::SurfaceGeometry(
+    matrix(c(0,0,0, 0,2,0, 0,0,2), 3, 3, byrow = TRUE),
+    matrix(c(0L,1L,2L), 1, 3), hemi = "left")
+  hemi <- function(data) methods::new("LabeledNeuroSurface",
+    geometry = geometry, data = data, indices = 1:3,
+    labels = "cortex", cols = "#888888")
+  atlas <- structure(list(
+    lh_atlas = hemi(c(0, 1, 2)), rh_atlas = hemi(c(3, 3, 0)),
+    ids = 1:3, labels = c("Vis_1", "Vis_2", "Default_PFC_1"),
+    orig_labels = c("LH_Vis_1", "LH_Vis_2", "RH_Default_PFC_1"),
+    network = c("Vis", "Vis", "Default"), name = "toy"
+  ), class = "surfatlas")
+  lookup <- .montage_surface_parcel_lookup(atlas, list(left = geometry, right = geometry))
+  expect_identical(lookup$atlas, "toy")
+  expect_identical(lookup$ids$left, c(0L, 1L, 2L))
+  expect_identical(lookup$ids$right, c(3L, 3L, 0L))
+  expect_identical(lookup$table$full[[3]], "RH_Default_PFC_1")
+
+  packed <- .package_montage_surface_parcels(lookup)
+  expect_identical(packed$descriptor$payloads$left, "nm-surface-parcels-left")
+  expect_identical(packed$descriptor$parcels[["3"]]$network, "Default")
+  gz <- tempfile(fileext = ".gz")
+  writeBin(jsonlite::base64_dec(packed$payloads$right$base64), gz)
+  con <- gzfile(gz, "rb")
+  decoded <- readBin(con, "integer", n = 3L, size = 2L, signed = FALSE, endian = "little")
+  close(con)
+  expect_identical(decoded, c(3L, 3L, 0L))
+
+  # A mismatched vertex count or a table without ids yields no lookup.
+  wrong <- atlas
+  wrong$lh_atlas <- hemi(c(0, 1, 2))
+  wrong$lh_atlas@data <- c(0, 1)
+  expect_null(.montage_surface_parcel_lookup(wrong, list(left = geometry)))
+  no_ids <- atlas
+  no_ids$ids <- NULL
+  expect_null(.montage_surface_parcel_lookup(no_ids, list(left = geometry)))
+  expect_null(.package_montage_surface_parcels(NULL))
+})

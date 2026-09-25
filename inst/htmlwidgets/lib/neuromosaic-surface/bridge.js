@@ -188,6 +188,52 @@
     });
   }
 
+  // Atlas parcels ---------------------------------------------------------------
+  // One lookup per page: per-hemisphere uint16 parcel ids (gzip, base64) plus
+  // a label table. Decoded lazily on first use and shared by every host.
+  var parcelLookup = null;
+
+  function loadParcels() {
+    if (parcelLookup) return parcelLookup;
+    var tableNode = document.getElementById("nm-surface-parcel-table");
+    if (!tableNode) {
+      parcelLookup = Promise.resolve(null);
+      return parcelLookup;
+    }
+    var descriptor;
+    try {
+      descriptor = JSON.parse(tableNode.textContent || "{}");
+    } catch (error) {
+      parcelLookup = Promise.resolve(null);
+      return parcelLookup;
+    }
+    var sides = Object.keys(descriptor.payloads || {});
+    parcelLookup = Promise.all(sides.map(function (side) {
+      var node = document.getElementById(descriptor.payloads[side]);
+      if (!node) return Promise.resolve(null);
+      return decompress(base64Bytes(node.textContent || ""), node.getAttribute("data-compression") || "none")
+        .then(function (bytes) {
+          var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+          var ids = new Uint16Array(bytes.byteLength / 2);
+          for (var i = 0; i < ids.length; i += 1) ids[i] = view.getUint16(i * 2, true);
+          return ids;
+        });
+    })).then(function (arrays) {
+      var ids = {};
+      sides.forEach(function (side, index) { if (arrays[index]) ids[side] = arrays[index]; });
+      return { atlas: descriptor.atlas || "", ids: ids, parcels: descriptor.parcels || {} };
+    }).catch(function () { return null; });
+    return parcelLookup;
+  }
+
+  function regionAt(host, surfaceId, vertex) {
+    var lookup = host.__nmSurfaceParcels;
+    var ids = lookup && lookup.ids[surfaceId];
+    if (!ids || vertex < 0 || vertex >= ids.length) return null;
+    var id = ids[vertex];
+    return display.describeParcel(id, lookup.parcels[String(id)], lookup.atlas);
+  }
+
   // Snapshot helpers --------------------------------------------------------
   function layerFor(snapshot, layerId) {
     if (!snapshot) return null;
@@ -808,9 +854,22 @@
     line.textContent = value === null
       ? "No data"
       : (symbol === "value" ? "" : symbol + " = ") + fmt(value) + (symbol === "value" && legend.units ? " " + legend.units : "");
+    if (value !== null && !shown) {
+      var below = document.createElement("em");
+      below.textContent = " below threshold";
+      line.appendChild(below);
+    }
+    var region = regionAt(host, hit.surfaceId, hit.vertexIndex);
     var sub = document.createElement("span");
-    sub.textContent = hemisphere + (value !== null && !shown ? " · below threshold" : "");
+    sub.className = "nm-sv-readout-region";
+    sub.textContent = hemisphere + (region ? " \u00b7 " + region.name : "");
     readout.append(line, sub);
+    if (region && region.detail) {
+      var detail = document.createElement("span");
+      detail.className = "nm-sv-readout-detail";
+      detail.textContent = region.detail;
+      readout.appendChild(detail);
+    }
     var box = host.querySelector(".nm-sv-stage").getBoundingClientRect();
     var x = clientX - box.left + 14;
     var y = clientY - box.top + 14;
@@ -904,6 +963,7 @@
         handle.viewer.setFigureBackground(parseInt(ground.replace("#", ""), 16));
       }
       selectMap(host, host.getAttribute("data-nm-surface-map"));
+      loadParcels().then(function (lookup) { host.__nmSurfaceParcels = lookup; });
       buildViews(host);
       host.__nmSurfaceView = initialView(host);
       markView(host, host.__nmSurfaceView);

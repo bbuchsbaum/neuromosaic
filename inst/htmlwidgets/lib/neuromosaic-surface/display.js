@@ -126,7 +126,53 @@
     return kept.sort(function (a, b) { return a - b; });
   }
 
+  // Yeo 7/17 network codes as used by Schaefer parcellations.
+  var NETWORKS = {
+    Vis: "Visual", VisCent: "Visual (central)", VisPeri: "Visual (peripheral)",
+    SomMot: "Somatomotor", SomMotA: "Somatomotor A", SomMotB: "Somatomotor B",
+    DorsAttn: "Dorsal attention", DorsAttnA: "Dorsal attention A", DorsAttnB: "Dorsal attention B",
+    SalVentAttn: "Salience / ventral attention", SalVentAttnA: "Salience / ventral attention A",
+    SalVentAttnB: "Salience / ventral attention B",
+    Limbic: "Limbic", LimbicA: "Limbic A", LimbicB: "Limbic B",
+    Cont: "Control", ContA: "Control A", ContB: "Control B", ContC: "Control C",
+    Default: "Default", DefaultA: "Default A", DefaultB: "Default B", DefaultC: "Default C",
+    TempPar: "Temporal-parietal"
+  };
+  var REGIONS = {
+    PFC: "prefrontal", PFCl: "lateral prefrontal", PFCm: "medial prefrontal",
+    PFCd: "dorsal prefrontal", PFCv: "ventral prefrontal", PFCmp: "medial posterior prefrontal",
+    Par: "parietal", ParOper: "parietal operculum", Temp: "temporal", TempPole: "temporal pole",
+    TempOcc: "temporal-occipital", Med: "medial", FrOper: "frontal operculum",
+    FrOperIns: "frontal operculum / insula", Ins: "insula", PrC: "precentral", PrCv: "ventral precentral",
+    PrCd: "dorsal precentral", PostC: "postcentral", pCun: "precuneus", pCunPCC: "precuneus / PCC",
+    PCC: "posterior cingulate", Cingm: "mid-cingulate", ACC: "anterior cingulate",
+    OFC: "orbitofrontal", IPL: "inferior parietal", IPS: "intraparietal sulcus",
+    SPL: "superior parietal", FEF: "frontal eye field", ExStr: "extrastriate",
+    ExStrInf: "inferior extrastriate", ExStrSup: "superior extrastriate", Striate: "striate",
+    StriCal: "striate / calcarine", Aud: "auditory", Cent: "central", S2: "secondary somatosensory",
+    Rsp: "retrosplenial", PHC: "parahippocampal", Vent: "ventral", Post: "posterior",
+    Cinga: "anterior cingulate", ParMed: "medial parietal", Precuneus: "precuneus"
+  };
+
+  // Readable region text for a parcel id and its atlas table entry:
+  // { name: "Visual network, extrastriate", detail: "LH_Vis_3 · Schaefer ..." }.
+  // Parcel 0 (or a missing entry) is the medial wall / unlabelled cortex.
+  function describeParcel(id, entry, atlas) {
+    var parcel = Number(id);
+    if (!parcel || !entry) return { name: "Medial wall", detail: atlas || "" };
+    var code = entry.full || entry.label || String(parcel);
+    var parts = String(entry.label || code).split("_");
+    var network = entry.network || parts[0];
+    var name = NETWORKS[network] ? NETWORKS[network] + " network" : network;
+    var region = parts.slice(1).filter(function (token) {
+      return !/^\d+$/.test(token) && token !== network;
+    }).map(function (token) { return REGIONS[token] || token; });
+    if (region.length) name += ", " + region.join(" ");
+    return { name: name, detail: code + (atlas ? " \u00b7 " + atlas : "") };
+  }
+
   return Object.freeze({
+    describeParcel: describeParcel,
     formatNumber: formatNumber,
     legendTicks: legendTicks,
     pair: pair,

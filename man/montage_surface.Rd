@@ -130,4 +130,9 @@ interpolation, aggregation, and smoothing defaults as [surf_montage()].
 Calling `montage_surface()` is therefore the explicit opt-in to
 volume-to-surface projection. Set `projection = "none"` to reject volume
 rows, or supply `values` containing already projected vertex values.
+
+Hovering (or tapping) the surface reports the map value, the hemisphere,
+and, when the surface atlas labels every displayed vertex, the atlas
+parcel and its network (for example "Visual network", `RH_Vis_7`). The
+parcel lookup is embedded once per report as compressed per-vertex ids.
 }

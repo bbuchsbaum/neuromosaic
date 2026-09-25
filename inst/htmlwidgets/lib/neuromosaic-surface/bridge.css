@@ -269,14 +269,17 @@
   color: var(--nm-sv-ink);
   font-size: 12px;
   line-height: 1.35;
-  white-space: nowrap;
   pointer-events: none;
   -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
 }
 .nm-sv-readout[hidden] { display: none; }
 .nm-sv-readout b { font-weight: 650; font-variant-numeric: tabular-nums; }
-.nm-sv-readout span { display: block; color: var(--nm-sv-muted); font-size: 11px; }
+.nm-sv-readout { max-width: 300px; white-space: normal; }
+.nm-sv-readout b em { font-style: normal; font-weight: 500; color: var(--nm-sv-muted); }
+.nm-sv-readout span { display: block; }
+.nm-sv-readout-region { color: var(--nm-sv-ink-2); font-size: 11.5px; }
+.nm-sv-readout-detail { color: var(--nm-sv-muted); font-size: 10.5px; overflow-wrap: anywhere; }
 .nm-sv-marker {
   position: absolute;
   top: -3px;
