@@ -97,7 +97,7 @@ test_that("bundle reports carry a primary-first VolumeScene beside static panels
   expect_setequal(
     basename(rd$interactive$bundle_files),
     c(
-      "scene.json", "neuroimjs-0.3.0.umd.js", "adapter.js",
+      "scene.json", "neuroimjs-0.4.0.umd.js", "adapter.js",
       "adapter.css", "display.js", "geometry.js", "runtime.json",
       "LICENSE-neuroimjs"
     )
@@ -122,7 +122,7 @@ test_that("bundle reports carry a primary-first VolumeScene beside static panels
   expect_gt(rd$interactive$summary$compressed_bytes, 0)
   expect_gt(rd$interactive$summary$uncompressed_bytes, 0)
   expect_identical(rd$interactive$summary$embedded_bytes, 0)
-  expect_match(rd$provenance$interactive_engine, "neuroimjs 0.3.0",
+  expect_match(rd$provenance$interactive_engine, "neuroimjs 0.4.0",
                fixed = TRUE)
   expect_identical(rd$provenance$interactive_asset_count,
                    length(scene$assets))
@@ -294,7 +294,7 @@ test_that("interactive host markup remains lazy and analysis scoped", {
   )
 
   expect_match(host, "Explore volume interactively", fixed = TRUE)
-  expect_match(host, "Interactive map: <strong data-nm-volume-target>Z</strong>",
+  expect_match(host, "Interactive map: <strong data-nm-volume-target>Z statistic</strong>",
                fixed = TRUE)
   expect_match(host, "data-nm-volume-analysis=\"faces\"", fixed = TRUE)
   expect_match(host, "data-nm-volume-map=\"faces_z\"", fixed = TRUE)
@@ -326,4 +326,23 @@ test_that("interactive host markup remains lazy and analysis scoped", {
   )$emit_document())
   expect_error(montage_interactive_report_hooks(list(), is_html = TRUE),
                "prepared montage interactive data")
+})
+
+test_that("inlined runtime assets are ASCII-escaped for any output locale", {
+  js <- intToUtf8(c(0x61, 0x2013, 0x62, 0x1F600))
+  expect_identical(
+    neuromosaic:::.montage_ascii_escape(js, "js"),
+    "a\\u2013b\\uD83D\\uDE00"
+  )
+  css <- paste0("content:\"", intToUtf8(0x21BA), "\"")
+  expect_identical(
+    neuromosaic:::.montage_ascii_escape(css, "css"),
+    "content:\"\\0021BA \""
+  )
+  expect_identical(neuromosaic:::.montage_ascii_escape("plain", "js"), "plain")
+  runtime <- neuromosaic:::.montage_read_inline_asset(file.path(
+    neuromosaic:::.montage_volume_runtime_path(),
+    paste0("neuroimjs-", neuromosaic:::.montage_neuroimjs_version, ".umd.js")
+  ))
+  expect_false(any(utf8ToInt(runtime) > 127L))
 })

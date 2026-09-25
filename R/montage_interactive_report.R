@@ -1,7 +1,7 @@
 # Materialization and HTML emission for optional interactive volume reports.
 
-.montage_neuroimjs_version <- "0.3.0"
-.montage_neuroimjs_adapter_version <- "1.1.0"
+.montage_neuroimjs_version <- "0.4.0"
+.montage_neuroimjs_adapter_version <- "1.2.0"
 .montage_volume_runtime_dir <- file.path(
   "htmlwidgets", "lib", "neuromosaic-volume"
 )
@@ -139,7 +139,7 @@
       engine_version = .montage_neuroimjs_version,
       adapter_version = .montage_neuroimjs_adapter_version,
       runtime_sha256 =
-        "f9623745f32e70c8960edc27724e6dc2f0281b5bfe4ce7d74eb9b009b8357bef"
+        "219f1eaf33b212f14256eb255dbb5b6c090a8ff71335485dc8cbad6a14ebbd33"
     ),
     class = "montage_interactive_report"
   )
@@ -360,9 +360,9 @@
   analysis <- x$scene$analyses[[match(analysis_id, ids)]]
   map_ids <- vapply(analysis$maps, `[[`, character(1), "map_id")
   primary_map <- analysis$maps[[match(analysis$primary_map_id, map_ids)]]
-  primary_map_label <- primary_map$selector_label
+  primary_map_label <- primary_map$label
   if (is.null(primary_map_label) || !nzchar(primary_map_label)) {
-    primary_map_label <- primary_map$label
+    primary_map_label <- primary_map$selector_label
   }
   summary <- x$summary
   payload_size <- if (identical(summary$packaging, "embed")) {
@@ -462,7 +462,41 @@ montage_interactive_report_hooks <- function(interactive = NULL,
     stop("Missing bundled interactive runtime asset: ", basename(path),
          call. = FALSE)
   }
-  paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+  text <- paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+  type <- if (identical(tolower(tools::file_ext(path)), "css")) "css" else "js"
+  .montage_ascii_escape(text, type)
+}
+
+# Rewrite non-ASCII characters as JavaScript (\uXXXX) or CSS (\XXXXXX) escapes so
+# inlined runtime assets survive being written from a non-UTF-8 locale, where R
+# would otherwise emit literal "<U+2013>" markers into the page.
+.montage_ascii_escape <- function(text, type = c("js", "css")) {
+  type <- match.arg(type)
+  # Work on code points rather than regex: under a C locale R's regex engine
+  # would treat each UTF-8 byte as a separate character.
+  codes <- utf8ToInt(text)
+  if (anyNA(codes)) stop("Bundled runtime asset is not valid UTF-8.", call. = FALSE)
+  wide <- which(codes > 0x7F)
+  if (!length(wide)) return(text)
+  escape <- function(code) {
+    # CSS consumes one whitespace character after a hex escape; supply it so
+    # an original following space survives.
+    if (identical(type, "css")) return(sprintf("\\%06X ", code))
+    if (code <= 0xFFFF) return(sprintf("\\u%04X", code))
+    code <- code - 0x10000
+    sprintf("\\u%04X\\u%04X", 0xD800 + code %/% 0x400, 0xDC00 + code %% 0x400)
+  }
+  # Stitch ASCII runs (converted in bulk) between the escaped characters.
+  starts <- c(1L, wide + 1L)
+  ends <- c(wide - 1L, length(codes))
+  runs <- vapply(seq_along(starts), function(i) {
+    if (starts[[i]] > ends[[i]]) return("")
+    intToUtf8(codes[starts[[i]]:ends[[i]]])
+  }, character(1))
+  pieces <- character(2L * length(wide) + 1L)
+  pieces[seq(1L, length(pieces), by = 2L)] <- runs
+  pieces[seq(2L, length(pieces), by = 2L)] <- vapply(wide, function(i) escape(codes[[i]]), character(1))
+  paste(pieces, collapse = "")
 }
 
 .montage_html_escape <- function(x) {

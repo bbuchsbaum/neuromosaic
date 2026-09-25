@@ -1,157 +1,733 @@
 .nm-volume-interactive {
-  margin: 1rem 0 1.5rem;
-  padding: 0.9rem;
-  border: 1px solid #d8dde4;
-  border-radius: 0.65rem;
-  background: #f8fafc;
+  --nm-vv-ink: var(--nm-ink, #1c2226);
+  --nm-vv-ink-2: var(--nm-ink-2, #3e4952);
+  --nm-vv-muted: var(--nm-muted, #66717b);
+  --nm-vv-rule: var(--nm-rule, #e2e5e6);
+  --nm-vv-rule-strong: var(--nm-rule-strong, #c9cfd2);
+  --nm-vv-surface: var(--nm-surface, #ffffff);
+  --nm-vv-accent: var(--nm-accent, #2f6f73);
+  --nm-vv-accent-ink: var(--nm-accent-ink, #235559);
+  --nm-vv-accent-soft: var(--nm-accent-soft, #e4efef);
+  --nm-vv-warn-bg: var(--nm-warn-bg, #fff6e8);
+  --nm-vv-warn-ink: var(--nm-warn-ink, #7a4206);
+  --nm-vv-sans: var(--nm-sans, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Helvetica Neue", Arial, sans-serif);
+  /* The stage is an instrument surface: one near-black shared by the canvas
+     clear colour (adapter.js STAGE_COLOR) so slice tiles show no seams. */
+  --nm-vv-stage: #111619;
+  --nm-vv-stage-ink: #e6eaec;
+  --nm-vv-stage-ink-2: #bac3c8;
+  --nm-vv-stage-muted: #9aa4ac;
+  --nm-vv-stage-rule: rgba(255, 255, 255, 0.1);
+
+  margin: 1.25rem 0 1.5rem;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--nm-vv-rule);
+  border-radius: 10px;
+  background: var(--nm-vv-surface);
+  color: var(--nm-vv-ink);
+  font-family: var(--nm-vv-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
 }
 
 .nm-volume-toggle {
   appearance: none;
-  padding: 0.55rem 0.85rem;
-  border: 1px solid #1a5f5a;
-  border-radius: 0.4rem;
-  background: #1a5f5a;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--nm-vv-accent);
+  border-radius: 7px;
+  background: var(--nm-vv-accent);
   color: #fff;
   font: inherit;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+}
+
+.nm-volume-toggle:hover {
+  background: var(--nm-vv-accent-ink);
+  border-color: var(--nm-vv-accent-ink);
+}
+
+.nm-volume-toggle[aria-expanded="true"] {
+  background: var(--nm-vv-surface);
+  color: var(--nm-vv-accent-ink);
+  border-color: var(--nm-vv-rule-strong);
+}
+
+.nm-volume-toggle[aria-expanded="true"]:hover {
+  background: var(--nm-vv-accent-soft);
 }
 
 .nm-volume-toggle:focus-visible,
 .nm-volume-map-select:focus-visible,
 .nm-volume-reset-position:focus-visible {
-  outline: 3px solid rgba(26, 95, 90, 0.28);
+  outline: 2px solid color-mix(in srgb, var(--nm-vv-accent) 45%, transparent);
   outline-offset: 2px;
 }
 
 .nm-volume-toggle:disabled {
-  cursor: wait;
+  cursor: progress;
   opacity: 0.7;
 }
 
 .nm-volume-target {
   display: inline;
-  margin: 0 0 0 0.65rem;
-  color: #334155;
-  font-size: 0.9rem;
+  margin: 0 0 0 10px;
+  color: var(--nm-vv-muted);
+  font-size: 13px;
+}
+
+/* Once the viewer is open, the Map selector names the map. */
+.nm-volume-toggle[aria-expanded="true"] + .nm-volume-target {
+  display: none;
+}
+
+.nm-volume-target strong {
+  color: var(--nm-vv-ink);
+  font-weight: 600;
 }
 
 .nm-volume-status {
-  margin: 0.7rem 0 0;
-  color: #48515d;
-  font-size: 0.92rem;
+  margin: 8px 0 0;
+  color: var(--nm-vv-muted);
+  font-size: 12.5px;
 }
 
-.nm-volume-status[data-state="error"] {
-  color: #9b2c2c;
+/* Once loaded, "ready" is for screen readers only; problems stay visible. */
+.nm-volume-status[data-state="ready"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
-.nm-volume-status[data-state="empty"] {
-  color: #76520e;
-}
-
+.nm-volume-status[data-state="error"],
+.nm-volume-status[data-state="empty"],
 .nm-volume-status[data-state="modified"] {
-  color: #76520e;
-  font-weight: 650;
+  color: var(--nm-vv-warn-ink);
+}
+
+.nm-volume-status[data-state="modified"]::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 1px;
 }
 
 .nm-volume-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(15rem, 19rem);
-  gap: 1rem;
-  min-height: 34rem;
-  margin-top: 0.8rem;
+  grid-template-columns: minmax(0, 1fr) 15.5rem;
+  gap: 20px;
+  align-items: start;
+  margin-top: 14px;
 }
 
 .nm-volume-shell[hidden] {
   display: none;
 }
 
+/* ---- Stage ------------------------------------------------------------ */
+
 .nm-volume-viewer {
   min-width: 0;
-  min-height: 34rem;
   overflow: hidden;
-  border-radius: 0.5rem;
-  background: #0d1117;
+  border-radius: 10px;
+  /* Shows through the 1px grid gap as hairline gutters between views. */
+  background: #22282c;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
 }
 
-.nm-volume-sidebar {
+.nm-volume-viewer [data-nij-view],
+.nm-volume-viewer [data-nij-legend] {
+  background: var(--nm-vv-stage);
+}
+
+.nm-volume-viewer [data-nij-view] {
+  transition: box-shadow 120ms ease;
+}
+
+.nm-volume-viewer [data-nij-view][data-nij-hover],
+.nm-volume-viewer [data-nij-view]:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+.nm-volume-viewer [data-nij-legend] {
+  container-type: size;
+}
+
+.nm-volume-legend {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: clamp(10px, 6cqi, 22px);
+  color: var(--nm-vv-stage-ink);
+  font-size: 12px;
+}
+
+.nm-volume-legend-head {
+  position: absolute;
+  top: clamp(8px, 5cqi, 18px);
+  right: clamp(8px, 5cqi, 18px);
+}
+
+
+.nm-volume-legend .nm-volume-readout {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--nm-vv-stage-ink-2);
+}
+
+.nm-volume-readout-title {
   min-width: 0;
-  overflow: auto;
-  border: 1px solid #d8dde4;
-  border-radius: 0.5rem;
-  background: #fff;
+  overflow: hidden;
+  padding-right: 40px;
+  color: var(--nm-vv-stage-ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nm-volume-readout-coords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+  font-size: 12px;
+}
+
+.nm-volume-readout-key,
+.nm-volume-readout-unit,
+.nm-volume-readout-label,
+.nm-volume-readout-units {
+  color: var(--nm-vv-stage-muted);
+}
+
+.nm-volume-readout-value {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 8px;
+}
+
+.nm-volume-readout-label {
+  flex-basis: 100%;
+  font-size: 11.5px;
+}
+
+.nm-volume-readout-number {
+  color: #ffffff;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+
+.nm-volume-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0;
+  color: var(--nm-vv-stage-ink-2);
+  font-size: 12px;
+}
+
+.nm-volume-cluster-atpeak,
+.nm-volume-cluster-peak {
+  flex-basis: 100%;
+  justify-self: start;
+}
+
+.nm-volume-cluster-peak {
+  flex-basis: auto;
+}
+
+.nm-volume-cluster-key,
+.nm-volume-cluster-atpeak,
+.nm-volume-cluster-empty {
+  color: var(--nm-vv-stage-muted);
+}
+
+.nm-volume-cluster-peak {
+  appearance: none;
+  padding: 3px 8px;
+  border: 1px solid var(--nm-vv-stage-rule);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--nm-vv-stage-ink);
+  font: inherit;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.nm-volume-cluster-peak:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.nm-volume-cluster-peak:disabled {
+  border-color: transparent;
+  background: none;
+  color: var(--nm-vv-stage-muted);
+  cursor: default;
+}
+
+.nm-volume-cluster-peak:focus-visible {
+  outline: 2px solid #8fc7ca;
+  outline-offset: 2px;
+}
+
+.nm-volume-scale {
+  display: grid;
+  gap: 6px;
+  margin-top: auto;
+  padding-inline: 8px;
+}
+
+.nm-volume-scale-hist {
+  display: block;
+  width: 100%;
+  height: clamp(24px, 13cqh, 44px);
+  margin-bottom: -2px;
+}
+
+/* Matplotlib-style end caps: the data extends past the display range. */
+.nm-volume-scale-cap {
+  position: absolute;
+  top: 0;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+}
+
+.nm-volume-scale-cap--low {
+  right: 100%;
+  border-right: 7px solid var(--nm-scale-cap-low, #555);
+}
+
+.nm-volume-scale-cap--high {
+  left: 100%;
+  border-left: 7px solid var(--nm-scale-cap-high, #555);
+}
+
+/* The cursor value lies beyond this end: the cap (in the end colour) is the marker. */
+.nm-volume-scale-bar[data-clipped="high"] .nm-volume-scale-cap--high,
+.nm-volume-scale-bar[data-clipped="low"] .nm-volume-scale-cap--low {
+  filter: drop-shadow(0 0 0.5px #ffffff) drop-shadow(0 0 0.5px #ffffff);
+}
+
+/* Cursor value inside the hidden band: shown, but not drawn on the slices. */
+.nm-volume-scale-marker[data-hidden="true"] {
+  background: #9aa4ac;
+}
+
+.nm-volume-scale-marker[data-hidden="true"]::before {
+  border-top-color: #9aa4ac;
+}
+
+.nm-volume-scale-bar[data-cap-low="true"] {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.nm-volume-scale-bar[data-cap-high="true"] {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.nm-volume-scale-bar[data-cap-low="false"] .nm-volume-scale-cap--low,
+.nm-volume-scale-bar[data-cap-high="false"] .nm-volume-scale-cap--high {
+  display: none;
+}
+
+.nm-volume-readout-voxel {
+  color: var(--nm-vv-stage-muted);
+  flex-basis: 100%;
+  font-size: 11px;
+}
+
+
+.nm-volume-scale-bar {
+  position: relative;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--nm-scale-gradient, #555);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+/* The transparent band: values here are not drawn on the slices. */
+.nm-volume-scale-bar[data-thresholded="true"]::after {
+  content: "";
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: var(--nm-scale-cut-lo, 50%);
+  right: calc(100% - var(--nm-scale-cut-hi, 50%));
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0 1px, transparent 1px 4px),
+    var(--nm-vv-stage);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+/* Threshold edges drawn as dashed marks, like the static figures' key. */
+.nm-volume-scale-cut {
+  position: absolute;
+  z-index: 1;
+  top: -5px;
+  bottom: -5px;
+  width: 0;
+  margin-left: -0.5px;
+  border-left: 1px dashed rgba(255, 255, 255, 0.75);
+}
+
+.nm-volume-scale-marker {
+  position: absolute;
+  z-index: 1;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+
+.nm-volume-scale-marker::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  margin-left: -4px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid #ffffff;
+}
+
+.nm-volume-scale-marker[data-clip="high"] {
+  margin-left: -2px;
+}
+
+.nm-volume-scale-marker[data-clip="low"] {
+  margin-left: 0;
+}
+
+.nm-volume-scale-ticks {
+  position: relative;
+  height: 14px;
+  color: var(--nm-vv-stage-muted);
+  font-size: 10.5px;
+}
+
+.nm-volume-scale-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.nm-volume-scale-tick[data-edge="start"] {
+  transform: none;
+}
+
+.nm-volume-scale-tick[data-edge="end"] {
+  transform: translateX(-100%);
+}
+
+.nm-volume-scale-note {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.nm-volume-readout-clip {
+  align-self: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #aeb6bc;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.nm-volume-hint {
+  margin: 0;
+  color: var(--nm-vv-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* Segmented view switch, shown only while the viewer is stacked. */
+.nm-volume-views {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--nm-control, #eef1f1);
+}
+
+.nm-volume-views[hidden] {
+  display: none;
+}
+
+.nm-volume-view-button {
+  appearance: none;
+  flex: 1;
+  min-height: 36px;
+  touch-action: manipulation;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nm-vv-ink-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.nm-volume-view-button[aria-pressed="true"] {
+  background: var(--nm-vv-surface);
+  color: var(--nm-vv-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(28, 34, 38, 0.14), 0 0 0 1px var(--nm-vv-rule-strong);
+}
+
+.nm-volume-view-button[aria-pressed="false"] {
+  color: var(--nm-vv-ink-2);
+}
+
+.nm-volume-view-button:focus-visible {
+  outline: 2px solid var(--nm-vv-accent);
+  outline-offset: 1px;
+}
+
+.nm-volume-viewer [data-nij-view] {
+  container-type: inline-size;
+}
+
+.nm-volume-view-name {
+  margin-right: 0.55em;
+}
+
+.nm-volume-view-value {
+  color: var(--nm-vv-stage-ink-2);
+}
+
+/* Narrow cells, and phones where the tab already names the view: drop the name. */
+@container (max-width: 220px) {
+  .nm-volume-view-name {
+    display: none;
+  }
+}
+
+.nm-volume-viewer[data-nij-stacked] .nm-volume-view-name {
+  display: none;
+}
+
+/* View name and slice position, top-left of each view (MRIcroGL/Mango style). */
+.nm-volume-view-coord {
+  position: absolute;
+  left: 9px;
+  top: 7px;
+  color: var(--nm-vv-stage-muted);
+  white-space: nowrap;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.nm-volume-reset-position--stage {
+  appearance: none;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--nm-vv-stage-rule);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--nm-vv-stage-ink-2);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.nm-volume-reset-position--stage:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.nm-volume-reset-position--stage svg {
+  width: 13px;
+  height: 13px;
+}
+
+@container (max-width: 250px) {
+  .nm-volume-legend {
+    gap: 8px;
+  }
+
+  .nm-volume-scale-note,
+  .nm-volume-cluster-key,
+  .nm-volume-reset-label,
+  .nm-volume-readout-voxel {
+    display: none;
+  }
+
+  .nm-volume-readout-title {
+    padding-right: 40px;
+    font-size: 9.5px;
+  }
+
+  .nm-volume-reset-position--stage {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .nm-volume-readout-coords {
+    display: grid;
+    grid-template-columns: repeat(3, auto);
+    justify-content: start;
+    gap: 0 8px;
+    font-size: 10.5px;
+  }
+
+  .nm-volume-readout-unit {
+    display: none;
+  }
+
+  .nm-volume-readout-label {
+    font-size: 10px;
+  }
+
+  .nm-volume-readout-number {
+    font-size: 18px;
+  }
+}
+
+
+/* ---- Sidebar ---------------------------------------------------------- */
+
+.nm-volume-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.nm-volume-sidebar > .nm-volume-map-field {
+  margin-bottom: -8px;
 }
 
 .nm-volume-map-field {
   display: block;
-  padding: 0.8rem 0.8rem 0;
-  color: #4b5563;
-  font-size: 0.82rem;
-  font-weight: 650;
+  margin: 0 0 -8px;
+  color: var(--nm-vv-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .nm-volume-map-select {
+  appearance: none;
   display: block;
-  width: calc(100% - 1.6rem);
-  margin: 0.35rem 0.8rem 0;
-  padding: 0.45rem 0.55rem;
-  border: 1px solid #cbd5e1;
-  border-radius: 0.35rem;
-  background: #fff;
-  color: #1f2937;
+  width: 100%;
+  height: 32px;
+  padding: 0 30px 0 10px;
+  border: 1px solid var(--nm-vv-rule-strong);
+  border-radius: 6px;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--nm-vv-muted) 50%) calc(100% - 15px) 50% / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--nm-vv-muted) 50%, transparent 50%) calc(100% - 10px) 50% / 5px 5px no-repeat,
+    var(--nm-vv-surface);
+  color: var(--nm-vv-ink);
   font: inherit;
+  font-size: 13px;
+  font-weight: 500;
 }
 
-.nm-volume-readout {
+/* Readout/reset fallback when the viewer has no legend cell. */
+.nm-volume-sidebar > .nm-volume-readout {
   margin: 0;
-  padding: 0.65rem 0.8rem;
-  border-bottom: 1px solid #e5e7eb;
-  color: #334155;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.82rem;
+  color: var(--nm-vv-ink-2);
+  font-size: 12px;
 }
 
-.nm-volume-reset-position {
-  margin: 0 0.8rem 0.75rem;
-  padding: 0.38rem 0.58rem;
-  border: 1px solid #94a3b8;
-  border-radius: 0.35rem;
-  background: #f8fafc;
-  color: #334155;
-  font: inherit;
-  font-size: 0.82rem;
-  cursor: pointer;
-}
-
-.nm-volume-disclosure {
-  margin: 0.85rem 0 0;
-  padding: 0.7rem 0.8rem;
-  border-left: 4px solid #b45309;
-  border-radius: 0.3rem;
-  background: #fff7ed;
-  color: #743a04;
-  font-size: 0.88rem;
-  line-height: 1.45;
+.nm-volume-sidebar > .nm-volume-reset-position {
+  justify-self: start;
 }
 
 .nm-volume-controls {
   min-height: 1px;
+  padding-top: 14px;
+  border-top: 1px solid var(--nm-vv-rule);
+}
+
+.nm-volume-disclosure {
+  margin: 14px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--nm-vv-rule);
+  color: var(--nm-vv-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.nm-volume-disclosure strong {
+  color: var(--nm-vv-ink-2);
+  font-weight: 600;
+}
+
+@media (pointer: coarse) {
+  .nm-volume-view-button {
+    min-height: 44px;
+  }
+
+  .nm-volume-reset-position--stage {
+    min-height: 40px;
+  }
 }
 
 @media (max-width: 760px) {
+  .nm-volume-interactive {
+    padding: 12px;
+  }
+
   .nm-volume-target {
     display: block;
-    margin: 0.6rem 0 0;
+    margin: 8px 0 0;
   }
 
   .nm-volume-shell {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .nm-volume-viewer {
-    min-height: 26rem;
+  .nm-volume-sidebar {
+    align-self: auto;
   }
 }
 
