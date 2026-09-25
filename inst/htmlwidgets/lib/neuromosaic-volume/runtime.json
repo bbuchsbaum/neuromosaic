@@ -4,7 +4,7 @@
   "adapter_version": "1.2.0",
   "bundle": "neuroimjs-0.4.0.umd.js",
   "sha256": "0c5176bf47d69c29df10c6e751c8ba9950b0648312fc3f01d4df3c7d9a2c3b48",
-  "source_state": "git:neuroimjs@0.4.0+0a42adde213890e10e891d0d7f2615c0dd87cba7",
+  "source_state": "npm:neuroimjs@0.4.0",
   "files": [
     {
       "path": "neuroimjs-0.4.0.umd.js",
