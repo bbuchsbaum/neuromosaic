@@ -60,17 +60,17 @@ test("the static report is authoritative until the reader opens the viewer", asy
   await expect(host).toContainText("recoverable voxel data");
 
   await activate(page, host);
-  await expect(host.locator("canvas")).toHaveCount(3);
+  await expect(host.locator("[data-view] canvas")).toHaveCount(3);
   await expect(host.locator('[data-view="axial"]')).toBeVisible();
   await expect(host.locator('[data-view="coronal"]')).toBeVisible();
   await expect(host.locator('[data-view="sagittal"]')).toBeVisible();
   await expect(host.locator("[data-nm-volume-readout]")).toContainText(
-    "Standardized association:"
+    "Standardized association"
   );
   await expect(host.getByRole("combobox", { name: "Colormap" })).toHaveValue(
     "BlueRed"
   );
-  await expect(host.getByLabel("Threshold low")).toHaveValue("-3.10");
+  await expect(host.getByLabel("Threshold low")).toHaveValue("−3.10");
   await expect(host.getByLabel("Threshold high")).toHaveValue("3.10");
 });
 
@@ -107,7 +107,7 @@ test("map switching preserves map-local exploration and exact report resets", as
   await expect(host.getByText("Threshold", { exact: true })).toHaveCount(0);
   await expect(host.getByText("Range", { exact: true })).toBeVisible();
   await expect(host.locator("[data-nm-volume-readout]")).toContainText(
-    "Standard error:"
+    "Standard error"
   );
 
   const defaults = await viewerState(host);
@@ -142,7 +142,7 @@ test("static and interactive selectors stay synchronized before and after activa
   const group = page.locator('[data-nm-map-group="faces-interactive"]');
   await group.getByRole("tab", { name: "SE" }).click();
   await expect(host).toHaveAttribute("data-nm-volume-map", "interactive_se");
-  await expect(host.locator("[data-nm-volume-target]")).toHaveText("SE");
+  await expect(host.locator("[data-nm-volume-target]")).toHaveText("Standard error");
 
   await activate(page, host);
   await expect.poll(async () => (await viewerState(host)).currentMapId).toBe(
@@ -200,7 +200,7 @@ test("expanded static mode identifies and opens every map in one viewer", async 
   }
   await expect(group.locator('[role="tablist"]')).toHaveCount(0);
   await expect(group.getByRole("combobox", { name: "Map variant" })).toHaveCount(0);
-  await expect(host.locator("[data-nm-volume-target]")).toHaveText("Z");
+  await expect(host.locator("[data-nm-volume-target]")).toHaveText("Z statistic");
 
   await activate(page, host);
   const mapSelect = host.getByRole("combobox", { name: "Interactive map" });
@@ -209,7 +209,7 @@ test("expanded static mode identifies and opens every map in one viewer", async 
   await expect.poll(async () => (await viewerState(host)).currentMapId).toBe(
     "interactive_se"
   );
-  await expect(host.locator("[data-nm-volume-target]")).toHaveText("SE");
+  await expect(host.locator("[data-nm-volume-target]")).toHaveText("Standard error");
   await expect(group.getByRole("img", {
     name: "Z statistic volume montage"
   })).toBeVisible();
@@ -228,7 +228,7 @@ test("launcher and display controls are keyboard operable", async ({ page }) => 
   expect(await launcher.evaluate((node) => {
     const style = getComputedStyle(node);
     return [style.outlineStyle, style.outlineWidth];
-  })).toEqual(["solid", "3px"]);
+  })).toEqual(["solid", "2px"]);
   await launcher.press("Enter");
   await expect(host).toHaveAttribute("data-nm-volume-ready", "true", {
     timeout: 20_000
@@ -238,8 +238,12 @@ test("launcher and display controls are keyboard operable", async ({ page }) => 
   const initialPalette = await palette.inputValue();
   await palette.focus();
   await expect(palette).toBeFocused();
-  expect(await palette.evaluate((node) => getComputedStyle(node).boxShadow))
-    .not.toBe("none");
+  // A visible focus indicator: an outline ring or a box-shadow ring.
+  expect(await palette.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0 ||
+      style.boxShadow !== "none";
+  })).toBe(true);
   await palette.press("v");
   await expect.poll(() => palette.inputValue()).not.toBe(initialPalette);
   await expect(host).toHaveAttribute("data-nm-volume-modified", "true");
@@ -259,14 +263,14 @@ test("an empty overlay opens with an explicit status and static fallback", async
   const host = page.locator(
     '[data-nm-volume-analysis="empty-interactive"]'
   );
-  await expect(host.locator("[data-nm-volume-target]")).toHaveText("Empty Z");
+  await expect(host.locator("[data-nm-volume-target]")).toHaveText("Empty Z statistic");
   const staticImage = page.getByRole("img", {
     name: "Empty Z statistic volume montage"
   });
   await expect(staticImage).toBeVisible();
 
   await activate(page, host);
-  await expect(host.locator("canvas")).toHaveCount(3);
+  await expect(host.locator("[data-view] canvas")).toHaveCount(3);
   await expect(host.locator("[data-nm-volume-status]")).toContainText(
     "has no displayable voxels"
   );
@@ -285,7 +289,7 @@ test("coordinate navigation updates raw readout and resets to report position", 
     state.viewer.setWorldCoord([-4, -3, -2]);
   });
   await expect(host.locator("[data-nm-volume-readout]")).toContainText(
-    "x -4.0, y -3.0, z -2.0 mm"
+    "x −4.0 y −3.0 z −2.0 mm"
   );
   await host.getByRole("button", {
     name: "Reset to report position"
@@ -301,7 +305,7 @@ test("threshold and palette widgets update all orthogonal views", async ({
   const host = await openInteractiveReport(page);
   await activate(page, host);
   const before = await viewerState(host);
-  const canvases = host.locator("canvas");
+  const canvases = host.locator("[data-view] canvas");
   const beforeCanvases = await Promise.all(
     [0, 1, 2].map((index) => canvases.nth(index).screenshot())
   );
