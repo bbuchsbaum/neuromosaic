@@ -253,6 +253,9 @@
     // Templates often end inside tissue (neck, lower cerebellum); fade the
     // field-of-view edge into the stage rather than stopping at a hard line.
     if (typeof layer.setEdgeFade === "function") layer.setEdgeFade(3);
+    // Clamped bicubic resampling: sharper anatomy than GPU bilinear
+    // magnification, without ringing at the brain edge.
+    if (typeof layer.setInterpolation === "function") layer.setInterpolation("cubic");
     return layer;
   }
 
@@ -274,6 +277,9 @@
     // A dark rim on the threshold contour keeps pale near-threshold colour
     // legible against bright white matter.
     if (typeof layer.setOutline === "function") layer.setOutline(0.3);
+    // Outline only clusters of at least 10 voxels (3-D, 26-connected), so
+    // isolated specks are drawn but not contoured into confetti.
+    if (typeof layer.setMinOutlineClusterSize === "function") layer.setMinOutlineClusterSize(10);
     return layer;
   }
 
