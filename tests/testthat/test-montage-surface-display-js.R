@@ -40,3 +40,23 @@ test_that("colour-bar ticks keep the range ends and fit the threshold between", 
   expect_equal(ticks(c(0, 1), c(0, 0.5)), c(0, 0.5, 1))
   expect_length(ticks(c(1, 1), c(0, 0)), 0)
 })
+
+test_that("hover regions read as networks with the atlas parcel as detail", {
+  ctx <- surface_display_js()
+  describe <- function(id, entry = NULL, atlas = "Schaefer-100-7networks") {
+    ctx$call("NeuroMosaicSurfaceDisplay.describeParcel", id, entry, atlas)
+  }
+  vis <- describe(3, list(label = "Vis_3", full = "LH_Vis_3", network = "Vis"))
+  expect_identical(vis$name, "Visual network")
+  expect_identical(vis$detail, "LH_Vis_3 · Schaefer-100-7networks")
+  pfc <- describe(80, list(label = "Default_PFC_2", full = "RH_Default_PFC_2",
+                           network = "Default"))
+  expect_identical(pfc$name, "Default network, prefrontal")
+  expect_identical(
+    describe(10, list(label = "DefaultA_pCunPCC_3", network = "DefaultA"))$name,
+    "Default A network, precuneus / PCC"
+  )
+  expect_identical(describe(0)$name, "Medial wall")
+  # Unknown atlases keep their own labels.
+  expect_identical(describe(5, list(label = "V1"), "Glasser")$name, "V1")
+})

@@ -25,6 +25,11 @@
 #' volume-to-surface projection. Set `projection = "none"` to reject volume
 #' rows, or supply `values` containing already projected vertex values.
 #'
+#' Hovering (or tapping) the surface reports the map value, the hemisphere,
+#' and, when the surface atlas labels every displayed vertex, the atlas
+#' parcel and its network (for example "Visual network", `RH_Vis_7`). The
+#' parcel lookup is embedded once per report as compressed per-vertex ids.
+#'
 #' @param geometry Optional `SurfaceGeometry`, `SurfaceSet`, or named list with
 #'   `left`/`right` (or `lh`/`rh`) geometries. `NULL` uses the geometry carried
 #'   by `surfatlas` in [render_montage_report()]. A supplied geometry must have
@@ -366,6 +371,7 @@ montage_surface <- function(geometry = NULL,
     geometry, atlas_geometry, context = "interactive surface geometry"
   )
   anatomy <- .montage_surface_anatomy(surfatlas, geometry, surface, surface_args)
+  parcels <- .montage_surface_parcel_lookup(surfatlas, geometry)
 
   custom_values <- surface$values
   if (!is.null(custom_values)) {
@@ -537,9 +543,76 @@ montage_surface <- function(geometry = NULL,
         compression = surface$compression,
         max_embed_mb = surface$max_embed_mb
       ),
-      controls = surface$controls
+      controls = surface$controls,
+      parcels = parcels
     ),
     class = c("montage_surface_report", "list")
+  )
+}
+
+# Per-vertex atlas parcel ids and a label table, so the browser readout can
+# name the region under the pointer. NULL when the atlas does not describe the
+# displayed vertices one-to-one.
+.montage_surface_parcel_lookup <- function(surfatlas, geometry) {
+  hemis <- c(left = "lh_atlas", right = "rh_atlas")
+  ids <- list()
+  for (side in intersect(names(geometry), names(hemis))) {
+    atlas_hemi <- surfatlas[[hemis[[side]]]]
+    values <- tryCatch(as.integer(round(atlas_hemi@data)), error = function(e) NULL)
+    vertex_count <- ncol(geometry[[side]]@mesh$vb)
+    if (is.null(values) || length(values) != vertex_count || anyNA(values) ||
+        any(values < 0L) || any(values > 65535L)) {
+      return(NULL)
+    }
+    ids[[side]] <- values
+  }
+  table_ids <- suppressWarnings(as.integer(surfatlas$ids))
+  if (!length(ids) || !length(table_ids) || anyNA(table_ids)) return(NULL)
+  field <- function(name) {
+    value <- surfatlas[[name]]
+    if (length(value) == length(table_ids)) as.character(value) else rep(NA_character_, length(table_ids))
+  }
+  list(
+    atlas = as.character(surfatlas$name %||% "atlas")[[1L]],
+    ids = ids,
+    table = data.frame(
+      id = table_ids,
+      label = field("labels"),
+      full = field("orig_labels"),
+      network = field("network"),
+      stringsAsFactors = FALSE
+    )
+  )
+}
+
+# Encode the parcel lookup as gzip-compressed little-endian uint16 payloads
+# plus one JSON descriptor. Always embedded: it is small and atlas-level.
+.package_montage_surface_parcels <- function(parcels) {
+  if (is.null(parcels)) return(NULL)
+  payloads <- list()
+  refs <- list()
+  for (side in names(parcels$ids)) {
+    raw_path <- tempfile("nm-parcels-", fileext = ".bin")
+    gz_path <- tempfile("nm-parcels-", fileext = ".bin.gz")
+    on.exit(unlink(c(raw_path, gz_path)), add = TRUE)
+    writeBin(as.integer(parcels$ids[[side]]), raw_path, size = 2L, endian = "little")
+    .montage_gzip_file(raw_path, gz_path)
+    bytes <- readBin(gz_path, what = "raw", n = file.info(gz_path)$size)
+    id <- paste0("nm-surface-parcels-", side)
+    payloads[[side]] <- list(id = id, compression = "gzip",
+                             base64 = jsonlite::base64_enc(bytes))
+    refs[[side]] <- id
+  }
+  table <- parcels$table
+  entries <- lapply(seq_len(nrow(table)), function(i) {
+    Filter(function(value) !is.na(value), list(
+      label = table$label[[i]], full = table$full[[i]], network = table$network[[i]]
+    ))
+  })
+  names(entries) <- as.character(table$id)
+  list(
+    payloads = payloads,
+    descriptor = list(atlas = parcels$atlas, payloads = refs, parcels = entries)
   )
 }
 
@@ -698,6 +771,8 @@ montage_surface <- function(geometry = NULL,
   }
 
   runtime <- .montage_surface_runtime_info()
+  surface$parcel_assets <- .package_montage_surface_parcels(surface$parcels)
+  surface$parcels <- NULL
   for (i in seq_along(manifests)) {
     manifest <- manifests[[i]]
     manifest$assets <- browser_descriptors[names(manifest$assets)]
@@ -1759,6 +1834,23 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
       payload$base64, "</script>\n"
     )
   }, character(1))
+  parcel_html <- ""
+  if (!is.null(surface$parcel_assets)) {
+    parcel_html <- paste0(
+      paste(vapply(surface$parcel_assets$payloads, function(payload) {
+        paste0(
+          '<script type="application/octet-stream" id="',
+          .montage_html_escape(payload$id), '" data-compression="gzip">',
+          payload$base64, "</script>\n"
+        )
+      }, character(1)), collapse = ""),
+      '<script type="application/json" id="nm-surface-parcel-table">',
+      .montage_json_script_escape(as.character(jsonlite::toJSON(
+        surface$parcel_assets$descriptor, auto_unbox = TRUE, null = "null"
+      ))),
+      "</script>\n"
+    )
+  }
   display_runtime <- .montage_read_inline_asset(
     .montage_surface_display_path()
   )
@@ -1770,6 +1862,7 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
   paste0(
     paste(manifest_html, collapse = ""),
     paste(payload_html, collapse = ""),
+    parcel_html,
     "<script data-nm-surface-display>\n",
     display_runtime,
     "\n</script>\n",
