@@ -1607,7 +1607,6 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
           htmltools::tags$span(`data-nm-legend-title` = ""),
           htmltools::tags$span(`data-nm-legend-units` = "")
         ),
-        htmltools::tags$canvas(`aria-hidden` = "true"),
         htmltools::tags$div(class = "nm-sv-ticks", `data-nm-legend-ticks` = ""),
         htmltools::tags$p(
           class = "nm-sv-legend-note", `data-nm-legend-note` = "", hidden = ""
@@ -1666,7 +1665,8 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
       htmltools::tags$p(
         class = "nm-sv-hint",
         `aria-hidden` = "true",
-        "Drag to rotate \u00b7 scroll to zoom"
+        # An entity, not a literal middle dot, so C-locale renders stay intact.
+        htmltools::HTML("Drag to rotate &middot; scroll to zoom")
       )
     )
     ),

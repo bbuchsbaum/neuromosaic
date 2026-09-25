@@ -1142,12 +1142,16 @@
     if (reset) reset.addEventListener("click", function () { resetView(host); });
     var png = part(host, "export");
     if (png) png.addEventListener("click", function () { exportPNG(host); });
-    var bar = host.querySelector(".nm-sv-legend canvas");
-    if (bar && !bar.parentNode.classList.contains("nm-sv-barwrap")) {
+    // The colour bar canvas is created here rather than in the report markup,
+    // so a page read without JavaScript carries no canvas at all.
+    var legendBox = part(host, "legend");
+    if (legendBox && !legendBox.querySelector(".nm-sv-barwrap")) {
       var wrap = document.createElement("div");
       wrap.className = "nm-sv-barwrap";
-      bar.parentNode.insertBefore(wrap, bar);
+      var bar = document.createElement("canvas");
+      bar.setAttribute("aria-hidden", "true");
       wrap.appendChild(bar);
+      legendBox.insertBefore(wrap, legendBox.querySelector("[data-nm-legend-ticks]"));
       var marker = document.createElement("span");
       marker.className = "nm-sv-marker";
       marker.hidden = true;
