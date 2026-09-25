@@ -12,7 +12,8 @@ montage_report_formatters(
   section_notes = NULL,
   interludes = NULL,
   groups = NULL,
-  map_selector = "auto"
+  map_selector = "auto",
+  panels = NULL
 )
 }
 \arguments{

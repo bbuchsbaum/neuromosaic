@@ -29,9 +29,9 @@ Imports:
     jsonlite,
     knitr,
     methods,
-    neuroatlas (>= 0.1.0.9005),
+    neuroatlas (>= 0.1.0.9006),
     neuroim2 (>= 0.19.0.9000),
-    neurosurf (>= 0.1.0.9002),
+    neurosurf (>= 0.1.0.9003),
     rlang,
     scales,
     scico,
@@ -53,7 +53,8 @@ Suggests:
     ragg,
     rmarkdown,
     shiny,
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    V8
 Remotes:
     bbuchsbaum/fmrigds,
     bbuchsbaum/neuroatlas,

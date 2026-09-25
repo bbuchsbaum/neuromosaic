@@ -81,7 +81,54 @@
     });
   }
 
+  // Three significant figures, trailing zeros dropped: 7.2243 -> "7.22",
+  // 3.1 -> "3.1", 0.85 -> "0.85", 1234.5 -> "1235". Integers of any size stay
+  // whole. `minus` swaps the ASCII hyphen for a typographic minus sign.
+  function formatNumber(value, options) {
+    var x = Number(value);
+    if (!Number.isFinite(x)) return "";
+    var digits = options && options.digits ? options.digits : 3;
+    var text;
+    if (x === 0) {
+      text = "0";
+    } else if (Math.abs(x) >= Math.pow(10, digits) || Number.isInteger(x)) {
+      text = String(Math.round(x));
+    } else {
+      text = String(Number(x.toPrecision(digits)));
+    }
+    return options && options.minus ? text.replace(/^-/, "−") : text;
+  }
+
+  // Colour-bar tick values. The display-range ends always stay (without them
+  // the colours have no scale); the mask edges (the threshold) come next, then
+  // zero. A tick closer than `minGap` (fraction of the bar) to an accepted
+  // tick is dropped, so labels never collide.
+  function legendTicks(range, mask, minGap) {
+    var r = pair(range);
+    if (!r || !(r[1] > r[0])) return [];
+    var gap = minGap === undefined ? 0.16 : Number(minGap);
+    var span = r[1] - r[0];
+    var candidates = [r[0], r[1]];
+    var m = pair(mask);
+    var masked = Boolean(m && m[1] > m[0]);
+    if (masked) {
+      if (m[0] > r[0] && m[0] < r[1]) candidates.push(m[0]);
+      if (m[1] > r[0] && m[1] < r[1]) candidates.push(m[1]);
+    }
+    if (!masked && r[0] < 0 && r[1] > 0) candidates.push(0);
+    var kept = [];
+    candidates.forEach(function (value) {
+      var clashes = kept.some(function (other) {
+        return Math.abs(other - value) / span < gap;
+      });
+      if (!clashes) kept.push(value);
+    });
+    return kept.sort(function (a, b) { return a - b; });
+  }
+
   return Object.freeze({
+    formatNumber: formatNumber,
+    legendTicks: legendTicks,
     pair: pair,
     samePair: samePair,
     layerDefaults: layerDefaults,
