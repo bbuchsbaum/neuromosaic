@@ -33,9 +33,9 @@ render_montage_report(
   materialize_recipes = TRUE,
   overwrite_recipes = FALSE,
   cache_surface = TRUE,
-  image_width = 1400,
-  image_height = 1000,
-  image_res = 144,
+  image_width = 1760,
+  image_height = 1200,
+  image_res = 190,
   max_clusters = 20L,
   quiet = TRUE,
   validate = TRUE,
@@ -161,7 +161,9 @@ files exist?}
 threshold, and color cap.}
 
 \item{image_width, image_height, image_res}{PNG device settings for generated
-volume and surface montage panels.}
+volume and surface montage panels. The defaults fill the HTML report's
+~880 px content column at 2x pixel density, with panel text near the
+report's own caption size.}
 
 \item{max_clusters}{Maximum number of atlas-annotated clusters per panel.}
 

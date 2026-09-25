@@ -6,7 +6,7 @@
 )
 .montage_surface_asset_modes <- c("bundle", "embed")
 .montage_surface_compressions <- c("gzip", "none")
-.montage_surface_adapter_version <- "1.0.0"
+.montage_surface_adapter_version <- "2.0.0"
 .montage_surface_display_asset <- file.path(
   "htmlwidgets", "lib", "neuromosaic-surface", "display.js"
 )
@@ -63,8 +63,24 @@
 #'   `"range"`, `"palette"`, and `"opacity"`; all are enabled by default.
 #'   Controls are exploratory, retain map-local state, and reset to the exact
 #'   report-authored defaults without rebuilding the scene or camera.
-#' @param preset A neurosurf/surfview visual preset.
-#' @param height Widget height as a positive number or CSS size string.
+#' @param preset A neurosurf/surfview visual preset. The default `"report"`
+#'   pairs a two-tone sulcal underlay with a camera-attached key light and
+#'   heat colours (red-yellow, blue-cyan) for thresholded statistics.
+#' @param layout How the two hemispheres are posed. `"anatomical"` keeps one
+#'   coherent brain in RAS position that rotates as a whole; `"split"` rotates
+#'   each hemisphere into the chosen view and places them side by side.
+#' @param view Initial whole-brain view for the anatomical layout. The default
+#'   `"oblique"` is the Overview pose set by `oblique`.
+#' @param oblique Overview camera angle for the anatomical layout: `"auto"`
+#'   chooses, per displayed map, the oblique angle that faces the most
+#'   suprathreshold cortex; a numeric `c(azimuth, elevation)` in degrees fixes
+#'   it (azimuth 0 = anterior, 90 = right, 180 = posterior, -90 = left).
+#' @param anatomy Computed underlay used when no `curvature` is supplied:
+#'   `"sulcal_depth"` (a white-to-inflated sulcal-depth proxy with broad
+#'   gyral/sulcal contrast) or `"curvature"` (white-surface mean curvature, as
+#'   in the static montage).
+#' @param height Canvas height as a positive number of pixels or a CSS size
+#'   string. `NULL` (default) uses a responsive 16:10 stage (square on phones).
 #' @param fallback Optional plain-text failure message. Static surface figures
 #'   remain present separately in the report.
 #' @param alt_text Optional alternative text. When omitted it is generated per
@@ -88,14 +104,29 @@ montage_surface <- function(geometry = NULL,
                             compression = c("gzip", "none"),
                             max_embed_mb = 25,
                             controls = .montage_surface_control_names,
-                            preset = "paper-light",
-                            height = "600px",
+                            preset = "report",
+                            layout = c("anatomical", "split"),
+                            view = c("oblique", "left", "right", "dorsal",
+                                     "ventral", "anterior", "posterior",
+                                     "left-medial", "right-medial"),
+                            anatomy = c("sulcal_depth", "curvature"),
+                            oblique = "auto",
+                            height = NULL,
                             fallback = NULL,
                             alt_text = NULL,
                             anatomy_style = c("auto", "continuous", "binary", "none"),
                             anatomy_midpoint = NULL,
                             anatomy_invert = NULL) {
   anatomy_style <- match.arg(anatomy_style)
+  layout <- match.arg(layout)
+  view <- match.arg(view)
+  anatomy <- match.arg(anatomy)
+  if (!(identical(oblique, "auto") ||
+        (is.numeric(oblique) && length(oblique) == 2L &&
+         all(is.finite(oblique)) && abs(oblique[[2L]]) <= 90))) {
+    stop("'oblique' must be \"auto\" or c(azimuth, elevation) in degrees ",
+         "with |elevation| <= 90.", call. = FALSE)
+  }
   neurosurf::normalize_surface_anatomy(c(-1, 1), midpoint = anatomy_midpoint,
                                       invert = anatomy_invert %||% FALSE)
   projection <- match.arg(projection)
@@ -141,11 +172,12 @@ montage_surface <- function(geometry = NULL,
   .montage_surface_string(preset, "preset", required = TRUE)
   .montage_surface_string(fallback, "fallback")
   .montage_surface_string(alt_text, "alt_text")
-  if (!((is.numeric(height) && length(height) == 1L && is.finite(height) &&
+  if (!(is.null(height) ||
+        (is.numeric(height) && length(height) == 1L && is.finite(height) &&
          height > 0) ||
         (is.character(height) && length(height) == 1L && !is.na(height) &&
          nzchar(trimws(height))))) {
-    stop("'height' must be a positive number or one CSS size string.",
+    stop("'height' must be NULL, a positive number, or one CSS size string.",
          call. = FALSE)
   }
   if (!is.null(values)) {
@@ -186,6 +218,10 @@ montage_surface <- function(geometry = NULL,
       max_embed_mb = max_embed_mb,
       controls = controls,
       preset = trimws(preset),
+      layout = layout,
+      view = view,
+      anatomy = anatomy,
+      oblique = if (is.numeric(oblique)) as.numeric(oblique) else "auto",
       height = height,
       fallback = fallback,
       alt_text = alt_text
@@ -424,8 +460,15 @@ montage_surface <- function(geometry = NULL,
         panel = panels[[map_id]],
         values = projected[[map_id]],
         provenance = provenance[[map_id]],
-        opacity = surface$opacity %||% if (surface$preset == "freesurfer") 1 else NULL,
-        heat = surface$preset == "freesurfer"
+        opacity = surface$opacity %||%
+          if (surface$preset %in% c("freesurfer", "report")) 1 else NULL,
+        heat = if (identical(surface$preset, "freesurfer")) {
+          TRUE
+        } else if (identical(surface$preset, "report")) {
+          "thresholded"
+        } else {
+          FALSE
+        }
       )
     })
     layer_ids <- vapply(layers, `[[`, character(1), "name")
@@ -484,6 +527,9 @@ montage_surface <- function(geometry = NULL,
     list(
       scenes = scenes,
       preset = surface$preset,
+      layout = surface$layout %||% "split",
+      view = surface$view %||% "oblique",
+      oblique = surface$oblique %||% "auto",
       height = surface$height,
       projection = surface$projection,
       packaging = list(
@@ -853,8 +899,14 @@ montage_surface <- function(geometry = NULL,
     source = as.character(dependency$src),
     sha256 = digest::digest(file = path, algo = "sha256", serialize = FALSE),
     adapter_version = .montage_surface_adapter_version,
+    # The adapter is the display helper plus the bridge script and styles.
     adapter_sha256 = digest::digest(
-      file = .montage_surface_display_path(),
+      paste(
+        .montage_read_inline_asset(.montage_surface_display_path()),
+        .montage_surface_bridge_assets()$js,
+        .montage_surface_bridge_assets()$css,
+        sep = "\n"
+      ),
       algo = "sha256",
       serialize = FALSE
     )
@@ -1116,10 +1168,13 @@ montage_surface <- function(geometry = NULL,
   palette <- metadata$palette %||% .montage_surface_palette(
     row$effective_palette_family[[1L]], row$effective_scale[[1L]]
   )
-  if (heat) palette <- if (identical(row$effective_scale[[1L]], "diverging")) {
-    "surface-heat"
-  } else {
-    "surface-heat-positive"
+  if (isTRUE(heat) ||
+      (identical(heat, "thresholded") && identical(display_mode, "thresholded"))) {
+    palette <- if (identical(row$effective_scale[[1L]], "diverging")) {
+      "surface-heat"
+    } else {
+      "surface-heat-positive"
+    }
   }
   layer_opacity <- opacity %||% metadata$alpha %||% 0.85
   legend <- if (!is.null(metadata$legend_title)) {
@@ -1225,7 +1280,8 @@ montage_surface <- function(geometry = NULL,
   curvature <- lapply(names(geometry), function(hemi) {
     resolved <- neuroatlas::surface_anatomy(
       surfatlas, hemi, metric = if (is.null(metric)) NULL else metric[[hemi]],
-      source = surface_args$anatomy_metric_source
+      source = surface_args$anatomy_metric_source,
+      type = surface$anatomy %||% "curvature"
     )
     midpoint <- surface$anatomy_midpoint %||% surface_args$anatomy_midpoint
     invert <- surface$anatomy_invert %||% surface_args$anatomy_invert %||% FALSE
@@ -1342,12 +1398,41 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
     format(round(payload_size / 1024^2, 2), nsmall = 2, trim = TRUE)
   }
   disclosure <- paste0(
-    "This report includes recoverable per-vertex surface data (",
-    summary$asset_count, " unique typed-array assets; ",
-    payload_size_text, " MiB ",
-    if (identical(summary$packaging, "embed")) "embedded" else "bundled",
-    "). Geometry is content-addressed once and shared across analysis views."
+    if (identical(summary$packaging, "embed")) "Includes " else "Loads ",
+    payload_size_text, " MB of per-vertex data."
   )
+  legends <- lapply(names(map_to_layer), function(map_id) {
+    layer <- group$manifest$layers[[map_to_layer[[map_id]]]]
+    list(
+      title = as.character(layer$legend$title %||% layer$label %||% map_id),
+      units = as.character(layer$legend$units %||% layer$units %||% "")
+    )
+  })
+  names(legends) <- names(map_to_layer)
+  legend_json <- .montage_json_script_escape(as.character(jsonlite::toJSON(
+    legends, auto_unbox = TRUE, null = "null"
+  )))
+  map_ids <- names(map_to_layer)
+  title <- if (length(map_ids) > 1L) {
+    htmltools::tags$select(
+      class = "nm-sv-map nm-sv-title",
+      `data-nm-surface-map-select` = "",
+      `aria-label` = "Map shown on the surface",
+      lapply(map_ids, function(map_id) {
+        htmltools::tags$option(
+          value = map_id,
+          selected = if (identical(map_id, group$primary_map_id)) NA else NULL,
+          labels[[map_id]]
+        )
+      })
+    )
+  } else {
+    htmltools::tags$p(
+      class = "nm-sv-title",
+      `data-nm-surface-target` = "",
+      primary_label
+    )
+  }
 
   tag <- htmltools::tags$section(
     class = "nm-surface-interactive",
@@ -1357,36 +1442,39 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
     `data-nm-surface-map-to-layer` = map_json,
     `data-nm-surface-layer-to-map` = reverse_json,
     `data-nm-surface-labels` = label_json,
+    `data-nm-surface-legends` = legend_json,
     `data-nm-surface-controls-enabled` = control_json,
     `data-nm-surface-manifest` = group$manifest_id,
     `data-nm-surface-compression` = surface$summary$compression,
     `data-nm-surface-preset` = group$preset,
+    `data-nm-surface-layout` = surface$layout %||% "split",
+    `data-nm-surface-view` = surface$view %||% "oblique",
+    `data-nm-surface-oblique` = if (is.numeric(surface$oblique)) {
+      paste(format(surface$oblique, trim = TRUE), collapse = ",")
+    } else {
+      "auto"
+    },
+    `data-nm-surface-ground` = "#FBFBF8",
     `data-nm-surface-bilateral` = bilateral_json,
     `data-nm-surface-modified` = "false",
-    htmltools::tags$details(
-      class = "nm-surface-disclosure",
-      htmltools::tags$summary("Explore surface interactively"),
-      htmltools::tags$p(
-        class = "nm-surface-target",
-        "Interactive map: ",
-        htmltools::tags$strong(
-          `data-nm-surface-target` = "",
-          primary_label
-        )
-      ),
-      htmltools::tags$p(
-        class = "nm-surface-status",
-        `data-nm-surface-status` = "",
-        role = "status",
-        "Open this view to load the interactive surface."
-      ),
-      .montage_surface_control_tags(surface$controls),
+    `aria-label` = paste0("Interactive cortical surface: ", primary_label),
+    htmltools::tags$div(
+      class = "nm-sv-frame",
+    htmltools::tags$div(
+      class = "nm-sv-stage",
+      style = if (!is.null(group$height)) {
+        paste0("aspect-ratio:auto;max-height:none;height:",
+               htmltools::validateCssUnit(group$height))
+      },
+      tabindex = "0",
+      role = "group",
+      `aria-label` = paste0("3D surface viewer: ", primary_label),
+      `aria-describedby` = paste0(safe_id, "-help"),
       htmltools::tags$div(
         id = safe_id,
         class = "surfwidget nm-surface-widget",
-        role = "group",
+        role = "img",
         `aria-label` = group$alt_text,
-        style = paste0("height:", htmltools::validateCssUnit(group$height)),
         htmltools::tags$div(
           class = "nm-surface-author-fallback",
           `data-nm-surface-author-fallback` = "",
@@ -1394,16 +1482,123 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
           group$fallback
         )
       ),
-      htmltools::tags$p(
-        class = "nm-surface-note",
-        "Browser map, camera, threshold, palette, and opacity changes are ",
-        "exploratory; the static montage above remains authoritative."
+      htmltools::tags$div(
+        class = "nm-sv-overlay nm-sv-head",
+        title,
+        htmltools::tags$p(
+          class = "nm-sv-meta",
+          htmltools::tags$span(`data-nm-surface-meta` = ""),
+          htmltools::tags$span(
+            class = "nm-sv-modified",
+            `data-nm-surface-modified` = "",
+            hidden = "",
+            "Display changed"
+          )
+        )
+      ),
+      htmltools::tags$div(
+        class = "nm-sv-overlay nm-sv-actions",
+        if (length(surface$controls)) {
+          htmltools::tags$button(
+            type = "button", class = "nm-sv-icon",
+            `data-nm-surface-display-toggle` = "",
+            `aria-expanded` = "false",
+            `aria-controls` = paste0(safe_id, "-display"),
+            title = "Colour, range and threshold",
+            `aria-label` = "Colour, range and threshold",
+            .montage_surface_icon("sliders")
+          )
+        },
+        htmltools::tags$button(
+          type = "button", class = "nm-sv-icon",
+          `data-nm-surface-reset-view` = "",
+          title = "Reset view", `aria-label` = "Reset view",
+          .montage_surface_icon("reset")
+        ),
+        htmltools::tags$button(
+          type = "button", class = "nm-sv-icon",
+          `data-nm-surface-export` = "",
+          title = "Save PNG", `aria-label` = "Save view as PNG",
+          .montage_surface_icon("download")
+        )
+      ),
+      .montage_surface_control_tags(surface$controls, paste0(safe_id, "-display")),
+      htmltools::tags$div(
+        class = "nm-sv-overlay nm-sv-legend",
+        `data-nm-surface-legend` = "",
+        hidden = "",
+        htmltools::tags$p(
+          class = "nm-sv-legend-title",
+          htmltools::tags$span(`data-nm-legend-title` = ""),
+          htmltools::tags$span(`data-nm-legend-units` = "")
+        ),
+        htmltools::tags$canvas(`aria-hidden` = "true"),
+        htmltools::tags$div(class = "nm-sv-ticks", `data-nm-legend-ticks` = ""),
+        htmltools::tags$p(
+          class = "nm-sv-legend-note", `data-nm-legend-note` = "", hidden = ""
+        )
+      ),
+      htmltools::tags$div(
+        class = "nm-sv-readout",
+        `data-nm-surface-readout` = "",
+        `aria-hidden` = "true",
+        hidden = ""
       ),
       htmltools::tags$p(
-        class = "nm-surface-disclosure",
-        htmltools::tags$strong("Data disclosure. "),
-        disclosure
+        id = paste0(safe_id, "-help"),
+        class = "nm-sv-visually-hidden",
+        paste(
+          "Drag to rotate, scroll to zoom, double-click to reset.",
+          "With the viewer focused: keys 1 to 9 choose a view, 0 resets,",
+          "arrow keys rotate, plus and minus zoom, S saves a PNG."
+        )
+      ),
+      htmltools::tags$p(
+        class = "nm-sv-readout-live nm-sv-visually-hidden",
+        `data-nm-surface-live` = "",
+        `aria-live` = "polite"
+      ),
+      htmltools::tags$button(
+        type = "button",
+        class = "nm-sv-touch-gate",
+        `data-nm-surface-touch-gate` = "",
+        hidden = "",
+        "Tap to explore in 3D"
+      ),
+      htmltools::tags$button(
+        type = "button",
+        class = "nm-sv-touch-done",
+        `aria-label` = "Done exploring; return to page scrolling",
+        `data-nm-surface-touch-done` = "",
+        hidden = "",
+        "Done"
+      ),
+      htmltools::tags$div(
+        class = "nm-sv-status",
+        `data-nm-surface-status` = "",
+        role = "status",
+        "Choose 3D surface above to load this view."
       )
+    ),
+    htmltools::tags$div(
+      class = "nm-sv-toolbar",
+      htmltools::tags$div(
+        class = "nm-sv-views",
+        `data-nm-surface-views` = "",
+        role = "toolbar",
+        `aria-label` = "Camera view"
+      ),
+      htmltools::tags$p(
+        class = "nm-sv-hint",
+        `aria-hidden` = "true",
+        "Drag to rotate \u00b7 scroll to zoom"
+      )
+    )
+    ),
+    htmltools::tags$p(
+      class = "nm-sv-foot",
+      "Exploratory view. The static montage above is the figure of record. ",
+      disclosure
     ),
     htmltools::tags$noscript(
       htmltools::tags$p(
@@ -1416,87 +1611,131 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
   )
 }
 
-.montage_surface_control_tags <- function(controls) {
+.montage_surface_icon <- function(name) {
+  paths <- switch(name,
+    sliders = paste(
+      "M3 5h7M14 5h3M3 10h2M9 10h8M3 15h9M16 15h1",
+      "M12 3.5v3M7 8.5v3M14 13.5v3"
+    ),
+    reset = "M4 10a6 6 0 1 0 1.8-4.3M4 3.5v3.2h3.2",
+    download = "M10 3.5v9M6.5 9 10 12.5 13.5 9M4 16h12",
+    stop("Unknown surface icon: ", name, call. = FALSE)
+  )
+  htmltools::HTML(paste0(
+    '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">',
+    '<path d="', paths, '" fill="none" stroke="currentColor" ',
+    'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+  ))
+}
+
+.montage_surface_control_tags <- function(controls, id = NULL) {
   if (!length(controls)) return(NULL)
   fields <- list()
   if ("palette" %in% controls) {
     fields <- c(fields, list(htmltools::tags$label(
-      class = "nm-surface-control-field",
-      "Palette",
+      class = "nm-sv-field",
+      htmltools::tags$span("Colour map"),
       htmltools::tags$select(
         `data-nm-surface-palette` = "",
-        `aria-label` = "Surface colormap"
+        `aria-label` = "Surface colour map"
       )
     )))
   }
-  if ("range" %in% controls) {
-    fields <- c(fields, list(htmltools::tags$fieldset(
-      class = "nm-surface-control-pair",
-      htmltools::tags$legend("Display range"),
-      htmltools::tags$label(
-        "Low",
-        htmltools::tags$input(
-          type = "number", step = "any",
-          `data-nm-surface-range-low` = "",
-          `aria-label` = "Surface range low"
-        )
-      ),
-      htmltools::tags$label(
-        "High",
-        htmltools::tags$input(
-          type = "number", step = "any",
-          `data-nm-surface-range-high` = "",
-          `aria-label` = "Surface range high"
-        )
+  pair <- function(legend, low_name, high_name, low_label, high_label) {
+    htmltools::tags$fieldset(
+      class = "nm-sv-field",
+      htmltools::tags$legend(legend),
+      htmltools::tags$div(
+        class = "nm-sv-pair",
+        .montage_surface_number_input(low_name, low_label),
+        htmltools::tags$i(`aria-hidden` = "true", "to"),
+        .montage_surface_number_input(high_name, high_label)
       )
+    )
+  }
+  if ("range" %in% controls) {
+    fields <- c(fields, list(pair(
+      "Colour range", "range-low", "range-high",
+      "Colour range low", "Colour range high"
     )))
   }
   if ("threshold" %in% controls) {
     fields <- c(fields, list(htmltools::tags$fieldset(
-      class = "nm-surface-control-pair",
-      htmltools::tags$legend("Threshold mask"),
+      class = "nm-sv-field nm-sv-threshold",
+      `data-nm-surface-threshold-mode` = "symmetric",
+      htmltools::tags$legend("Threshold"),
       htmltools::tags$label(
-        "Low",
-        htmltools::tags$input(
-          type = "number", step = "any",
-          `data-nm-surface-threshold-low` = "",
-          `aria-label` = "Surface threshold low"
-        )
+        class = "nm-sv-sym",
+        htmltools::tags$span(`data-nm-surface-threshold-symbol` = "", "|value| above"),
+        .montage_surface_number_input("threshold-abs", "Show values whose magnitude exceeds")
       ),
-      htmltools::tags$label(
-        "High",
-        htmltools::tags$input(
-          type = "number", step = "any",
-          `data-nm-surface-threshold-high` = "",
-          `aria-label` = "Surface threshold high"
-        )
+      htmltools::tags$div(
+        class = "nm-sv-pair nm-sv-asym",
+        .montage_surface_number_input("threshold-low", "Hide values from"),
+        htmltools::tags$i(`aria-hidden` = "true", "to"),
+        .montage_surface_number_input("threshold-high", "Hide values to")
+      ),
+      htmltools::tags$button(
+        type = "button",
+        class = "nm-sv-text-button nm-sv-mode-toggle",
+        `data-nm-surface-threshold-toggle` = "",
+        "Set each side separately"
       )
     )))
   }
   if ("opacity" %in% controls) {
     fields <- c(fields, list(htmltools::tags$label(
-      class = "nm-surface-control-field nm-surface-opacity-field",
-      "Opacity",
-      htmltools::tags$input(
-        type = "range", min = "0", max = "1", step = "0.05",
-        `data-nm-surface-opacity` = "",
-        `aria-label` = "Surface opacity"
-      ),
-      htmltools::tags$output(`data-nm-surface-opacity-value` = "")
+      class = "nm-sv-field",
+      htmltools::tags$span("Overlay opacity"),
+      htmltools::tags$span(
+        class = "nm-sv-opacity",
+        htmltools::tags$input(
+          type = "range", min = "0", max = "1", step = "0.05",
+          `data-nm-surface-opacity` = "",
+          `aria-label` = "Overlay opacity"
+        ),
+        htmltools::tags$output(`data-nm-surface-opacity-value` = "")
+      )
     )))
   }
   htmltools::tags$section(
-    class = "nm-surface-display-controls",
+    id = id,
+    class = "nm-sv-display",
     `data-nm-surface-display-controls` = "",
-    `aria-label` = "Surface display controls",
+    `aria-label` = "Surface display settings",
+    tabindex = "-1",
     hidden = "",
+    htmltools::tags$header(
+      class = "nm-sv-display-head",
+      htmltools::tags$h3("Display"),
+      htmltools::tags$button(
+        type = "button",
+        class = "nm-sv-close",
+        `data-nm-surface-display-close` = "",
+        `aria-label` = "Close display settings",
+        htmltools::HTML("&times;")
+      )
+    ),
     fields,
-    htmltools::tags$button(
-      type = "button",
-      `data-nm-surface-reset-display` = "",
-      "Reset map display"
+    htmltools::tags$footer(
+      class = "nm-sv-display-foot",
+      htmltools::tags$button(
+        type = "button",
+        class = "nm-sv-text-button nm-sv-restore",
+        `data-nm-surface-reset-display` = "",
+        "Restore report settings"
+      )
     )
   )
+}
+
+.montage_surface_number_input <- function(name, label) {
+  attrs <- list(
+    type = "number", step = "any", inputmode = "decimal",
+    `aria-label` = label
+  )
+  attrs[[paste0("data-nm-surface-", name)]] <- ""
+  do.call(htmltools::tags$input, attrs)
 }
 
 .montage_surface_document_html <- function(surface, is_html = TRUE) {
@@ -1523,6 +1762,7 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
   display_runtime <- .montage_read_inline_asset(
     .montage_surface_display_path()
   )
+  bridge <- .montage_surface_bridge_assets()
   if (grepl("</script", tolower(display_runtime), fixed = TRUE)) {
     stop("Bundled surface display helper contains an unsafe script sequence.",
          call. = FALSE)
@@ -1534,67 +1774,27 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
     display_runtime,
     "\n</script>\n",
     "<style data-nm-surface-bridge>\n",
-    ".nm-surface-interactive{border:1px solid #d7dee8;border-radius:7px;margin:1rem 0 2rem;background:#f8fafc;}\n",
-    ".nm-surface-disclosure>summary{cursor:pointer;color:#284858;font-weight:700;padding:.8rem 1rem;}\n",
-    ".nm-surface-disclosure[open]>summary{border-bottom:1px solid #d7dee8;}\n",
-    ".nm-surface-target,.nm-surface-status,.nm-surface-note{margin:.7rem 1rem;color:#425466;}\n",
-    ".nm-surface-status{font-size:.92rem;}\n",
-    ".nm-surface-display-controls{align-items:end;background:#eef4f6;border-block:1px solid #d7dee8;display:grid;gap:.65rem;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));padding:.75rem 1rem;}\n",
-    ".nm-surface-display-controls[hidden]{display:none;}\n",
-    ".nm-surface-control-field{display:grid;font-size:.78rem;font-weight:700;gap:.2rem;}\n",
-    ".nm-surface-control-field select,.nm-surface-control-pair input{background:white;border:1px solid #aebbc7;border-radius:4px;font:inherit;padding:.3rem .4rem;width:100%;}\n",
-    ".nm-surface-control-pair{border:0;display:grid;gap:.2rem;grid-template-columns:1fr 1fr;margin:0;padding:0;}\n",
-    ".nm-surface-control-pair legend{font-size:.78rem;font-weight:700;grid-column:1/-1;padding:0;}\n",
-    ".nm-surface-control-pair label{font-size:.72rem;font-weight:600;}\n",
-    ".nm-surface-opacity-field{grid-template-columns:1fr auto;}\n",
-    ".nm-surface-opacity-field>input{grid-column:1/2;width:100%;}\n",
-    ".nm-surface-opacity-field>output{font-variant-numeric:tabular-nums;grid-column:2/3;grid-row:2;}\n",
-    ".nm-surface-display-controls button{background:white;border:1px solid #8294a5;border-radius:4px;cursor:pointer;font:inherit;font-weight:650;padding:.42rem .6rem;}\n",
-    ".nm-surface-display-controls :focus-visible{outline:3px solid #86b8c0;outline-offset:2px;}\n",
-    ".nm-surface-widget{background:#fbfbf8;min-height:260px;max-width:100%;position:relative;}\n",
-    ".nm-surface-author-fallback{background:#fff7ed;border:1px solid #fed7aa;color:#7c2d12;margin:1rem;padding:1rem;}\n",
-    ".nm-surface-note{font-size:.85rem;}\n",
-    ".nm-surface-disclosure{font-size:.78rem;margin:.6rem 1rem 1rem;color:#596a78;}\n",
-    ".nm-view-router{align-items:center;border:1px solid #d7dee8;border-radius:7px;display:flex;flex-wrap:wrap;gap:.45rem;margin:1rem 0;padding:.65rem .85rem;}\n",
-    ".nm-view-router legend{color:#425466;font-size:.78rem;font-weight:700;padding:0 .25rem;}\n",
-    ".nm-view-router label{align-items:center;background:#edf2f5;border:1px solid #c9d3dc;border-radius:999px;cursor:pointer;display:flex;font-weight:650;gap:.3rem;padding:.32rem .7rem;}\n",
-    ".nm-view-router label:has(input:checked){background:#2f6f73;border-color:#2f6f73;color:white;}\n",
-    ".nm-view-router input:focus-visible{outline:3px solid #86b8c0;outline-offset:3px;}\n",
-    "@media(max-width:560px){.nm-surface-display-controls{grid-template-columns:1fr 1fr}.nm-surface-control-field{grid-column:1/-1;}}\n",
-    "@media print{.nm-surface-interactive,.nm-view-router{display:none!important;}}\n",
-    "</style>\n",
+    bridge$css,
+    "\n</style>\n",
     "<script data-nm-surface-bridge>\n",
-    "(function(){'use strict';\n",
-    "var display=window.NeuroMosaicSurfaceDisplay;\n",
-    "function parse(host,name){try{return JSON.parse(host.getAttribute(name)||'{}');}catch(error){return {};}}\n",
-    "function reportGroup(analysisId){var groups=document.querySelectorAll('[data-nm-map-group]');for(var i=0;i<groups.length;i+=1){if(groups[i].getAttribute('data-nm-map-group')===analysisId)return groups[i];}return null;}\n",
-    "function setStatus(host,text){var node=host.querySelector('[data-nm-surface-status]');if(node)node.textContent=text;}\n",
-    "function setTarget(host,mapId){host.setAttribute('data-nm-surface-map',mapId);var labels=parse(host,'data-nm-surface-labels');var node=host.querySelector('[data-nm-surface-target]');if(node)node.textContent=labels[mapId]||mapId;}\n",
-    "function requestReportMap(host,mapId){var analysisId=host.getAttribute('data-nm-surface-analysis');var group=reportGroup(analysisId);if(group)group.dispatchEvent(new CustomEvent('nm-map-request',{detail:{analysisId:analysisId,mapId:mapId},bubbles:true}));}\n",
-    "function selectMap(host,mapId){var mapping=parse(host,'data-nm-surface-map-to-layer');var layerId=mapping[mapId];if(!layerId)return;setTarget(host,mapId);var handle=host.__nmSurfaceHandle;if(handle){try{handle.selectLayer(layerId);}catch(error){setStatus(host,'Interactive surface could not select this map: '+error.message);}}}\n",
-    "function base64Bytes(text){var binary=window.atob(text.replace(/\\s/g,''));var bytes=new Uint8Array(binary.length);for(var i=0;i<binary.length;i+=1)bytes[i]=binary.charCodeAt(i);return bytes;}\n",
-    "function decompress(bytes,compression){if(compression==='none')return Promise.resolve(bytes);if(compression!=='gzip')return Promise.reject(new Error('Unsupported surface asset compression: '+compression));if(typeof window.DecompressionStream!=='function')return Promise.reject(new Error('This browser cannot decompress embedded surface data.'));var stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));return new Response(stream).arrayBuffer().then(function(buffer){return new Uint8Array(buffer);});}\n",
-    "function surfaceFetch(input,init){var url=typeof input==='string'?input:input.url;var prefix='nm-surface-asset:';if(url.indexOf(prefix)===0){var payloadId=decodeURIComponent(url.slice(prefix.length));var node=document.getElementById(payloadId);if(!node)return Promise.resolve(new Response('',{status:404,statusText:'Missing embedded surface asset'}));var compression=node.getAttribute('data-compression')||'none';return decompress(base64Bytes(node.textContent||''),compression).then(function(bytes){return new Response(bytes,{status:200,headers:{'content-type':'application/octet-stream'}});});}return window.fetch(input,init).then(function(response){if(!response.ok||!/\\.gz(?:$|[?#])/.test(url))return response;return response.arrayBuffer().then(function(buffer){return decompress(new Uint8Array(buffer),'gzip');}).then(function(bytes){return new Response(bytes,{status:200,headers:{'content-type':'application/octet-stream'}});});});}\n",
-    "function showFallback(host,error){var fallback=host.querySelector('[data-nm-surface-author-fallback]');var widget=host.querySelector('.nm-surface-widget');if(widget)widget.setAttribute('data-nm-surface-failed','true');if(fallback){fallback.hidden=false;if(error)fallback.textContent=fallback.textContent+' '+error.message;}setStatus(host,'Interactive surface unavailable; use the static montage above.'+(error?' '+error.message:''));}\n",
-    "function installRouter(host){var analysisId=host.getAttribute('data-nm-surface-analysis');if(document.querySelector('[data-nm-view-router=\"'+CSS.escape(analysisId)+'\"]'))return;var volume=document.querySelector('[data-nm-volume-analysis=\"'+CSS.escape(analysisId)+'\"]');var router=document.createElement('fieldset');router.className='nm-view-router';router.setAttribute('data-nm-view-router',analysisId);var legend=document.createElement('legend');legend.textContent='Analysis view';router.appendChild(legend);var name='nm-view-'+analysisId.replace(/[^A-Za-z0-9_-]/g,'-');function add(value,label){var wrapper=document.createElement('label');var input=document.createElement('input');input.type='radio';input.name=name;input.value=value;input.checked=value==='static';wrapper.append(input,document.createTextNode(label));router.appendChild(wrapper);return input;}var choices=[add('static','Static')];if(volume)choices.push(add('slices','Slices'));choices.push(add('surface','Surface'));function choose(view){host.hidden=view!=='surface';if(volume)volume.hidden=view!=='slices';if(view==='surface'){var details=host.querySelector('details');if(details)details.open=true;mount(host).catch(function(){});}if(view==='slices'&&volume){var toggle=volume.querySelector('[data-nm-volume-toggle]');if(toggle&&toggle.getAttribute('aria-expanded')!=='true')toggle.click();}}choices.forEach(function(choice){choice.addEventListener('change',function(){if(choice.checked)choose(choice.value);});});var anchor=volume&&volume.compareDocumentPosition(host)&Node.DOCUMENT_POSITION_FOLLOWING?volume:host;anchor.parentNode.insertBefore(router,anchor);choose('static');}\n",
-    "function layerFor(snapshot,layerId){if(!snapshot)return null;for(var i=0;i<snapshot.surfaces.length;i+=1){var layers=snapshot.surfaces[i].layers;for(var j=0;j<layers.length;j+=1){if(layers[j].id===layerId)return layers[j];}}return null;}\n",
-    "function addresses(snapshot,layerId){var out=[];(snapshot.surfaces||[]).forEach(function(surface){if(surface.layers.some(function(layer){return layer.id===layerId;}))out.push({surfaceId:surface.id,layerId:layerId});});return out;}\n",
-    "function pair(value){return display.pair(value);}\n",
-    "function currentLayerId(host){return display.layerIdForMap(parse(host,'data-nm-surface-map-to-layer'),host.getAttribute('data-nm-surface-map'));}\n",
-    "function defaultFor(host,layer){return host.__nmSurfaceDisplayStore.capture(layer);}\n",
-    "function setNumber(host,selector,value){var input=host.querySelector(selector);if(input&&Number.isFinite(value))input.value=String(value);}\n",
-    "function renderControls(host,snapshot,layerId){var panel=host.querySelector('[data-nm-surface-display-controls]');if(!panel)return;var layer=layerFor(snapshot,layerId);if(!layer)return;panel.hidden=false;var defaults=defaultFor(host,layer);var scalar=layer.scalarMapping;var palette=host.querySelector('[data-nm-surface-palette]');if(palette&&scalar){var options=(scalar.availableColorMaps||[]).filter(function(option){return option.availability&&option.availability.enabled;});var signature=options.map(function(option){return option.id+'\\u0000'+option.label;}).join('\\u0001');if(palette.getAttribute('data-options')!==signature){palette.setAttribute('data-options',signature);palette.replaceChildren.apply(palette,options.map(function(option){var node=document.createElement('option');node.value=option.id;node.textContent=option.label;return node;}));}palette.value=scalar.colorMap.id;}if(scalar){setNumber(host,'[data-nm-surface-range-low]',scalar.displayRange.value[0]);setNumber(host,'[data-nm-surface-range-high]',scalar.displayRange.value[1]);setNumber(host,'[data-nm-surface-threshold-low]',scalar.maskInterval.value[0]);setNumber(host,'[data-nm-surface-threshold-high]',scalar.maskInterval.value[1]);}var opacity=host.querySelector('[data-nm-surface-opacity]');if(opacity)opacity.value=String(layer.opacity);var opacityValue=host.querySelector('[data-nm-surface-opacity-value]');if(opacityValue)opacityValue.value=Number(layer.opacity).toFixed(2);var modified=display.isModified(layer,defaults);host.setAttribute('data-nm-surface-modified',modified?'true':'false');setStatus(host,modified?'Interactive surface display modified; changes are exploratory only.':'Interactive surface ready.');}\n",
-    "function reportResult(host,result){if(result&&result.ok)return true;setStatus(host,'Interactive surface display change was rejected: '+((result&&result.message)||'unknown error'));return false;}\n",
-    "function applyScalar(host,update){var handle=host.__nmSurfaceHandle;var target=handle&&handle.controlTarget;if(!target)return false;var snapshot=target.getSnapshot();var layerId=currentLayerId(host);return addresses(snapshot,layerId).every(function(address){return reportResult(host,target.updateScalarMapping(address,update));});}\n",
-    "function applyOpacity(host,value){var handle=host.__nmSurfaceHandle;var target=handle&&handle.controlTarget;if(!target)return false;var snapshot=target.getSnapshot();var layerId=currentLayerId(host);return addresses(snapshot,layerId).every(function(address){return reportResult(host,target.setLayerOpacity(address,value));});}\n",
-    "function numericPair(host,lowSelector,highSelector){var value=display.orderedFinitePair(host.querySelector(lowSelector).value,host.querySelector(highSelector).value);if(!value)setStatus(host,'Surface display bounds must be finite and ordered.');return value;}\n",
-    "function bindDisplayControls(host){var palette=host.querySelector('[data-nm-surface-palette]');if(palette)palette.addEventListener('change',function(){applyScalar(host,{colorMapId:palette.value});});var rangeInputs=host.querySelectorAll('[data-nm-surface-range-low],[data-nm-surface-range-high]');rangeInputs.forEach(function(input){input.addEventListener('change',function(){var value=numericPair(host,'[data-nm-surface-range-low]','[data-nm-surface-range-high]');if(value)applyScalar(host,{displayRange:value});});});var thresholdInputs=host.querySelectorAll('[data-nm-surface-threshold-low],[data-nm-surface-threshold-high]');thresholdInputs.forEach(function(input){input.addEventListener('change',function(){var value=numericPair(host,'[data-nm-surface-threshold-low]','[data-nm-surface-threshold-high]');if(value)applyScalar(host,{maskInterval:value});});});var opacity=host.querySelector('[data-nm-surface-opacity]');if(opacity)opacity.addEventListener('input',function(){var value=Number(opacity.value);if(Number.isFinite(value))applyOpacity(host,value);});var reset=host.querySelector('[data-nm-surface-reset-display]');if(reset)reset.addEventListener('click',function(){var handle=host.__nmSurfaceHandle;var target=handle&&handle.controlTarget;if(!target)return;var layerId=currentLayerId(host);var defaults=host.__nmSurfaceDisplayStore.get(layerId);if(!defaults)return;applyScalar(host,{colorMapId:defaults.colorMapId,displayRange:defaults.displayRange,maskInterval:defaults.maskInterval});applyOpacity(host,defaults.opacity);});}\n",
-    "function connectHandle(host,handle){host.__nmSurfaceHandle=handle;var widget=host.querySelector('.surfwidget');if(widget)widget.__surfviewHandle=handle;return Promise.resolve(handle.ready).then(function(){selectMap(host,host.getAttribute('data-nm-surface-map'));var target=handle.controlTarget;if(!target||typeof target.subscribe!=='function'){setStatus(host,'Interactive surface ready.');return;}var reverse=parse(host,'data-nm-surface-layer-to-map');host.__nmSurfaceSubscription=target.subscribe(function(snapshot){var exclusive=snapshot&&snapshot.capabilities&&snapshot.capabilities.exclusiveMap;var layerId=exclusive&&exclusive.displayedLayerId;var mapId=layerId&&reverse[layerId];if(mapId&&mapId!==host.getAttribute('data-nm-surface-map')){setTarget(host,mapId);requestReportMap(host,mapId);}if(layerId)renderControls(host,snapshot,layerId);});renderControls(host,target.getSnapshot(),currentLayerId(host));setStatus(host,'Interactive surface ready.');});}\n",
-    "function mount(host){if(host.__nmSurfaceMount)return host.__nmSurfaceMount;setStatus(host,'Loading interactive surface data...');host.__nmSurfaceMount=Promise.resolve().then(function(){if(!window.surfview||typeof window.surfview.mountSurfView!=='function')throw new Error('The surfview runtime did not load.');var manifestNode=document.getElementById(host.getAttribute('data-nm-surface-manifest'));if(!manifestNode)throw new Error('The surface scene manifest is missing.');var manifest=JSON.parse(manifestNode.textContent||'{}');manifest.selectedLayer=currentLayerId(host)||manifest.selectedLayer;var widget=host.querySelector('.surfwidget');var options={lazy:false,preset:host.getAttribute('data-nm-surface-preset')||'paper-light',controls:true,mode:'report',baseUrl:document.baseURI,fetcher:surfaceFetch,onError:function(error){showFallback(host,error);}};var bilateral=parse(host,'data-nm-surface-bilateral');if(bilateral&&bilateral.id)options.bilateralGroup=bilateral;var handle=window.surfview.mountSurfView(widget,manifest,options);return connectHandle(host,handle);}).catch(function(error){showFallback(host,error);throw error;});return host.__nmSurfaceMount;}\n",
-    "function bind(host){if(host.__nmSurfaceBound)return;host.__nmSurfaceBound=true;if(!display){showFallback(host,new Error('The surface display helper did not load.'));return;}host.__nmSurfaceDisplayStore=display.createDefaultStore();bindDisplayControls(host);var details=host.querySelector('details');if(details)details.addEventListener('toggle',function(){if(!details.open)return;mount(host).then(function(){if(host.__nmSurfaceHandle)window.requestAnimationFrame(function(){host.__nmSurfaceHandle.resize();});}).catch(function(){});});installRouter(host);if(details&&details.open&&!host.hidden)mount(host).catch(function(){});}\n",
-    "function initialize(){var hosts=document.querySelectorAll('[data-nm-surface-host]');hosts.forEach(bind);document.addEventListener('nm-map-change',function(event){var detail=event.detail||{};hosts.forEach(function(host){if(host.getAttribute('data-nm-surface-analysis')===detail.analysisId)selectMap(host,detail.mapId);});});window.addEventListener('pagehide',function(){hosts.forEach(function(host){var sub=host.__nmSurfaceSubscription;if(sub&&typeof sub.unsubscribe==='function')sub.unsubscribe();var handle=host.__nmSurfaceHandle;if(handle&&typeof handle.dispose==='function')handle.dispose();});},{once:true});}\n",
-    "if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initialize,{once:true});else initialize();\n",
-    "}());\n",
-    "</script>\n"
+    bridge$js,
+    "\n</script>\n"
   )
+}
+
+.montage_surface_bridge_assets <- function() {
+  read <- function(file) {
+    path <- system.file("htmlwidgets", "lib", "neuromosaic-surface", file,
+                        package = "neuromosaic")
+    if (!nzchar(path)) {
+      path <- file.path("inst", "htmlwidgets", "lib", "neuromosaic-surface", file)
+    }
+    text <- .montage_read_inline_asset(path)
+    if (grepl("</(script|style)", tolower(text))) {
+      stop("Bundled surface bridge asset ", file,
+           " contains an unsafe closing tag.", call. = FALSE)
+    }
+    text
+  }
+  list(css = read("bridge.css"), js = read("bridge.js"))
 }
