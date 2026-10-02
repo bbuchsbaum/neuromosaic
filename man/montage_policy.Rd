@@ -12,11 +12,13 @@ montage_policy(
   connectivity = c("18-connect", "26-connect", "6-connect"),
   min_cluster_size = 10L,
   cap_within = character(),
+  cap_scope = c("quantity", "map"),
   cap = NULL,
   cap_quantile = 0.99,
   cap_floor = NULL,
   layout = character(),
-  layout_fun = NULL
+  layout_fun = NULL,
+  slice_scope = c("section", "analysis", "map")
 )
 }
 \arguments{
@@ -42,7 +44,13 @@ at or above it. A manifest `threshold` column overrides this per row.}
 \item{cap_within}{Character vector of manifest columns that may share color
 caps. Requested groups are automatically partitioned by quantity, resolved
 profile, units, scale type, and center so incompatible maps never share a
-scale.}
+scale. When supplied, it takes precedence over `cap_scope`.}
+
+\item{cap_scope}{Default sharing of colour caps when `cap_within` is empty.
+`"quantity"` (default) gives every map of the same quantity (same
+statistic, resolved profile, units, scale type and center) one
+report-wide cap, so a weak map is not drawn as vividly as a strong one;
+`"map"` derives a separate cap for each map.}
 
 \item{cap}{Optional fixed color cap (magnitude). When supplied, every cap
 group uses this value and the robust quantile default is ignored. `NULL`
@@ -60,6 +68,15 @@ with a narrow suprathreshold range still span a usable color scale. `NULL`
 \item{layout}{Character vector of manifest columns used for nested sections.}
 
 \item{layout_fun}{Optional custom layout function for non-nested layouts.}
+
+\item{slice_scope}{Which maps share one slice set in the report's volume
+figures. `"section"` (default) draws every map of a layout section (all
+`layout` columns equal; the analysis when there is no layout) on one set
+chosen from the union of their displayed voxels, so related maps can be
+compared tile for tile. `"analysis"` uses one set per analysis, chosen
+from its primary map; `"map"` lets each map choose its own. A manifest
+`zlevels` list-column entry overrides the set for one map, and
+`render_montage_report(volume_args = list(zlevels = ...))` for every map.}
 }
 \value{
 A `montage_policy` list.

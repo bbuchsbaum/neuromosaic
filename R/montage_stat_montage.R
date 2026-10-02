@@ -25,8 +25,24 @@
 #'   as the interactive view's initial crosshair. When omitted, the shared
 #'   display specification uses a tail-aware peak and then a field-of-view
 #'   centre fallback. It does not change the static slice selection.
-#' @param zlevels,along,ncol Slice selection arguments passed through.
-#' @param bg_cmap,ov_cmap Background and overlay color maps.
+#' @param zlevels,along,ncol Slice selection and layout. When `zlevels` is
+#'   `NULL`, up to 12 evenly spaced slices are chosen across the central mass
+#'   (5th to 95th percentile) of the displayed voxels. `ncol = NULL` lays the
+#'   report figure out in rows of six.
+#' @param min_cluster_size Optional minimum cluster extent in voxels. When
+#'   supplied for a thresholded map, suprathreshold clusters smaller than this
+#'   (sign-separated, using `connectivity`) are not drawn, matching the
+#'   cluster table.
+#' @param connectivity Voxel connectivity for `min_cluster_size`.
+#' @param figure `"report"` (default) draws the report's figure of record: a
+#'   cropped slice grid labelled in world millimetres with L/R markers, the
+#'   threshold-saturated palette, opaque suprathreshold colour (at least 0.92
+#'   opacity), and a compact horizontal colour key with the hidden
+#'   sub-threshold band hatched. `"classic"` keeps the
+#'   `neuroim2::plot_overlay()` montage.
+#' @param bg_cmap,ov_cmap Background and overlay color maps. `"nm-signed"`
+#'   (the default for signed maps) is the report's threshold-saturated
+#'   diverging palette; see [nm_palette_colors()].
 #' @param ov_alpha Overlay alpha.
 #' @param ov_alpha_mode How overlay opacity tracks magnitude. `"binary"` gives
 #'   every suprathreshold voxel full `ov_alpha`; `"ramp"` ramps alpha linearly
@@ -62,9 +78,9 @@ stat_montage <- function(bg,
                          initial_world_coord = NULL,
                          zlevels = NULL,
                          along = 3L,
-                         ncol = 3L,
+                         ncol = NULL,
                          bg_cmap = "grays",
-                         ov_cmap = if (isTRUE(signed)) "blue-red" else "inferno",
+                         ov_cmap = if (isTRUE(signed)) "nm-signed" else "inferno",
                          ov_alpha = 0.7,
                          ov_alpha_mode = c("soft", "binary", "proportional",
                                            "ramp"),
@@ -74,8 +90,14 @@ stat_montage <- function(bg,
                          empty = c("error", "warning"),
                          draw = TRUE,
                          legend_title = NULL,
-                         units = NULL) {
+                         units = NULL,
+                         min_cluster_size = NULL,
+                         connectivity = c("18-connect", "26-connect",
+                                          "6-connect"),
+                         figure = c("report", "classic")) {
   tail <- match.arg(tail)
+  connectivity <- match.arg(connectivity)
+  figure <- match.arg(figure)
   ov_alpha_mode <- match.arg(ov_alpha_mode)
   on_mismatch <- match.arg(on_mismatch)
   empty <- match.arg(empty)
@@ -97,7 +119,9 @@ stat_montage <- function(bg,
     ov_alpha_mode = ov_alpha_mode,
     alpha_gamma = alpha_gamma,
     on_mismatch = on_mismatch,
-    empty = empty
+    empty = empty,
+    min_cluster_size = min_cluster_size,
+    connectivity = connectivity
   )
 
   legend <- .montage_legend(legend_title, units)
@@ -106,13 +130,68 @@ stat_montage <- function(bg,
   spec$units_explicit <- !missing(units)
   plot_style <- .plot_overlay_style(style)
 
+  plot <- if (identical(figure, "report")) {
+    .stat_montage_report_figure(spec, legend = legend, ncol = ncol,
+                                along = along)
+  } else {
+    .stat_montage_classic_plot(
+      spec, legend = legend, along = along, ncol = ncol %||% 3L,
+      title = title, subtitle = subtitle, caption = caption,
+      draw = FALSE, plot_style = plot_style, alpha_gamma = alpha_gamma
+    )
+  }
+  if (isTRUE(draw)) print(plot)
+
+  structure(
+    list(
+      plot = plot,
+      background = spec$background,
+      overlay = spec$overlay,
+      threshold = spec$threshold,
+      display_mode = spec$display_mode,
+      tail = spec$tail,
+      signed = spec$signed,
+      cap = spec$cap,
+      limits = spec$limits,
+      zlevels = spec$zlevels,
+      slice_labels = if (inherits(plot, "nm_volume_figure_spec")) {
+        plot$labels
+      } else {
+        NULL
+      },
+      figure = figure,
+      initial_world_coord = spec$initial_world_coord,
+      n_suprathreshold = spec$n_suprathreshold %||% spec$n_display_voxels,
+      n_display_voxels = spec$n_display_voxels,
+      n_extent_excluded = spec$n_extent_excluded,
+      style = plot_style,
+      requested_style = style,
+      alpha_mode = spec$alpha_mode,
+      display_spec = spec,
+      overlay_action = spec$overlay_action
+    ),
+    class = "stat_montage_result"
+  )
+}
+
+.stat_montage_classic_plot <- function(spec, legend, along, ncol, title,
+                                       subtitle, caption, draw, plot_style,
+                                       alpha_gamma) {
+  palette <- spec$palette_value
+  if (.nm_is_palette(palette)) {
+    palette <- nm_palette_colors(
+      spec$limits,
+      threshold = if (is.finite(spec$threshold)) spec$threshold else 0,
+      palette = palette
+    )
+  }
   overlay_args <- list(
     bgvol = spec$background,
     overlay = spec$overlay,
     zlevels = spec$zlevels,
     along = along,
     bg_cmap = spec$bg_cmap,
-    ov_cmap = spec$palette_value,
+    ov_cmap = palette,
     bg_range = "robust",
     ov_range = if (identical(spec$display_mode, "continuous")) {
       spec$limits
@@ -142,30 +221,54 @@ stat_montage <- function(bg,
       "alpha_gamma" %in% names(formals(neuroim2::plot_overlay))) {
     overlay_args$alpha_gamma <- alpha_gamma
   }
-  plot <- do.call(neuroim2::plot_overlay, overlay_args)
+  do.call(neuroim2::plot_overlay, overlay_args)
+}
 
-  structure(
-    list(
-      plot = plot,
-      background = spec$background,
-      overlay = spec$overlay,
-      threshold = spec$threshold,
-      display_mode = spec$display_mode,
-      tail = spec$tail,
-      signed = spec$signed,
-      cap = spec$cap,
-      limits = spec$limits,
-      zlevels = spec$zlevels,
-      initial_world_coord = spec$initial_world_coord,
-      n_suprathreshold = spec$n_display_voxels,
-      style = plot_style,
-      requested_style = style,
-      alpha_mode = spec$alpha_mode,
-      display_spec = spec,
-      overlay_action = spec$overlay_action
-    ),
-    class = "stat_montage_result"
+# The report's figure of record (see R/montage_figure.R).
+.stat_montage_report_figure <- function(spec, legend, ncol, along) {
+  continuous <- identical(spec$display_mode, "continuous")
+  values <- as.numeric(as.array(spec$source))
+  if (continuous) {
+    values[!spec$display_mask] <- NA_real_
+  } else {
+    values[!spec$display_mask | !is.finite(values)] <- 0
+  }
+  note <- .stat_montage_figure_note(spec, legend)
+  .nm_volume_figure(
+    background = spec$background,
+    stat_values = values,
+    zlevels = spec$zlevels,
+    along = along,
+    threshold = spec$threshold,
+    limits = spec$limits,
+    palette = spec$palette_value,
+    signed = isTRUE(spec$signed),
+    tail = spec$tail,
+    continuous = continuous,
+    legend_text = legend$text,
+    note = note,
+    ncol = ncol,
+    alpha = max(spec$alpha, 0.92)
   )
+}
+
+.stat_montage_figure_note <- function(spec, legend) {
+  if (identical(spec$display_mode, "continuous")) return(NULL)
+  thr <- .nm_format_tick(spec$threshold)
+  shown <- switch(
+    spec$tail,
+    positive = paste0("threshold ", thr),
+    negative = paste0("threshold ", .nm_minus, thr),
+    paste0("threshold \u00b1", thr)
+  )
+  k <- spec$min_cluster_size
+  if (!is.null(k) && is.finite(k) && k > 1) {
+    shown <- paste0(
+      shown, " \u00b7 clusters \u2265 ", k, " voxels (",
+      sub("-connect$", "-connected", spec$connectivity), ")"
+    )
+  }
+  shown
 }
 
 .validate_montage_limits <- function(limits) {
@@ -265,31 +368,10 @@ stat_montage <- function(bg,
   )
 }
 
-.stat_montage_zlevels <- function(supra_arr, along, max_slices = 9L) {
+.stat_montage_zlevels <- function(supra_arr, along, max_slices = 12L) {
   along <- as.integer(along)
   if (length(along) != 1L || is.na(along) || along < 1L || along > 3L) {
     return(NULL)
   }
-  dims <- dim(supra_arr)
-  has_supra <- vapply(seq_len(dims[[along]]), function(index) {
-    if (along == 1L) {
-      any(supra_arr[index, , ], na.rm = TRUE)
-    } else if (along == 2L) {
-      any(supra_arr[, index, ], na.rm = TRUE)
-    } else {
-      any(supra_arr[, , index], na.rm = TRUE)
-    }
-  }, logical(1))
-  z <- which(has_supra)
-  if (length(z) == 0L) {
-    # No suprathreshold slices (e.g. an empty contrast rendered with
-    # empty = "warning"): fall back to evenly spaced slices so the base montage
-    # still renders rather than failing on an empty slice set.
-    n <- dims[[along]]
-    return(unique(round(seq(1, n, length.out = min(max_slices, n)))))
-  }
-  if (length(z) <= max_slices) {
-    return(z)
-  }
-  unique(round(seq(min(z), max(z), length.out = max_slices)))
+  .stat_montage_central_zlevels(supra_arr, along, max_slices = max_slices)
 }

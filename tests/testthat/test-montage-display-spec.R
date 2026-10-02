@@ -10,7 +10,9 @@ test_that("volume display spec selects a deterministic tail-aware peak", {
   cases <- list(
     positive = list(tail = "positive", index = which.max(values)),
     negative = list(tail = "negative", index = which.min(values)),
-    two_sided = list(tail = "two_sided", index = which.max(abs(values)))
+    # Two-sided signed maps open at the strongest positive peak (+4.5),
+    # not the stronger negative one (-5.5).
+    two_sided = list(tail = "two_sided", index = which.max(values))
   )
   for (case in cases) {
     out <- stat_montage(

@@ -48,11 +48,13 @@ Suggests:
     fmrigds,
     htmltools,
     kableExtra,
+    magick,
     neurotabs,
     quarto,
     ragg,
     rmarkdown,
     shiny,
+    systemfonts,
     testthat (>= 3.0.0),
     V8
 Remotes:

@@ -86,16 +86,18 @@ test_that("surf_montage writes PNG with supplied projection and clipped cap", {
   expect_identical(result$render$limits, c(-4, 4))
 })
 
-test_that("static surface palettes use names accepted by scico", {
+test_that("static surface palettes use the report palette or scico names", {
+  # Signed maps share the report's threshold-saturated palette with every
+  # other view; sequential maps keep a scico palette.
   expect_identical(
     neuromosaic:::.montage_surface_palette("diverging", "diverging"),
-    "vik"
+    "nm-signed"
   )
   expect_identical(
     neuromosaic:::.montage_surface_palette("sequential", "sequential"),
     "lajolla"
   )
-  expect_true(all(c("vik", "lajolla") %in% scico::scico_palette_names()))
+  expect_true("lajolla" %in% scico::scico_palette_names())
 })
 
 test_that("surf_montage rejects invalid inputs and empty overlays", {
@@ -318,7 +320,9 @@ test_that("surf_montage renders parcel-valued vals without projection (#7)", {
 
   expect_equal(captured$vals, c(`1` = 4.5, `2` = -5.5))
   expect_equal(captured$lim, c(-6, 6))
-  expect_identical(captured$palette, "vik")
+  # The default signed palette is the report palette, resolved to colours
+  # for this map's threshold and cap.
+  expect_identical(captured$palette, nm_palette_colors(c(-6, 6), threshold = 3))
   expect_false(captured$has_overlay)
   expect_identical(res$diagnostics$projection, "parcel_values")
   expect_equal(res$n_suprathreshold, 2)

@@ -35,7 +35,7 @@ surf_montage(
   orientation_labels = TRUE,
   overlay_alpha = 0.85,
   palette = "cork",
-  overlay_palette = if (isTRUE(signed)) "vik" else "lajolla",
+  overlay_palette = if (isTRUE(signed)) "nm-signed" else "lajolla",
   width = 3000,
   height = 1875,
   res = 300,
@@ -54,7 +54,11 @@ surf_montage(
   anatomy_midpoint = NULL,
   anatomy_invert = FALSE,
   parcel_backend = c("cpu", "ggplot"),
-  parcel_style = NULL
+  parcel_style = NULL,
+  min_cluster_size = NULL,
+  connectivity = c("18-connect", "26-connect", "6-connect"),
+  key = c("report", "plot"),
+  layout = c("strip", "grid")
 )
 }
 \arguments{
@@ -136,7 +140,9 @@ a small amount of anatomical context visible beneath the statistic.}
 
 \item{palette}{Base parcel palette.}
 
-\item{overlay_palette}{Overlay palette.}
+\item{overlay_palette}{Overlay palette. `"nm-signed"` (the default for
+signed maps) is the report's threshold-saturated diverging palette; it is
+drawn opaque above threshold with no near-threshold fade.}
 
 \item{width, height, res}{PNG device settings. Defaults target a 10 by 6.25
 inch, 300-dpi publication raster.}
@@ -181,6 +187,24 @@ panel layout. `"ggplot"` keeps the historical polygon renderer.}
 
 \item{parcel_style}{Optional `neurosurf::surface_parcel_style()` settings
 for the CPU parcel renderer.}
+
+\item{min_cluster_size}{Optional minimum cluster extent in voxels for a
+thresholded volumetric `stat`; smaller suprathreshold clusters
+(sign-separated, using `connectivity`) are removed before projection.}
+
+\item{connectivity}{Voxel connectivity for `min_cluster_size`.}
+
+\item{key}{`"report"` (default) draws a compact horizontal colour key
+below the views with rounded ticks and the hidden sub-threshold band
+hatched; `"plot"` keeps `plot_brain()`'s own colour bar. Parcel-valued
+maps always use `plot_brain()`'s colour bar.}
+
+\item{layout}{`"strip"` (default, with `key = "report"` and a volumetric
+`stat`) composes the four views as one row (left lateral, left medial,
+right medial, right lateral) with small view labels and A/P marks derived
+from the camera geometry, at the report figure width (`width`/`height`/
+`res` are then chosen by the strip, 1760 px at 144 dpi). `"grid"` keeps
+`plot_brain()`'s 2 x 2 arrangement.}
 }
 \value{
 A `surf_montage_result` list containing the PNG path, projection,

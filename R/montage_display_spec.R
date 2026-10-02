@@ -17,7 +17,9 @@
                                                  ov_alpha_mode,
                                                  alpha_gamma,
                                                  on_mismatch,
-                                                 empty) {
+                                                 empty,
+                                                 min_cluster_size = NULL,
+                                                 connectivity = "18-connect") {
   continuous <- is.null(threshold) ||
     (length(threshold) == 1L && is.na(threshold))
   if (!continuous && (!is.numeric(threshold) || length(threshold) != 1L ||
@@ -63,8 +65,25 @@
     .suprathreshold_mask(stat_values, threshold = threshold, tail = tail)
   }
   display_mask <- display_mask & support
+  # Report-level display extent: suprathreshold clusters smaller than the
+  # manifest's minimum cluster size are excluded from every view, exactly as
+  # they are excluded from the cluster table.
+  extent_excluded <- if (continuous) {
+    rep(FALSE, length(display_mask))
+  } else {
+    .montage_extent_excluded(
+      stat_values, dim(stat_arr), display_mask,
+      min_cluster_size = min_cluster_size, connectivity = connectivity
+    )
+  }
+  threshold_mask <- display_mask
+  n_threshold <- sum(threshold_mask, na.rm = TRUE)
+  display_mask <- display_mask & !extent_excluded
   n_display <- sum(display_mask, na.rm = TRUE)
-  if (n_display == 0L) {
+  # The empty policy concerns the threshold: a map whose suprathreshold
+  # voxels all fall in sub-extent clusters is a valid (empty) display, just
+  # as its cluster table is a valid empty table.
+  if (n_threshold == 0L) {
     msg <- if (continuous) {
       "No finite display voxels for the continuous overlay."
     } else {
@@ -92,7 +111,9 @@
     display_arr, space = neuroim2::space(aligned$stat)
   )
   plot_zlevels <- zlevels %||% .stat_montage_zlevels(
-    array(display_mask, dim = dim(stat_arr)), along = along
+    array(if (n_display > 0L) display_mask else threshold_mask,
+          dim = dim(stat_arr)),
+    along = along
   )
   alpha_mode <- .plot_overlay_alpha_mode(ov_alpha_mode)
   initial_world_coord <- as.numeric(initial_world_coord %||%
@@ -110,6 +131,18 @@
       overlay = display_stat,
       display_mask = display_mask,
       support_mask = support,
+      # Support for exported/interactive overlays: the analysis support minus
+      # the sub-extent clusters (hidden as NaN, so lower browser thresholds
+      # still reveal sub-threshold values).
+      display_support_mask = support & !extent_excluded,
+      min_cluster_size = if (continuous || is.null(min_cluster_size)) {
+        NULL
+      } else {
+        as.integer(min_cluster_size)
+      },
+      connectivity = connectivity,
+      n_extent_excluded = sum(extent_excluded),
+      n_suprathreshold = n_threshold,
       threshold = if (continuous) NA_real_ else as.numeric(threshold),
       display_mode = if (continuous) "continuous" else "thresholded",
       tail = tail,
@@ -202,10 +235,14 @@
       alpha_gamma = spec$alpha_gamma,
       support = support_name,
       support_mask = spec$support_mask,
+      display_support_mask = spec$display_support_mask,
+      min_cluster_size = spec$min_cluster_size,
+      connectivity = spec$connectivity,
+      n_extent_excluded = spec$n_extent_excluded,
       zlevels = spec$zlevels,
       zlevel_bookmarks = spec$zlevel_bookmarks,
       initial_world_coord = as.numeric(world_coord),
-      n_suprathreshold = spec$n_display_voxels,
+      n_suprathreshold = spec$n_suprathreshold %||% spec$n_display_voxels,
       n_display_voxels = spec$n_display_voxels,
       status = if (spec$n_display_voxels == 0L) "empty" else "ready",
       style = NULL,
@@ -245,7 +282,14 @@
     } else if (identical(tail, "negative")) {
       which.min(candidate_values)
     } else if (isTRUE(signed)) {
-      which.max(abs(candidate_values))
+      # Open two-sided maps at the strongest positive peak (cluster P1, the
+      # first row of the peak table); a map with only negative clusters
+      # opens at its strongest negative peak.
+      if (any(candidate_values > 0)) {
+        which.max(candidate_values)
+      } else {
+        which.max(abs(candidate_values))
+      }
     } else {
       which.max(candidate_values)
     }

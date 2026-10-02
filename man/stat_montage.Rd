@@ -19,9 +19,9 @@ stat_montage(
   initial_world_coord = NULL,
   zlevels = NULL,
   along = 3L,
-  ncol = 3L,
+  ncol = NULL,
   bg_cmap = "grays",
-  ov_cmap = if (isTRUE(signed)) "blue-red" else "inferno",
+  ov_cmap = if (isTRUE(signed)) "nm-signed" else "inferno",
   ov_alpha = 0.7,
   ov_alpha_mode = c("soft", "binary", "proportional", "ramp"),
   alpha_gamma = NULL,
@@ -30,7 +30,10 @@ stat_montage(
   empty = c("error", "warning"),
   draw = TRUE,
   legend_title = NULL,
-  units = NULL
+  units = NULL,
+  min_cluster_size = NULL,
+  connectivity = c("18-connect", "26-connect", "6-connect"),
+  figure = c("report", "classic")
 )
 }
 \arguments{
@@ -64,9 +67,14 @@ as the interactive view's initial crosshair. When omitted, the shared
 display specification uses a tail-aware peak and then a field-of-view
 centre fallback. It does not change the static slice selection.}
 
-\item{zlevels, along, ncol}{Slice selection arguments passed through.}
+\item{zlevels, along, ncol}{Slice selection and layout. When `zlevels` is
+`NULL`, up to 12 evenly spaced slices are chosen across the central mass
+(5th to 95th percentile) of the displayed voxels. `ncol = NULL` lays the
+report figure out in rows of six.}
 
-\item{bg_cmap, ov_cmap}{Background and overlay color maps.}
+\item{bg_cmap, ov_cmap}{Background and overlay color maps. `"nm-signed"`
+(the default for signed maps) is the report's threshold-saturated
+diverging palette; see [nm_palette_colors()].}
 
 \item{ov_alpha}{Overlay alpha.}
 
@@ -93,6 +101,20 @@ installed `neuroim2`; otherwise it falls back to `"light"`.}
 `title`. `NULL` defaults to `"Statistic"`.}
 
 \item{units}{Optional units appended to the colorbar quantity label.}
+
+\item{min_cluster_size}{Optional minimum cluster extent in voxels. When
+supplied for a thresholded map, suprathreshold clusters smaller than this
+(sign-separated, using `connectivity`) are not drawn, matching the
+cluster table.}
+
+\item{connectivity}{Voxel connectivity for `min_cluster_size`.}
+
+\item{figure}{`"report"` (default) draws the report's figure of record: a
+cropped slice grid labelled in world millimetres with L/R markers, the
+threshold-saturated palette, opaque suprathreshold colour (at least 0.92
+opacity), and a compact horizontal colour key with the hidden
+sub-threshold band hatched. `"classic"` keeps the
+`neuroim2::plot_overlay()` montage.}
 }
 \value{
 A `stat_montage_result` list containing the plot object/list and

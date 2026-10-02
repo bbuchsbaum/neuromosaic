@@ -58,7 +58,12 @@
 #' @param cap_within Character vector of manifest columns that may share color
 #'   caps. Requested groups are automatically partitioned by quantity, resolved
 #'   profile, units, scale type, and center so incompatible maps never share a
-#'   scale.
+#'   scale. When supplied, it takes precedence over `cap_scope`.
+#' @param cap_scope Default sharing of colour caps when `cap_within` is empty.
+#'   `"quantity"` (default) gives every map of the same quantity (same
+#'   statistic, resolved profile, units, scale type and center) one
+#'   report-wide cap, so a weak map is not drawn as vividly as a strong one;
+#'   `"map"` derives a separate cap for each map.
 #' @param cap Optional fixed color cap (magnitude). When supplied, every cap
 #'   group uses this value and the robust quantile default is ignored. `NULL`
 #'   (default) derives a cap per group from the data.
@@ -71,6 +76,14 @@
 #'   (default) applies no floor.
 #' @param layout Character vector of manifest columns used for nested sections.
 #' @param layout_fun Optional custom layout function for non-nested layouts.
+#' @param slice_scope Which maps share one slice set in the report's volume
+#'   figures. `"section"` (default) draws every map of a layout section (all
+#'   `layout` columns equal; the analysis when there is no layout) on one set
+#'   chosen from the union of their displayed voxels, so related maps can be
+#'   compared tile for tile. `"analysis"` uses one set per analysis, chosen
+#'   from its primary map; `"map"` lets each map choose its own. A manifest
+#'   `zlevels` list-column entry overrides the set for one map, and
+#'   `render_montage_report(volume_args = list(zlevels = ...))` for every map.
 #'
 #' @details
 #' # FDR / q-value thresholding
@@ -108,13 +121,17 @@ montage_policy <- function(p = 0.005,
                                             "6-connect"),
                            min_cluster_size = 10L,
                            cap_within = character(),
+                           cap_scope = c("quantity", "map"),
                            cap = NULL,
                            cap_quantile = 0.99,
                            cap_floor = NULL,
                            layout = character(),
-                           layout_fun = NULL) {
+                           layout_fun = NULL,
+                           slice_scope = c("section", "analysis", "map")) {
   tail <- match.arg(tail)
+  slice_scope <- match.arg(slice_scope)
   connectivity <- match.arg(connectivity)
+  cap_scope <- match.arg(cap_scope)
 
   if (!is.numeric(p) || length(p) != 1L || !is.finite(p) ||
       p <= 0 || p >= 1) {
@@ -177,11 +194,13 @@ montage_policy <- function(p = 0.005,
       connectivity = connectivity,
       min_cluster_size = as.integer(min_cluster_size),
       cap_within = cap_within,
+      cap_scope = cap_scope,
       cap = cap,
       cap_quantile = cap_quantile,
       cap_floor = cap_floor,
       layout = layout,
-      layout_fun = layout_fun
+      layout_fun = layout_fun,
+      slice_scope = slice_scope
     ),
     class = "montage_policy"
   )
@@ -284,7 +303,9 @@ resolve_montage_policy <- function(manifest, policy = montage_policy(),
   manifest$effective_tail <- tail
   manifest$effective_connectivity <- connectivity
   manifest$effective_min_cluster_size <- as.integer(min_cluster_size)
-  manifest$cap_key <- .policy_cap_key(manifest, policy$cap_within)
+  manifest$cap_key <- .policy_cap_key(
+    manifest, policy$cap_within, policy$cap_scope %||% "quantity"
+  )
   attr(manifest, "montage_policy") <- policy
   manifest
 }
@@ -438,13 +459,17 @@ resolve_montage_policy <- function(manifest, policy = montage_policy(),
   }
 }
 
-.policy_cap_key <- function(manifest, cap_within) {
-  if (length(cap_within) == 0L) {
+.policy_cap_key <- function(manifest, cap_within, cap_scope = "quantity") {
+  if (length(cap_within) == 0L && identical(cap_scope, "map")) {
     return(as.character(manifest$map_id))
   }
-  requested <- apply(manifest[, cap_within, drop = FALSE], 1L, function(row) {
-    paste(as.character(row), collapse = "/")
-  })
+  requested <- if (length(cap_within) == 0L) {
+    rep("report", nrow(manifest))
+  } else {
+    apply(manifest[, cap_within, drop = FALSE], 1L, function(row) {
+      paste(as.character(row), collapse = "/")
+    })
+  }
   units <- if ("effective_units" %in% names(manifest)) {
     manifest$effective_units
   } else if ("units" %in% names(manifest)) {

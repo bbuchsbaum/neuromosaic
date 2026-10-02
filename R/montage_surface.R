@@ -63,7 +63,23 @@
 #' @param overlay_alpha Surface overlay alpha. The publication default leaves
 #'   a small amount of anatomical context visible beneath the statistic.
 #' @param palette Base parcel palette.
-#' @param overlay_palette Overlay palette.
+#' @param overlay_palette Overlay palette. `"nm-signed"` (the default for
+#'   signed maps) is the report's threshold-saturated diverging palette; it is
+#'   drawn opaque above threshold with no near-threshold fade.
+#' @param min_cluster_size Optional minimum cluster extent in voxels for a
+#'   thresholded volumetric `stat`; smaller suprathreshold clusters
+#'   (sign-separated, using `connectivity`) are removed before projection.
+#' @param connectivity Voxel connectivity for `min_cluster_size`.
+#' @param key `"report"` (default) draws a compact horizontal colour key
+#'   below the views with rounded ticks and the hidden sub-threshold band
+#'   hatched; `"plot"` keeps `plot_brain()`'s own colour bar. Parcel-valued
+#'   maps always use `plot_brain()`'s colour bar.
+#' @param layout `"strip"` (default, with `key = "report"` and a volumetric
+#'   `stat`) composes the four views as one row (left lateral, left medial,
+#'   right medial, right lateral) with small view labels and A/P marks derived
+#'   from the camera geometry, at the report figure width (`width`/`height`/
+#'   `res` are then chosen by the strip, 1760 px at 144 dpi). `"grid"` keeps
+#'   `plot_brain()`'s 2 x 2 arrangement.
 #' @param width,height,res PNG device settings. Defaults target a 10 by 6.25
 #'   inch, 300-dpi publication raster.
 #' @param render_device Output backend: \code{"auto"} selects Cairo PDF for a
@@ -122,7 +138,7 @@ surf_montage <- function(stat = NULL,
                          orientation_labels = TRUE,
                          overlay_alpha = 0.85,
                          palette = "cork",
-                         overlay_palette = if (isTRUE(signed)) "vik" else "lajolla",
+                         overlay_palette = if (isTRUE(signed)) "nm-signed" else "lajolla",
                          width = 3000,
                          height = 1875,
                          res = 300,
@@ -141,8 +157,16 @@ surf_montage <- function(stat = NULL,
                          anatomy_midpoint = NULL,
                          anatomy_invert = FALSE,
                          parcel_backend = c("cpu", "ggplot"),
-                         parcel_style = NULL) {
+                         parcel_style = NULL,
+                         min_cluster_size = NULL,
+                         connectivity = c("18-connect", "26-connect",
+                                          "6-connect"),
+                         key = c("report", "plot"),
+                         layout = c("strip", "grid")) {
   legend <- .montage_legend(legend_title, units)
+  layout <- match.arg(layout)
+  connectivity <- match.arg(connectivity)
+  key <- match.arg(key)
   tail <- match.arg(tail)
   fun <- match.arg(fun)
   sampling <- match.arg(sampling)
@@ -249,7 +273,18 @@ surf_montage <- function(stat = NULL,
     }
     warning(msg, call. = FALSE)
   }
+  if (!continuous && has_stat) {
+    # Same display extent as the cluster table and the volume figure. The
+    # empty policy above concerns the threshold, not the extent.
+    extent_excluded <- .montage_extent_excluded(
+      values, dim(stat), supra,
+      min_cluster_size = min_cluster_size, connectivity = connectivity
+    )
+    supra <- supra & !extent_excluded
+    support <- support & !extent_excluded
+  }
 
+  surface_projection_meta <- NULL
   if (has_vals) {
     display_vals <- values
     display_vals[!supra] <- NA_real_
@@ -315,6 +350,21 @@ surf_montage <- function(stat = NULL,
       overlay_payload <- neuroim2::NeuroVol(
         overlay_arr, space = neuroim2::space(stat)
       )
+      # Project here with plot_brain()'s own projector and the same settings,
+      # and hand it the vertex values: the drawn surface is unchanged, and the
+      # key's cap triangles can then come from the values actually drawn.
+      # (A caller's own plot_fun still receives the volume.)
+      projected <- if (is.null(plot_fun)) {
+        .nm_project_surface_overlay(
+          overlay_payload, surfatlas, fun = fun, sampling = sampling,
+          interpolation = interpolation, aggregate = aggregate,
+          depth = projection_depth, surface_smooth_fwhm = surface_smooth_fwhm
+        )
+      }
+      if (!is.null(projected)) {
+        overlay_payload <- projected$overlay
+        surface_projection_meta <- projected$meta
+      }
       result_overlay <- NULL
       surface_space_out <- surfatlas$surface_space %||% surface_space
       diagnostics <- list(
@@ -352,28 +402,42 @@ surf_montage <- function(stat = NULL,
   if (!dir.exists(output_dir)) {
     dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   }
+  plot_fun_arg <- plot_fun
   plot_fun <- plot_fun %||% neuroatlas::plot_brain
   # Match the color limits to the rendered sign: symmetric for signed maps, and
   # for unsigned maps the half-range that holds the retained tail so negative
   # one-sided effects are not clamped to a [0, cap] scale.
   overlay_lim <- limits
-  montage_bg <- "#FBFBF8"
+  nm_palette <- .nm_is_palette(overlay_palette)
+  palette_name <- overlay_palette
+  if (nm_palette) {
+    overlay_palette <- if (has_vals || continuous) {
+      nm_palette_colors(
+        limits, threshold = if (continuous) 0 else threshold,
+        palette = overlay_palette
+      )
+    } else {
+      # neurosurf's CPU rasterizer already stretches each half of the palette
+      # over [threshold, cap], so hand it the ramp stops themselves.
+      .nm_threshold_stops(overlay_palette, tail)
+    }
+  }
+  report_key <- identical(key, "report") && !has_vals
+  montage_bg <- .nm_canvas
 
-  render_device_used <- .open_surface_montage_device(
-    filename = output_file,
-    width = width,
-    height = height,
-    res = res,
-    device = render_device,
-    background = montage_bg
-  )
   plot_anatomy_provenance <- NULL
   plot_backend <- if (!has_vals) "cpu_barycentric" else if (parcel_cpu) {
     "cpu_deferred_parcels"
   } else {
     "ggplot"
   }
-  tryCatch({
+  # The report's 1 x 4 strip (left lateral, left medial, right medial, right
+  # lateral) is composed here from plot_brain()'s per-view rasters, which are
+  # rendered on a chroma-key ground so they can be cut out and placed on the
+  # light or the dark canvas, with this package's own type and A/P marks.
+  strip_mode <- identical(layout, "strip") && report_key && has_stat &&
+    is.null(plot_fun_arg) && !identical(tools::file_ext(output_file), "pdf")
+  build_plot <- function(strip) {
     plot_args <- list(
       surfatlas = surfatlas,
       vals = plot_vals,
@@ -383,11 +447,11 @@ surf_montage <- function(stat = NULL,
       palette = if (has_vals) overlay_palette else palette,
       lim = if (has_vals) overlay_lim else c(0, 0),
       interactive = FALSE,
-      colorbar = TRUE,
+      colorbar = !report_key,
       colorbar_title = legend$text,
-      title = title,
-      subtitle = subtitle,
-      caption = caption
+      title = if (strip) NULL else title,
+      subtitle = if (strip) NULL else subtitle,
+      caption = if (strip) NULL else caption
     )
     if (parcel_cpu) {
       # Deferred CPU parcel renderer: smooth parcel edges, sulcal underlay,
@@ -413,6 +477,7 @@ surf_montage <- function(stat = NULL,
       plot_args <- c(plot_args, list(
         style = "stat_publication",
         static_backend = "cpu",
+        bg = if (strip) .nm_chroma_key else montage_bg,
         colorbar_source = "overlay",
         overlay_title = legend$text,
         overlay = overlay_payload,
@@ -436,17 +501,108 @@ surf_montage <- function(stat = NULL,
         anatomy_midpoint = anatomy_midpoint,
         anatomy_invert = anatomy_invert,
         anatomy_range = if (appearance == "freesurfer") c(0.25, 0.75) else c(0.72, 0.90),
-        overlay_alpha_ramp = if (appearance == "freesurfer") 0 else NULL,
+        overlay_alpha_ramp = if (appearance == "freesurfer" || nm_palette) {
+          0
+        } else {
+          NULL
+        },
         medial_wall = medial_wall,
         camera = camera,
-        orientation_labels = orientation_labels
+        # The strip draws its own A/P marks from the camera geometry (older
+        # neuroatlas releases swap A/P on medial views).
+        orientation_labels = if (strip) FALSE else orientation_labels
       ))
+      if (strip) {
+        plot_args$render_width <- 1000L
+        plot_args$render_height <- 625L
+      }
     }
-    p <- do.call(plot_fun, plot_args)
-    plot_anatomy_provenance <- attr(p, "plot_brain_anatomy")
-    plot_backend <- attr(p, "plot_brain_backend") %||% plot_backend
-    print(p)
-  }, finally = grDevices::dev.off())
+    do.call(plot_fun, plot_args)
+  }
+  # Cap triangles mark values beyond the cap that are actually drawn: the
+  # projected cortical vertex values when available (surface peaks are lower
+  # than the volume's), else the displayed volume voxels.
+  drawn <- .nm_surface_drawn_values(
+    overlay_payload, surfatlas, hemis = hemis, cortex_mask = cortex_mask,
+    threshold = if (continuous) 0 else threshold
+  )
+  cap_source <- if (is.null(drawn)) values[supra] else drawn
+  key_args <- list(
+    palette = if (.nm_is_palette(palette_name)) palette_name else overlay_palette,
+    limits = overlay_lim,
+    threshold = if (continuous) NA_real_ else threshold,
+    signed = signed, tail = tail, continuous = continuous,
+    title = legend$text,
+    over_low = any(cap_source < overlay_lim[[1L]], na.rm = TRUE),
+    over_high = any(cap_source > overlay_lim[[2L]], na.rm = TRUE),
+    cap_source = if (is.null(drawn)) "volume" else "surface",
+    # Surface values are the volume sampled through the cortical ribbon and
+    # averaged, so surface peaks read lower than the volume's.
+    note = if (has_stat && length(projection_depth) > 1L) {
+      "values averaged across cortical depth"
+    }
+  )
+
+  strip <- NULL
+  if (strip_mode) {
+    p <- build_plot(TRUE)
+    strip <- .nm_surface_strip_parts(p, key = key_args)
+    if (is.null(strip)) {
+      strip_mode <- FALSE
+    } else {
+      plot_anatomy_provenance <- .nm_with_projection_meta(
+        attr(p, "plot_brain_anatomy"), surface_projection_meta
+      )
+      plot_backend <- attr(p, "plot_brain_backend") %||% plot_backend
+      plain <- identical(render_device, "png") ||
+        !requireNamespace("ragg", quietly = TRUE)
+      .nm_font_env$force_plain <- plain
+      spec <- tryCatch(.nm_surface_strip_layout(strip),
+                       finally = .nm_font_env$force_plain <- FALSE)
+      width <- spec$width
+      height <- spec$height
+      res <- spec$res
+      render_device_used <- .open_surface_montage_device(
+        filename = output_file, width = width, height = height, res = res,
+        device = render_device, background = montage_bg
+      )
+      tryCatch({
+        grid::grid.newpage()
+        grid::grid.draw(spec$grob)
+      }, finally = grDevices::dev.off())
+    }
+  }
+
+  if (!strip_mode) {
+    render_device_used <- .open_surface_montage_device(
+      filename = output_file,
+      width = width,
+      height = height,
+      res = res,
+      device = render_device,
+      background = montage_bg
+    )
+    tryCatch({
+      p <- build_plot(FALSE)
+      plot_anatomy_provenance <- .nm_with_projection_meta(
+        attr(p, "plot_brain_anatomy"), surface_projection_meta
+      )
+      plot_backend <- attr(p, "plot_brain_backend") %||% plot_backend
+      if (report_key) {
+        .surf_montage_draw_with_key(
+          p, res = res, height = height, palette = palette_name,
+          colours = overlay_palette, limits = overlay_lim,
+          threshold = key_args$threshold,
+          signed = signed, tail = tail, continuous = continuous,
+          title = legend$text,
+          over_low = key_args$over_low,
+          over_high = key_args$over_high
+        )
+      } else {
+        print(p)
+      }
+    }, finally = grDevices::dev.off())
+  }
 
   structure(
     list(
@@ -478,7 +634,7 @@ surf_montage <- function(stat = NULL,
         backend = plot_backend,
         colorbar_source = if (has_vals) "base" else "overlay",
         palette = if (has_vals) overlay_palette else palette,
-        overlay_palette = if (has_vals) NULL else overlay_palette,
+        overlay_palette = if (has_vals) NULL else palette_name,
         limits = overlay_lim,
         projection = list(
           interpolation = interpolation,
@@ -492,11 +648,323 @@ surf_montage <- function(stat = NULL,
         # medial-wall, and orientation-label controls; record what was applied.
         medial_wall = if (has_vals) NA_character_ else medial_wall,
         camera = if (has_vals && !parcel_cpu) "canonical" else camera,
-        orientation_labels = if (has_vals) FALSE else orientation_labels
-      )
+        orientation_labels = if (has_vals) FALSE else orientation_labels,
+        layout = if (strip_mode) "strip" else "grid"
+      ),
+      strip = strip
     ),
     class = "surf_montage_result"
   )
+}
+
+# Volume -> vertex projection with neuroatlas's own plot_brain() projector
+# (internal; looked up at run time so older neuroatlas releases simply fall
+# back to letting plot_brain() project). Returns list(overlay = lh/rh values,
+# meta) or NULL.
+.nm_project_surface_overlay <- function(vol, surfatlas, fun, sampling,
+                                        interpolation, aggregate, depth,
+                                        surface_smooth_fwhm) {
+  projector <- tryCatch(
+    utils::getFromNamespace(".project_cluster_overlay", "neuroatlas"),
+    error = function(e) NULL
+  )
+  if (!is.function(projector)) return(NULL)
+  formals_ok <- all(c("cluster_vol", "surfatlas", "fun", "sampling",
+                      "interpolation", "aggregate", "depth",
+                      "surface_smooth_fwhm") %in% names(formals(projector)))
+  if (!formals_ok) return(NULL)
+  out <- tryCatch(
+    suppressWarnings(projector(
+      cluster_vol = vol, surfatlas = surfatlas, fun = fun,
+      sampling = sampling, interpolation = interpolation,
+      aggregate = aggregate, depth = depth,
+      surface_smooth_fwhm = surface_smooth_fwhm
+    )),
+    error = function(e) NULL
+  )
+  if (is.null(out) || !is.list(out$overlay) ||
+      !all(c("lh", "rh") %in% names(out$overlay))) {
+    return(NULL)
+  }
+  out
+}
+
+# Vertex values the static surface draws: projected values on the requested
+# hemispheres, inside the cortex domain (medial wall excluded), at or above
+# the threshold. NULL when `overlay` is not a projected lh/rh list.
+.nm_surface_drawn_values <- function(overlay, surfatlas, hemis,
+                                     cortex_mask = NULL, threshold = 0) {
+  if (!is.list(overlay) || inherits(overlay, "NeuroVol")) return(NULL)
+  vals <- lapply(hemis, function(h) {
+    hk <- if (h %in% c("left", "lh")) "lh" else "rh"
+    v <- as.numeric(overlay[[hk]] %||% overlay[[h]])
+    if (!length(v)) return(numeric())
+    mask <- .nm_hemi_value(cortex_mask, hk) %||%
+      .nm_hemi_value(surfatlas$cortex_mask, hk)
+    if (is.logical(mask) && length(mask) == length(v)) v[!mask] <- NA_real_
+    v
+  })
+  v <- unlist(vals, use.names = FALSE)
+  v[is.finite(v) & abs(v) >= threshold]
+}
+
+# plot_brain() records its projection in the anatomy provenance only when it
+# projects itself; restore it when the projection was done here.
+.nm_with_projection_meta <- function(provenance, meta) {
+  if (is.null(meta) || !is.list(provenance) ||
+      !is.null(provenance$projection)) {
+    return(provenance)
+  }
+  provenance$projection <- meta
+  provenance
+}
+
+.nm_hemi_value <- function(x, hk) {
+  if (is.null(x)) return(NULL)
+  if (!is.list(x)) return(x)
+  x[[hk]] %||% x[[if (hk == "lh") "left" else "right"]]
+}
+
+# Draw the plot_brain() views above a compact horizontal colour key (the
+# 2 x 2 "grid" layout).
+.surf_montage_draw_with_key <- function(p, res, height, palette, colours,
+                                        limits, threshold, signed, tail,
+                                        continuous, title, over_low = FALSE,
+                                        over_high = FALSE) {
+  key_px <- 120
+  px <- function(v) grid::unit(v * 72 / res, "bigpts")
+  grid::grid.newpage()
+  grid::grid.rect(gp = grid::gpar(fill = .nm_canvas, col = NA))
+  print(p, newpage = FALSE, vp = grid::viewport(
+    y = grid::unit(1, "npc"), height = grid::unit(1, "npc") - px(key_px),
+    just = c("centre", "top")
+  ))
+  key_palette <- if (.nm_is_palette(palette)) palette else colours
+  key <- .nm_with_device_fonts(.nm_colour_key_grob(
+    key_palette, limits, threshold, signed, tail, continuous,
+    over_low = over_low, over_high = over_high,
+    title = title, scale = 144 / res
+  ))
+  geo <- .nm_key_geometry()
+  key$vp <- grid::viewport(
+    x = grid::unit(geo$x0, "npc"), y = px(key_px * 0.75),
+    width = grid::unit(geo$w, "npc"), height = px(60),
+    just = c("left", "top")
+  )
+  grid::grid.draw(key)
+  invisible(NULL)
+}
+
+# Static surface strip ------------------------------------------------------
+
+# Ground colour for the cut-out renders: pure green never occurs in the grey
+# cortex, its outline, or the nm palettes, so it can be keyed out exactly.
+.nm_chroma_key <- "#00FF00"
+
+# RGBA raster with the chroma-key ground made transparent. Anti-aliased
+# silhouette pixels (within a few pixels of the ground) are un-mixed: for a
+# grey-ish foreground, the green excess G - max(R, B) is the key's share.
+.nm_unkey_raster <- function(raster) {
+  raster <- as.matrix(raster)
+  nr <- nrow(raster)
+  nc <- ncol(raster)
+  m <- grDevices::col2rgb(raster) / 255
+  r <- m[1L, ]
+  g <- m[2L, ]
+  b <- m[3L, ]
+  pure <- matrix(r < 0.03 & b < 0.03 & g > 0.97, nr, nc)
+  near <- pure
+  for (i in seq_len(3L)) {
+    near <- near | .nm_shift(near, 1, 0) | .nm_shift(near, -1, 0) |
+      .nm_shift(near, 0, 1) | .nm_shift(near, 0, -1)
+  }
+  excess <- pmax(g - pmax(r, b), 0)
+  alpha <- rep(1, length(r))
+  fringe <- as.vector(near & !pure) & excess > 0
+  alpha[fringe] <- pmax(0, 1 - excess[fringe])
+  alpha[as.vector(pure)] <- 0
+  a <- pmax(alpha, 1e-6)
+  g2 <- ifelse(alpha > 0, (g - (1 - alpha)) / a, 0)
+  r2 <- ifelse(alpha > 0, r / a, 0)
+  b2 <- ifelse(alpha > 0, b / a, 0)
+  out <- grDevices::rgb(pmin(pmax(r2, 0), 1), pmin(pmax(g2, 0), 1),
+                        pmin(pmax(b2, 0), 1), alpha)
+  out <- matrix(out, nr, nc)
+  keep <- matrix(alpha > 0.02, nr, nc)
+  rows <- which(rowSums(keep) > 0)
+  cols <- which(colSums(keep) > 0)
+  if (!length(rows) || !length(cols)) return(out)
+  out[seq(min(rows), max(rows)), seq(min(cols), max(cols)), drop = FALSE]
+}
+
+# Screen side ("left"/"right") on which the anterior pole appears for a
+# lateral or medial view, from the CPU renderer's camera: lateral views look
+# from outside the hemisphere (left: from -x, anterior on screen-left), medial
+# views from the midline (left: from +x, anterior on screen-right).
+.nm_surface_anterior_side <- function(hemi, view) {
+  left <- hemi %in% c("left", "lh", "L")
+  toward_x <- switch(
+    view,
+    lateral = if (left) -1 else 1,
+    medial = if (left) 1 else -1,
+    stop("No anterior side for view '", view, "'.", call. = FALSE)
+  )
+  # screen-right = up (0,0,1) x toward (toward_x,0,0) = (0, toward_x, 0):
+  # anterior (+y) is on screen-right when toward_x > 0.
+  if (toward_x > 0) "right" else "left"
+}
+
+# Cut-out per-view rasters (and their hemisphere/view) from a plot_brain()
+# CPU figure rendered on the chroma-key ground. NULL when the figure does not
+# carry exactly the expected per-view raster panels.
+.nm_surface_strip_parts <- function(p, key) {
+  plots <- if (inherits(p, "patchwork")) {
+    c(p$patches$plots, list(p))
+  } else {
+    list(p)
+  }
+  cameras <- attr(p, "plot_brain_anatomy")$camera %||% list()
+  panels <- list()
+  for (q in plots) {
+    if (!inherits(q, "ggplot")) return(NULL)
+    title <- tryCatch(q$labels$title, error = function(e) NULL)
+    ras <- NULL
+    for (layer in q$layers) {
+      candidate <- tryCatch(layer$geom_params$raster, error = function(e) NULL)
+      if (!is.null(candidate)) {
+        ras <- candidate
+        break
+      }
+    }
+    cam <- if (!is.null(title)) cameras[[title]] else NULL
+    if (is.null(ras) || is.null(cam) ||
+        !cam$view %in% c("lateral", "medial")) {
+      return(NULL)
+    }
+    hemi <- if (cam$hemi %in% c("lh", "left")) "left" else "right"
+    panels[[length(panels) + 1L]] <- list(
+      raster = .nm_unkey_raster(ras), hemi = hemi, view = cam$view,
+      anterior = .nm_surface_anterior_side(hemi, cam$view)
+    )
+  }
+  if (!length(panels)) return(NULL)
+  order_key <- vapply(panels, function(x) {
+    match(paste(x$hemi, x$view), c("left lateral", "left medial",
+                                   "right medial", "right lateral"))
+  }, numeric(1))
+  list(panels = panels[order(order_key)], key = key)
+}
+
+# Lay the cut-out views out as the report's surface figure: one row (wide) or
+# lateral-over-medial 2 x 2 (narrow), small view labels, A/P marks under each
+# view's ends, and the colour key at the volume figure's key position.
+.nm_surface_strip_layout <- function(parts, width_px = NULL, res = 144,
+                                     theme = "light",
+                                     variant = c("wide", "narrow")) {
+  variant <- match.arg(variant)
+  narrow <- identical(variant, "narrow")
+  th <- .nm_figure_theme(theme)
+  width_px <- width_px %||% if (narrow) 800 else 1760
+  panels <- parts$panels
+  n <- length(panels)
+  if (narrow) {
+    grid_order <- c("left lateral", "right lateral", "left medial",
+                    "right medial")
+    idx <- match(grid_order, vapply(panels, function(x) {
+      paste(x$hemi, x$view)
+    }, character(1)))
+    idx <- c(idx[!is.na(idx)], setdiff(seq_len(n), idx))
+    panels <- panels[idx]
+  }
+  ncol <- if (narrow) min(2L, n) else n
+  nrow <- ceiling(n / ncol)
+  fs <- if (narrow) 14 else 11
+  pad <- if (narrow) 18 else 28
+  gutter <- if (narrow) 14 else 22
+  label_h <- fs * 2 * 1.45
+  # The orientation mark rides in the label row, so no extra row is needed.
+  mark_h <- fs * 2 * 0.35
+  block <- .nm_key_block(fs, narrow)
+  key_h <- block$height
+  px <- function(v) grid::unit(v * 72 / res, "bigpts")
+
+  dims <- t(vapply(panels, function(x) dim(x$raster), numeric(2)))
+  cell_w <- (width_px - 2 * pad - (ncol - 1) * gutter) / ncol
+  # One scale for every view so hemispheres keep their relative size.
+  scale <- min(cell_w / dims[, 2L])
+  cell_h <- max(dims[, 1L]) * scale
+  height_px <- ceiling(
+    pad + nrow * (label_h + cell_h + mark_h) + (nrow - 1) * gutter + key_h
+  )
+  label_of <- function(x) {
+    paste0(if (x$hemi == "left") "Left " else "Right ", x$view)
+  }
+  kids <- list(grid::rectGrob(gp = grid::gpar(fill = th$canvas, col = NA)))
+  marks <- list()
+  for (i in seq_len(n)) {
+    x <- panels[[i]]
+    row <- (i - 1L) %/% ncol
+    col <- (i - 1L) %% ncol
+    w <- dims[i, 2L] * scale
+    h <- dims[i, 1L] * scale
+    cx <- pad + col * (cell_w + gutter) + cell_w / 2
+    x0 <- cx - w / 2
+    y_top <- pad + row * (label_h + cell_h + mark_h + gutter)
+    img_top <- y_top + label_h + (cell_h - h)
+    kids[[length(kids) + 1L]] <- grid::rasterGrob(
+      x$raster, x = px(x0), y = grid::unit(1, "npc") - px(img_top),
+      width = px(w), height = px(h), just = c("left", "top"),
+      interpolate = TRUE
+    )
+    label_y <- grid::unit(1, "npc") - px(y_top + label_h - fs * 0.6)
+    kids[[length(kids) + 1L]] <- grid::textGrob(
+      label_of(x), x = px(x0 + 2), y = label_y,
+      just = c("left", "bottom"), gp = .nm_gp_text(fs, th$label)
+    )
+    # One quiet orientation mark per view, in its label row: an arrow that
+    # points to the screen side of the anterior pole ("<- A" / "A ->"), set
+    # after the view name, so no letters pair up across the gutters.
+    a_left <- identical(x$anterior, "left")
+    mark <- if (a_left) "\u2190 A" else "A \u2192"
+    mark_x0 <- x0 + 2 + .nm_text_width_px(label_of(x), fs, res) + fs * 2 * 0.8
+    kids[[length(kids) + 1L]] <- grid::textGrob(
+      mark, x = px(mark_x0), y = label_y, just = c("left", "bottom"),
+      gp = .nm_gp_text(fs, th$muted)
+    )
+    marks[[i]] <- list(
+      hemi = x$hemi, view = x$view, anterior = x$anterior, glyph = mark,
+      mark_x = mark_x0,
+      # Screen x of the panel end the arrow points to (the anterior pole).
+      a_x = if (a_left) x0 else x0 + w, panel_x0 = x0, panel_w = w
+    )
+  }
+  k <- parts$key
+  geo <- .nm_key_geometry(narrow, title = k$title, fontsize = fs,
+                          width_px = width_px, res = res)
+  key <- .nm_colour_key_grob(
+    k$palette, k$limits, k$threshold, k$signed, k$tail, k$continuous,
+    over_low = k$over_low, over_high = k$over_high, title = k$title,
+    note = k$note, fontsize = fs, theme = th, note_below = TRUE,
+    title_above = geo$title_above
+  )
+  key_top <- height_px - key_h + block$above
+  key$vp <- grid::viewport(
+    x = px(width_px * geo$x0), y = grid::unit(1, "npc") - px(key_top),
+    width = px(width_px * geo$w), height = px(fs * 2 * 3),
+    just = c("left", "top")
+  )
+  kids[[length(kids) + 1L]] <- key
+  list(grob = grid::gTree(children = do.call(grid::gList, kids)),
+       width = width_px, height = height_px, res = res, canvas = th$canvas,
+       theme = th$name, variant = variant, marks = marks)
+}
+
+# Write a strip variant (theme x width) to `path`.
+.nm_write_surface_strip <- function(parts, path, theme = "light",
+                                    variant = "wide") {
+  spec <- .nm_surface_strip_layout(parts, theme = theme, variant = variant)
+  .nm_write_figure(spec, path)
+  invisible(spec)
 }
 
 .open_surface_montage_device <- function(filename, width, height, res,
