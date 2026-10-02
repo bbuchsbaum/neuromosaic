@@ -42,7 +42,7 @@ round2_inputs <- function(n_maps = 1L) {
 
 round2_render <- function(assets = "bundle", n_maps = 1L) {
   inputs <- round2_inputs(n_maps)
-  output_dir <- tempfile("round2-volume-")
+  output_dir <- tempfile("volume-viewer-")
   dir.create(output_dir)
   output <- file.path(output_dir, "report.qmd")
   result <- suppressWarnings(suppressMessages(render_montage_report(

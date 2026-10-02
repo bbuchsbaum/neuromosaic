@@ -202,7 +202,7 @@ r3_lstar <- function(rgb) {
 test_that("glass-brain colour departs from the card monotonically with |z|", {
   # Round 4: salience, not lightness, is the invariant. On the light card the
   # stronger effect is darker; on the dark card it is lighter (see
-  # test-round4-figures.R for contrast against the card ground).
+  # test-report-figures-salience.R for contrast against the card ground).
   zs <- c(5, 6, 7, 9, 12, 15, 18, 22)
   nr <- 12
   nc <- length(zs) * 5

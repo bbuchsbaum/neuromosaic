@@ -1,7 +1,7 @@
 # Materialization and HTML emission for optional interactive volume reports.
 
 .montage_neuroimjs_version <- "0.4.0"
-.montage_neuroimjs_adapter_version <- "1.4.0"
+.montage_neuroimjs_adapter_version <- "1.4.1"
 .montage_volume_runtime_dir <- file.path(
   "htmlwidgets", "lib", "neuromosaic-volume"
 )

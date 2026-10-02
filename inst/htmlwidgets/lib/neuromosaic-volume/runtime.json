@@ -1,7 +1,7 @@
 {
   "name": "neuroimjs",
   "version": "0.4.0",
-  "adapter_version": "1.4.0",
+  "adapter_version": "1.4.1",
   "bundle": "neuroimjs-0.4.0.umd.js",
   "sha256": "0c5176bf47d69c29df10c6e751c8ba9950b0648312fc3f01d4df3c7d9a2c3b48",
   "source_state": "npm:neuroimjs@0.4.0",
@@ -13,8 +13,8 @@
     },
     {
       "path": "adapter.js",
-      "bytes": 114950,
-      "sha256": "6869a21cb55ab12c76b95dd86add2ce6776759fdcd4cff3d9dc8f5757e7428ba"
+      "bytes": 115856,
+      "sha256": "8124570a6a1768189f09aa9013dfe7935b3b0af08b11de90c9315488ab709274"
     },
     {
       "path": "adapter.css",
@@ -23,8 +23,8 @@
     },
     {
       "path": "display.js",
-      "bytes": 15547,
-      "sha256": "12347520c18d4fb0c27500e9ed28782be27049df57af5e56c15ea4afbc0cdb42"
+      "bytes": 15895,
+      "sha256": "5856ac450296d7e71f5d9e5eddf293a0d94f7677e7fe36aee8435d0b280838ac"
     },
     {
       "path": "geometry.js",

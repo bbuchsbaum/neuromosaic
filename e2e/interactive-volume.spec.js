@@ -1,4 +1,9 @@
 const { test, expect } = require("@playwright/test");
+
+// Figure alt text names the map, then describes the figure (e.g. "Z statistic:
+// slice montage at z = ...").
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const volumeAlt = (label) => new RegExp("^" + escapeRe(label) + ": slice montage");
 const { resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
 
@@ -52,7 +57,7 @@ test("the static report is authoritative until the reader opens the viewer", asy
   );
 
   await expect(staticPanel.getByRole("img", {
-    name: "Z statistic volume montage"
+    name: volumeAlt("Z statistic")
   })).toBeVisible();
   await expect(host.locator("[data-nm-volume-shell]")).toBeHidden();
   await expect(host.locator("canvas")).toHaveCount(0);
@@ -67,11 +72,13 @@ test("the static report is authoritative until the reader opens the viewer", asy
   await expect(host.locator("[data-nm-volume-readout]")).toContainText(
     "Standardized association"
   );
+  // The viewer opens on the static figure's palette and the report's
+  // threshold, printed with the report's rounding.
   await expect(host.getByRole("combobox", { name: "Colormap" })).toHaveValue(
-    "BlueRed"
+    "Report (nm-signed)"
   );
-  await expect(host.getByLabel("Threshold low")).toHaveValue("−3.10");
-  await expect(host.getByLabel("Threshold high")).toHaveValue("3.10");
+  await expect(host.getByRole("textbox", { name: "Threshold low" })).toHaveValue("−3.1");
+  await expect(host.getByRole("textbox", { name: "Threshold high" })).toHaveValue("3.1");
 });
 
 test("map switching preserves map-local exploration and exact report resets", async ({
@@ -80,15 +87,16 @@ test("map switching preserves map-local exploration and exact report resets", as
   const host = await openInteractiveReport(page);
   await activate(page, host);
 
-  const mapSelect = host.getByRole("combobox", { name: "Interactive map" });
+  const mapSelect = host.getByRole("combobox", { name: "Map", exact: true });
   const palette = host.getByRole("combobox", { name: "Colormap" });
   const opacity = host.getByLabel("Opacity value");
 
-  await palette.selectOption("Viridis");
+  // Signed maps offer the report palette and diverging maps only.
+  await palette.selectOption("BlueRed");
   await opacity.fill("0.31");
   await opacity.press("Enter");
   await expect.poll(async () => (await viewerState(host)).controls).toMatchObject({
-    colormap: "Viridis",
+    colormap: "BlueRed",
     opacity: 0.31
   });
   await expect(host).toHaveAttribute("data-nm-volume-modified", "true");
@@ -121,16 +129,17 @@ test("map switching preserves map-local exploration and exact report resets", as
 
   await mapSelect.selectOption("interactive_z");
   await expect.poll(async () => (await viewerState(host)).controls).toMatchObject({
-    colormap: "Viridis",
+    colormap: "BlueRed",
     opacity: 0.31
   });
   await expect(host).toHaveAttribute("data-nm-volume-modified", "true");
 
   await host.getByRole("button", { name: "Reset to defaults" }).click();
+  // Report settings: the report palette at the figure's opacity.
   await expect.poll(async () => (await viewerState(host)).controls).toMatchObject({
-    colormap: "BlueRed",
+    colormap: "Report (nm-signed)",
     threshold: [-3.1, 3.1],
-    opacity: 0.7
+    opacity: 0.92
   });
   await expect(host).toHaveAttribute("data-nm-volume-modified", "false");
 });
@@ -149,11 +158,11 @@ test("static and interactive selectors stay synchronized before and after activa
     "interactive_se"
   );
   await expect(host.getByRole("combobox", {
-    name: "Interactive map"
+    name: "Map", exact: true
   })).toHaveValue("interactive_se");
 
   await host.getByRole("combobox", {
-    name: "Interactive map"
+    name: "Map", exact: true
   }).selectOption("interactive_estimate");
   await expect(group.locator(
     '[data-nm-map-id="interactive_estimate"]'
@@ -163,7 +172,7 @@ test("static and interactive selectors stay synchronized before and after activa
   })).toHaveAttribute("aria-selected", "true");
 
   await host.getByRole("combobox", {
-    name: "Interactive map"
+    name: "Map", exact: true
   }).selectOption("interactive_reliability");
   await expect.poll(async () => (await viewerState(host)).currentMapId).toBe(
     "interactive_reliability"
@@ -171,8 +180,9 @@ test("static and interactive selectors stay synchronized before and after activa
   await expect(host.getByRole("combobox", { name: "Colormap" })).toHaveValue(
     "Inferno"
   );
-  await expect(host.getByLabel("Range low")).toHaveValue("0.00");
-  await expect(host.getByLabel("Range high")).toHaveValue("1.00");
+  // Range fields use the report's rounding (no trailing zeros).
+  await expect(host.getByRole("textbox", { name: "Range low" })).toHaveValue("0");
+  await expect(host.getByRole("textbox", { name: "Range high" })).toHaveValue("1");
   await expect(host.locator("[data-nm-volume-readout]")).toContainText(
     "agreement"
   );
@@ -191,19 +201,19 @@ test("expanded static mode identifies and opens every map in one viewer", async 
   const group = page.locator('[data-nm-map-group="faces-interactive"]');
   await expect(group.locator('[data-nm-map-variant]')).toHaveCount(4);
   for (const name of [
-    "Z statistic volume montage",
-    "Beta estimate volume montage",
-    "Standard error volume montage",
-    "Reliability volume montage"
+    "Z statistic",
+    "Beta estimate",
+    "Standard error",
+    "Reliability"
   ]) {
-    await expect(group.getByRole("img", { name })).toBeVisible();
+    await expect(group.getByRole("img", { name: volumeAlt(name) })).toBeVisible();
   }
   await expect(group.locator('[role="tablist"]')).toHaveCount(0);
   await expect(group.getByRole("combobox", { name: "Map variant" })).toHaveCount(0);
   await expect(host.locator("[data-nm-volume-target]")).toHaveText("Z statistic");
 
   await activate(page, host);
-  const mapSelect = host.getByRole("combobox", { name: "Interactive map" });
+  const mapSelect = host.getByRole("combobox", { name: "Map", exact: true });
   await expect(mapSelect.locator("option")).toHaveCount(4);
   await mapSelect.selectOption("interactive_se");
   await expect.poll(async () => (await viewerState(host)).currentMapId).toBe(
@@ -211,10 +221,10 @@ test("expanded static mode identifies and opens every map in one viewer", async 
   );
   await expect(host.locator("[data-nm-volume-target]")).toHaveText("Standard error");
   await expect(group.getByRole("img", {
-    name: "Z statistic volume montage"
+    name: volumeAlt("Z statistic")
   })).toBeVisible();
   await expect(group.getByRole("img", {
-    name: "Standard error volume montage"
+    name: volumeAlt("Standard error")
   })).toBeVisible();
 });
 
@@ -244,7 +254,8 @@ test("launcher and display controls are keyboard operable", async ({ page }) => 
     return style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0 ||
       style.boxShadow !== "none";
   })).toBe(true);
-  await palette.press("v");
+  // Type-ahead to "Blue–white–red" (signed maps offer diverging maps only).
+  await palette.press("b");
   await expect.poll(() => palette.inputValue()).not.toBe(initialPalette);
   await expect(host).toHaveAttribute("data-nm-volume-modified", "true");
 
@@ -265,7 +276,7 @@ test("an empty overlay opens with an explicit status and static fallback", async
   );
   await expect(host.locator("[data-nm-volume-target]")).toHaveText("Empty Z statistic");
   const staticImage = page.getByRole("img", {
-    name: "Empty Z statistic volume montage"
+    name: volumeAlt("Empty Z statistic")
   });
   await expect(staticImage).toBeVisible();
 
@@ -310,19 +321,20 @@ test("threshold and palette widgets update all orthogonal views", async ({
     [0, 1, 2].map((index) => canvases.nth(index).screenshot())
   );
 
-  const low = host.getByLabel("Threshold low");
-  const high = host.getByLabel("Threshold high");
+  // Each end has a text field and a slider; type into the field.
+  const low = host.getByRole("textbox", { name: "Threshold low" });
+  const high = host.getByRole("textbox", { name: "Threshold high" });
   await low.fill("-4.25");
   await low.press("Enter");
   await high.fill("4.25");
   await high.press("Enter");
   await host.getByRole("combobox", { name: "Colormap" }).selectOption(
-    "Viridis"
+    "BlueRed"
   );
 
   await expect.poll(async () => (await viewerState(host)).controls).toMatchObject({
     threshold: [-4.25, 4.25],
-    colormap: "Viridis"
+    colormap: "BlueRed"
   });
   await page.evaluate(() => new Promise((resolveFrame) => {
     requestAnimationFrame(() => requestAnimationFrame(resolveFrame));
@@ -354,7 +366,7 @@ test("viewer failure remains local and leaves the static panel readable", async 
 
   await expect(host).toHaveAttribute("data-nm-volume-failed", "true");
   await expect(host.locator("[data-nm-volume-status]")).toContainText(
-    "static panel remains authoritative"
+    "The static figures are unaffected."
   );
   await expect(page.locator(
     '[data-nm-map-id="interactive_z"] img'
@@ -366,7 +378,8 @@ test("unsupported scene versions fail closed without disturbing static output", 
 }) => {
   const host = await openInteractiveReport(page);
   await page.evaluate(() => {
-    const node = document.querySelector('script[type="application/json"]');
+    const host = document.querySelector('[data-nm-volume-analysis="faces-interactive"]');
+    const node = document.getElementById(host.dataset.nmVolumeScene);
     const scene = JSON.parse(node.textContent);
     scene.schema_version = 999;
     node.textContent = JSON.stringify(scene);
@@ -417,7 +430,7 @@ test("bundle mode lazily fetches only local NIfTI assets over HTTP", async ({
     url.endsWith(".nii.gz")
   )).size).toBe(2);
   await host.getByRole("combobox", {
-    name: "Interactive map"
+    name: "Map", exact: true
   }).selectOption("interactive_se");
   await expect.poll(() => new Set(requested.filter((url) =>
     url.endsWith(".nii.gz")
@@ -464,8 +477,9 @@ test("an HTTP 404 produces a localized fallback", async ({ page }) => {
 test("a corrupt bundled NIfTI produces a localized fallback", async ({ page }) => {
   const host = await openInteractiveReport(page, bundleFixture);
   const primaryRef = await page.evaluate(() => {
-    const scene = JSON.parse(document.querySelector(
-      'script[type="application/json"]'
+    const host = document.querySelector('[data-nm-volume-analysis="faces-interactive"]');
+    const scene = JSON.parse(document.getElementById(
+      host.dataset.nmVolumeScene
     ).textContent);
     const analysis = scene.analyses[0];
     const primary = analysis.maps.find((map) =>
@@ -483,7 +497,7 @@ test("a corrupt bundled NIfTI produces a localized fallback", async ({ page }) =
   }).click();
   await expect(host).toHaveAttribute("data-nm-volume-failed", "true");
   await expect(host.locator("[data-nm-volume-status]")).toContainText(
-    "static panel remains authoritative"
+    "The static figures are unaffected."
   );
 });
 
@@ -529,7 +543,7 @@ test("hiding tears down the viewer and reopening uses the selected map", async (
   const host = await openInteractiveReport(page);
   await activate(page, host);
   await host.getByRole("combobox", {
-    name: "Interactive map"
+    name: "Map", exact: true
   }).selectOption("interactive_se");
   await expect(host).toHaveAttribute("data-nm-volume-map", "interactive_se");
 
@@ -587,4 +601,38 @@ test.describe("without JavaScript", () => {
     )).toBeVisible();
     await expect(host.locator("[data-nm-volume-shell]")).toBeHidden();
   });
+});
+
+test("a pane focused by script lets the wheel scroll; a pane the reader focused steps", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1200, height: 700 });
+  const host = await openInteractiveReport(page);
+  await activate(page, host);
+  const axial = host.locator('[data-nij-view="axial"]');
+  await axial.scrollIntoViewIfNeeded();
+  const z = async () => (await viewerState(host)).worldCoord[2];
+
+  // A peak jump: the reader presses a control elsewhere, then the page moves
+  // focus into the pane by script.
+  await host.getByRole("button", { name: "Reset to report position" }).click();
+  await axial.evaluate((node) => node.focus({ preventScroll: true }));
+  await expect(axial).toBeFocused();
+  const z0 = await z();
+  const y0 = await page.evaluate(() => window.scrollY);
+  const box = await axial.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, 200);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(y0);
+  expect(await z()).toBe(z0);
+
+  // The reader clicks the pane: now the plain wheel steps its slice.
+  const box2 = await axial.boundingBox();
+  await page.mouse.click(box2.x + box2.width / 2, box2.y + box2.height / 2);
+  await expect(axial).toBeFocused();
+  const z1 = await z();
+  const y1 = await page.evaluate(() => window.scrollY);
+  await page.mouse.wheel(0, 100);
+  await expect.poll(z).not.toBe(z1);
+  expect(await page.evaluate(() => window.scrollY)).toBe(y1);
 });

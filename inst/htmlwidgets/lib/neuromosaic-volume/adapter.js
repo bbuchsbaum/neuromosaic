@@ -1,7 +1,7 @@
 (function (root) {
   "use strict";
 
-  var ADAPTER_VERSION = "1.4.0";
+  var ADAPTER_VERSION = "1.4.1";
   var RUNTIME_VERSION = "0.4.0";
   var OVERLAY_LAYER_ID = "neuromosaic-overlay";
   var UNDERLAY_HEADROOM = 1.3;
@@ -221,10 +221,13 @@
     ));
   }
 
+  // From disk, HTTP is named only when a file could not be fetched; any other
+  // failure (a WebGL error, an unsupported scene) states its own reason.
   function readerMessage(error) {
-    if (root.location && root.location.protocol === "file:") return FILE_MESSAGE;
-    return "The interactive view could not load (" + ((error && error.message) || "unknown error") +
-      "). The static figures are unaffected.";
+    var reason = (error && error.message) || "unknown error";
+    if (reason === FILE_MESSAGE || (root.location && root.location.protocol === "file:" &&
+        /Failed to fetch|NetworkError|Load failed/.test(reason))) return FILE_MESSAGE;
+    return "The interactive view could not load (" + reason + "). The static figures are unaffected.";
   }
 
   function byId(id) {
@@ -1062,6 +1065,16 @@
     });
   }
 
+  // The reader's last key or press: a plain wheel steps a focused pane only
+  // when the reader put focus there (Tab, a press or a key in the pane),
+  // never when a script did (a peak jump).
+  var lastIntent = { tab: false, target: null };
+  ["keydown", "pointerdown"].forEach(function (type) {
+    document.addEventListener(type, function (event) {
+      lastIntent = { tab: event.key === "Tab", target: event.target };
+    }, true);
+  });
+
   // Keyboard stepping on a focused slice pane: Up/Right (and Page Up) move
   // the slice forward along that pane's through-plane axis, Down/Left back.
   // Bound in the capture phase so the runtime's hover-based handler, which
@@ -1100,13 +1113,15 @@
       event.stopPropagation();
       step(cell, steps);
     };
-    // The wheel scrolls the page; it steps a focused pane, or with Alt/Shift.
+    // The wheel scrolls the page; it steps a pane the reader focused, or
+    // with Alt/Shift.
     state.onSliceWheel = function (event) {
       var cell = event.target && event.target.closest ?
         event.target.closest("[data-nij-view]") : null;
       if (!cell || !state.viewerElement.contains(cell)) return;
       var action = root.NeuroMosaicVolumeDisplay.wheelAction({
         focused: !!(document.activeElement && cell.contains(document.activeElement)),
+        byReader: lastIntent.tab || !!(lastIntent.target && cell.contains(lastIntent.target)),
         ctrlKey: event.ctrlKey, metaKey: event.metaKey,
         altKey: event.altKey, shiftKey: event.shiftKey,
         deltaX: event.deltaX, deltaY: event.deltaY
@@ -2145,10 +2160,12 @@
         if (value === undefined) return;
         var kept = displayApi.rejectCrossedRange(panel.range.map(Number), which, value);
         if (kept) {
-          if (event.target) {
-            event.target.value = panel.fmt(kept[which === "low" ? 0 : 1]);
-            event.target.setAttribute("aria-invalid", "true");
-            setTimeout(function () { event.target.removeAttribute("aria-invalid"); }, 1600);
+          // Keep the field: event.target is null once dispatch is over.
+          var field = event.target;
+          if (field) {
+            field.value = panel.fmt(kept[which === "low" ? 0 : 1]);
+            field.setAttribute("aria-invalid", "true");
+            setTimeout(function () { field.removeAttribute("aria-invalid"); }, 1600);
           }
           var live = state.host.querySelector("[data-nm-volume-live]");
           if (live) {

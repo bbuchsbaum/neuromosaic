@@ -165,6 +165,21 @@
     return !!(img.complete && img.naturalWidth && img.currentSrc && img.src &&
       img.currentSrc === img.src);
   };
+  // Light copies that failed to load (404, unreadable file): they will never
+  // arrive, so paper says the figure is unavailable instead of "loading".
+  var failed = {};
+  ready(function () {
+    document.addEventListener('error', function (e) {
+      var img = e.target;
+      if (img && img.tagName === 'IMG' && img.src && (!img.currentSrc || img.currentSrc === img.src)) {
+        failed[img.src] = true;
+      }
+    }, true);
+  });
+  var broken = function (img) {
+    return !!(img.src && failed[img.src]) ||
+      !!(img.complete && !img.naturalWidth && img.currentSrc && img.currentSrc === img.src);
+  };
   var whenLight = function (img) {
     return new Promise(function (resolve) {
       var t0 = Date.now();
@@ -176,7 +191,7 @@
           return;
         }
         // A broken image (or a 30 s stall) must not block printing.
-        if (img.complete && !img.naturalWidth && img.currentSrc === img.src) return resolve();
+        if (broken(img)) return resolve();
         if (Date.now() - t0 > 30000) return resolve();
         window.setTimeout(check, 60);
       };
@@ -185,26 +200,45 @@
   };
   // A figure whose light copy has not arrived when printing starts says so on
   // paper (instead of leaving a silent hole); the note goes as soon as the
-  // image arrives. The report's own print (the "Print / Save PDF" button,
-  // Ctrl/Cmd+P) loads every figure first, so this only shows when printing is
-  // started from the browser menu before the page has loaded its figures.
-  // Headless PDF pipelines (Chrome --print-to-pdf) should await
-  // NeuroMosaicReport.preparePrint() first, or use the R/PDF route.
+  // image arrives. A figure whose file failed to load says it is unavailable.
+  // A glance thumbnail still showing its dark copy is left blank on paper
+  // (never a black box). The report's own print (the "Print / Save PDF"
+  // button, Ctrl/Cmd+P) loads every figure first, so the notes only show
+  // when printing is started from the browser menu before the page has
+  // loaded its figures, or when the reader chose "Print now".
+  // Headless PDF pipelines (Chrome --print-to-pdf, pagedown::chrome_print())
+  // should await NeuroMosaicReport.preparePrint() first; see
+  // ?render_montage_report.
   var pending = function () {
-    Array.prototype.forEach.call(document.querySelectorAll('.nm-figure'), function (fig) {
-      var img = fig.querySelector('picture img, img');
-      if (!img) return;
+    var count = 0;
+    Array.prototype.forEach.call(document.querySelectorAll('.nm-figure, .nm-atlas-thumb'), function (box) {
+      var img = box.querySelector('picture img, img');
+      if (!img || img.closest('noscript')) return;
       var src = img.getAttribute('src') || img.getAttribute('data-nm-src');
       if (!src || src.indexOf('data:') === 0 || lightReady[src] || showsLight(img)) return;
-      fig.classList.add('nm-print-pending');
+      count++;
+      if (broken(img)) {
+        box.classList.add('nm-print-failed');
+        return;
+      }
+      box.classList.add('nm-print-pending');
       var clear = function () {
-        if (!showsLight(img)) return;
-        lightReady[src] = true;
-        fig.classList.remove('nm-print-pending');
+        if (broken(img)) {
+          box.classList.remove('nm-print-pending');
+          box.classList.add('nm-print-failed');
+        } else if (showsLight(img)) {
+          lightReady[src] = true;
+          box.classList.remove('nm-print-pending');
+        } else {
+          return;
+        }
         img.removeEventListener('load', clear);
+        img.removeEventListener('error', clear);
       };
       img.addEventListener('load', clear);
+      img.addEventListener('error', clear);
     });
+    return count;
   };
   var startPrint = function () {
     printing = true;
@@ -216,11 +250,14 @@
     api.loadAll();
     pending();
   });
+  var afterprints = 0;
   window.addEventListener('afterprint', function () {
+    afterprints++;
     printing = false;
     preparing = null;
-    Array.prototype.forEach.call(document.querySelectorAll('.nm-print-pending'), function (f) {
+    Array.prototype.forEach.call(document.querySelectorAll('.nm-print-pending, .nm-print-failed'), function (f) {
       f.classList.remove('nm-print-pending');
+      f.classList.remove('nm-print-failed');
     });
     if (typeof api.applyTheme === 'function') api.applyTheme();
   });
@@ -234,29 +271,85 @@
     });
     return preparing;
   };
-  var printBusy = false;
+  // Open the print dialog. Some hosts return from print() without a dialog
+  // and without an afterprint event (the RStudio Viewer, sandboxed iframes,
+  // a blocked print): the page then leaves print state by itself, so the
+  // theme, the dark figures and the disclosures come back.
+  var printPage = function () {
+    pending();
+    var seen = afterprints;
+    window.print();
+    window.setTimeout(function () {
+      if (afterprints === seen && printing) window.dispatchEvent(new Event('afterprint'));
+    }, 1000);
+  };
+  // The report's own print waits for the figures for at most PRINT_WAIT ms,
+  // showing its progress and a "Print now" button; a second Ctrl/Cmd+P (or
+  // the button) prints at once, and figures still missing say so on paper.
+  var PRINT_WAIT = 10000;
+  var printNow = null;
+  var sheet = null;
+  var sheetText = null;
+  var showSheet = function () {
+    if (!sheet) {
+      sheet = document.createElement('div');
+      sheet.className = 'nm-print-sheet';
+      sheetText = document.createElement('span');
+      sheetText.className = 'nm-print-sheet-text';
+      var now = document.createElement('button');
+      now.type = 'button';
+      now.className = 'nm-print-now';
+      now.textContent = 'Print now';
+      now.title = 'Print without waiting; figures still loading are marked on paper (Ctrl/Cmd+P again does the same)';
+      now.addEventListener('click', function () { if (printNow) printNow(); });
+      sheet.appendChild(sheetText);
+      sheet.appendChild(now);
+      document.body.appendChild(sheet);
+    }
+    sheet.hidden = false;
+  };
+  var progress = function () {
+    var imgs = printImages();
+    var done = imgs.filter(function (img) { return showsLight(img) || broken(img); }).length;
+    if (sheetText) {
+      sheetText.textContent = 'Preparing the print: ' + done + ' of ' + imgs.length + ' figures loaded\u2026';
+    }
+  };
   api.printReport = function () {
-    if (printBusy) return Promise.resolve();
-    printBusy = true;
+    if (printNow) { printNow(); return Promise.resolve(); }
     var buttons = document.querySelectorAll('[data-nm-print]');
     Array.prototype.forEach.call(buttons, function (b) { b.setAttribute('aria-busy', 'true'); });
-    var slow = window.setTimeout(function () {
-      api.announce('Preparing the print: loading every figure\u2026');
-    }, 300);
-    var done = function () {
-      window.clearTimeout(slow);
-      printBusy = false;
-      Array.prototype.forEach.call(buttons, function (b) { b.removeAttribute('aria-busy'); });
-    };
-    return api.preparePrint().then(function () {
-      done();
-      window.print();
-    }, function () { done(); window.print(); });
+    return new Promise(function (resolve) {
+      var finished = false, tick = null;
+      var slow = window.setTimeout(function () {
+        showSheet();
+        progress();
+        tick = window.setInterval(progress, 250);
+        api.announce('Preparing the print: loading every figure. Press Print now, or Ctrl/Cmd+P again, to print at once.');
+      }, 300);
+      var go = function () {
+        if (finished) return;
+        finished = true;
+        printNow = null;
+        window.clearTimeout(slow);
+        window.clearTimeout(cap);
+        window.clearInterval(tick);
+        if (sheet) sheet.hidden = true;
+        Array.prototype.forEach.call(buttons, function (b) { b.removeAttribute('aria-busy'); });
+        resolve();
+        printPage();
+      };
+      var cap = window.setTimeout(go, PRINT_WAIT);
+      printNow = go;
+      api.preparePrint().then(go, go);
+    });
   };
-  // Ctrl/Cmd+P prints through the report, so every figure is on paper.
+  // Ctrl/Cmd+P prints through the report, so every figure is on paper. A
+  // layout without a Latin "p" is matched by the key's position.
   document.addEventListener('keydown', function (e) {
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
-    if (e.key !== 'p' && e.key !== 'P') return;
+    var key = e.key || '';
+    if (key !== 'p' && key !== 'P' && !(e.code === 'KeyP' && !/^[a-z]$/i.test(key))) return;
     e.preventDefault();
     api.printReport();
   }, true);
@@ -272,11 +365,28 @@
   };
   api.printButton = printButton;
   ready(function () {
-    var labels = document.querySelector('.nm-report-header .nm-report-labels') ||
-      document.querySelector('.nm-report-header');
-    if (labels && !labels.querySelector('[data-nm-print]')) {
-      labels.appendChild(document.createTextNode(' '));
-      labels.appendChild(printButton('nm-print-header'));
+    var header = document.querySelector('.nm-report-header');
+    if (!header || header.querySelector('[data-nm-print]')) return;
+    // The control joins the labels line's last unbreakable run ("Methods",
+    // a middle dot, "Print / Save PDF"), so a wrap never leaves the separator
+    // at the start of a line; without that run it takes a line of its own.
+    var labels = header.querySelector('.nm-report-labels');
+    var tail = labels && labels.lastElementChild;
+    var after = tail && tail.nextSibling;
+    var last = tail && tail.classList.contains('nm-nowrap') &&
+      (!after || (after.nodeType === 3 && !after.nextSibling && !after.textContent.trim()));
+    if (last) {
+      var sep = document.createElement('span');
+      sep.className = 'nm-print-sep';
+      sep.setAttribute('aria-hidden', 'true');
+      sep.textContent = ' \u00B7 ';
+      tail.appendChild(sep);
+      tail.appendChild(printButton('nm-print-header'));
+    } else {
+      var row = document.createElement('span');
+      row.className = 'nm-print-row';
+      row.appendChild(printButton('nm-print-header'));
+      (labels || header).appendChild(row);
     }
   });
   api.isPrinting = function () { return printing; };
@@ -863,7 +973,7 @@ document.addEventListener('DOMContentLoaded', function () {
         button.type = 'button';
         button.className = 'nm-peak-go';
         while (cell.firstChild) button.appendChild(cell.firstChild);
-        var fmt = function (v) { return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v); };
+        var fmt = function (v) { return (v > 0 ? '+' : v < 0 ? '\u2212' : '') + Math.abs(v); };
         button.setAttribute('aria-label', button.textContent.replace(/\s+/g, ' ').trim() +
           ': show in slices at ' + xyz.map(fmt).join(', ') + ' mm');
         cell.appendChild(button);

@@ -343,8 +343,12 @@
         return Promise.resolve(new Response("", { status: 404, statusText: "Missing embedded surface asset" }));
       }
       var compression = node.getAttribute("data-compression") || "none";
+      // A corrupt stream rejects with a generic "Failed to fetch"; say what
+      // failed, so a report opened from disk is not told to use HTTP.
       return decompress(base64Bytes(node.textContent || ""), compression).then(function (bytes) {
         return new Response(bytes, binary);
+      }, function () {
+        throw new Error("embedded surface data could not be decoded");
       });
     }
     return window.fetch(input, init).then(function (response) {
@@ -1860,10 +1864,13 @@
     return display.manifestNeedsServer(window.location.protocol, (node && node.textContent) || "");
   }
 
+  // From disk, HTTP is named only when a file could not be fetched; any other
+  // failure (corrupt embedded data, WebGL) states its own reason.
   function surfaceMessage(error) {
-    if (window.location.protocol === "file:") return FILE_MESSAGE;
-    return "The 3D surface could not load (" + ((error && error.message) || "unknown error") +
-      "). The static figures are unaffected.";
+    var reason = (error && error.message) || "unknown error";
+    if (reason === FILE_MESSAGE || (window.location.protocol === "file:" &&
+        /Failed to fetch|NetworkError|Load failed/.test(reason))) return FILE_MESSAGE;
+    return "The 3D surface could not load (" + reason + "). The static figures are unaffected.";
   }
 
   function installRouter(host) {

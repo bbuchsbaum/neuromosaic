@@ -225,7 +225,49 @@ table:not(.nm-table) { display: block; max-width: 100%; overflow-x: auto; }
 .nm-print-action:hover { text-decoration-color: currentColor; }
 .nm-print-action:focus-visible { outline: 2px solid var(--nm-accent); outline-offset: 2px; border-radius: 3px; }
 .nm-print-action[aria-busy="true"] { cursor: progress; opacity: 0.7; }
-.nm-print-header::before { content: "\00B7"; display: inline-block; margin: 0 0.45em 0 0.1em; color: var(--nm-faint); text-decoration: none; }
+/* The header control sits in the labels line's last unbreakable run, so a
+   wrap carries "Methods", the middle dot and "Print / Save PDF" together;
+   without that run it takes a line of its own. */
+.nm-print-sep { color: var(--nm-faint); }
+.nm-print-row { display: block; margin-top: 2px; }
+/* Touch: a taller target (the line grows with it). */
+@media (max-width: 600px), (pointer: coarse) {
+  .nm-print-action { min-height: 32px; }
+}
+/* Progress while the report's print waits for its figures (at most ~10 s),
+   with a "Print now" escape. */
+.nm-print-sheet {
+  position: fixed;
+  z-index: 60;
+  top: 12px;
+  left: 50%;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  max-width: calc(100vw - 32px);
+  padding: 8px 10px 8px 14px;
+  border: 1px solid var(--nm-rule-strong);
+  border-radius: 6px;
+  background: var(--nm-page);
+  box-shadow: var(--nm-shadow);
+  color: var(--nm-ink-2);
+  font: 13px/1.4 var(--nm-sans);
+  transform: translateX(-50%);
+}
+.nm-print-sheet[hidden] { display: none; }
+.nm-print-sheet-text { min-width: 0; }
+.nm-print-now {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--nm-accent);
+  border-radius: 4px;
+  background: var(--nm-accent);
+  color: var(--nm-page);
+  cursor: pointer;
+  font: 600 13px/1.2 var(--nm-sans);
+}
+.nm-print-now:focus-visible { outline: 2px solid var(--nm-accent); outline-offset: 2px; }
 .nm-print-minibar { margin-left: auto; flex: 0 0 auto; font-size: 13px; }
 .nm-eyebrow {
   color: var(--nm-muted);
@@ -1239,9 +1281,22 @@ body pre code { font: inherit; white-space: pre; }
   /* A map's table follows its figures where it fits. */
   .nm-figure + .nm-table-wrap, .nm-figure ~ .nm-table-wrap { break-before: avoid; }
   /* A figure that had not loaded when printing began says so. */
-  .nm-figure.nm-print-pending picture, .nm-figure.nm-print-pending > img { display: none !important; }
+  .nm-print-sheet { display: none !important; }
+  .nm-figure.nm-print-pending picture, .nm-figure.nm-print-pending > img,
+  .nm-figure.nm-print-failed picture, .nm-figure.nm-print-failed > img { display: none !important; }
+  /* A glance thumbnail still showing its dark copy stays blank on paper. */
+  .nm-atlas-thumb.nm-print-pending img, .nm-atlas-thumb.nm-print-failed img { visibility: hidden !important; }
+  .nm-figure.nm-print-failed::before {
+    content: "This figure could not be loaded (its image file is missing or unreadable).";
+    display: block;
+    padding: 10mm 6mm;
+    border: 0.5pt dashed #8A949B;
+    color: #3A444C;
+    font-size: 9pt;
+    text-align: center;
+  }
   .nm-figure.nm-print-pending::before {
-    content: "This figure was still loading when printing started. Print again once the page has finished loading.";
+    content: "This figure was still loading when printing started. Print again once the page has finished loading, or use the report's Print / Save PDF button, which loads every figure first.";
     display: block;
     padding: 10mm 6mm;
     border: 0.5pt dashed #8A949B;

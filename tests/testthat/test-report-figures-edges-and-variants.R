@@ -151,7 +151,7 @@ test_that("glass-brain thumbnails show strength as lightness, cropped, no letter
   glass <- panel(array(0, dim = dim(bg)))
   # Opaque colour whose departure from the (light) card grows with |z|:
   # round 4 made the strong effect darker than the weak one on light ground
-  # (see test-round4-figures.R for both themes).
+  # (see test-report-figures-salience.R for both themes).
   lightness <- function(p) {
     changed <- p != glass
     a <- grDevices::col2rgb(p[changed]) / 255
@@ -295,7 +295,7 @@ test_that("the surface strip is cut out, ordered, and marks A at the anterior en
 
 test_that("the surface and volume keys share one horizontal geometry", {
   # Round 3: the key group is centred on the figure (see
-  # test-round3-figures.R); both figures still take one shared geometry.
+  # test-report-figures-keys-and-thumbnails.R); both figures still take one shared geometry.
   geo <- neuromosaic:::.nm_key_geometry()
   expect_equal(geo$w, 0.42)
   expect_equal(geo$x0, (1 - geo$w) / 2)

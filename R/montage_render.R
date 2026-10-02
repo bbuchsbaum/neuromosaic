@@ -196,6 +196,22 @@
 #' and `units`; report-level `volume_args`/`surface_args` overrides are also
 #' reflected in their corresponding interactive display metadata.
 #'
+#' Printing and PDF output:
+#' Bundle-mode reports load their figures lazily, and dark or narrow-screen
+#' readers see variant images, while paper always takes the full-size light
+#' figure of record. The report's own "Print / Save PDF" button (and
+#' Ctrl/Cmd+P, which the page intercepts) loads every light figure first,
+#' waits at most about 10 seconds with a visible progress note and a
+#' "Print now" button, then opens the print dialog; a second Ctrl/Cmd+P
+#' prints at once. Printing from the browser menu before the page has loaded
+#' its figures marks each missing figure with a note on paper. Headless PDF
+#' pipelines (Chrome `--print-to-pdf`, Puppeteer, Playwright) should first
+#' evaluate `await NeuroMosaicReport.preparePrint()` in the page: it switches
+#' to the light sources, loads and decodes every figure and glance thumbnail,
+#' and resolves when the page is ready to print (for example
+#' `await page.evaluate(() => NeuroMosaicReport.preparePrint())` before
+#' `page.pdf()`).
+#'
 #' @return The path to the rendered report (invisibly).
 #' @export
 render_montage_report <- function(manifest,
@@ -242,6 +258,9 @@ render_montage_report <- function(manifest,
                                   cerebellum_reference = getOption(
                                     "neuromosaic.cerebellum_reference", NULL
                                   )) {
+  # Report text is UTF-8 (minus signs, middle dots); build and render it
+  # with a UTF-8 character type even in a C-locale session.
+  .montage_local_utf8_ctype()
   volume_args <- .validate_montage_passthrough(
     volume_args, stat_montage, c("bg", "stat", "draw"), "volume_args"
   )
@@ -514,6 +533,23 @@ render_montage_report <- function(manifest,
   })
 
   invisible(normalizePath(output_file, mustWork = FALSE))
+}
+
+# Use a UTF-8 character type until the calling function returns. The
+# report's text (minus signs, middle dots, the page script) is UTF-8, and
+# cat(), format() and sprintf() in a non-UTF-8 locale (LANG=C in containers
+# and CI) would turn it into "<U+2212>". The session's LC_CTYPE is restored
+# on exit; without any UTF-8 locale nothing changes.
+.montage_local_utf8_ctype <- function(envir = parent.frame()) {
+  if (isTRUE(l10n_info()[["UTF-8"]])) return(invisible(FALSE))
+  old <- Sys.getlocale("LC_CTYPE")
+  for (candidate in c("C.UTF-8", "en_US.UTF-8", "UTF-8")) {
+    if (nzchar(suppressWarnings(Sys.setlocale("LC_CTYPE", candidate)))) {
+      withr::defer(Sys.setlocale("LC_CTYPE", old), envir = envir)
+      return(invisible(TRUE))
+    }
+  }
+  invisible(FALSE)
 }
 
 .montage_rmarkdown_output_format <- function(ext,

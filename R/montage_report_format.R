@@ -874,6 +874,14 @@ montage_report_formatters <- function(manifest = NULL,
   invisible(NULL)
 }
 
+# A panel's volume renderer metadata (cap, signed, slice labels), or NULL.
+# Exact lookup: `panel$volume` partially matches `volume_image` (a path) in
+# precomputed panels that carry no renderer metadata.
+.montage_report_volume_meta <- function(panel) {
+  meta <- if (is.list(panel)) panel[["volume"]]
+  if (is.list(meta)) meta else NULL
+}
+
 # Both static figures of one map, each with a short caption, a download link,
 # a full copyable caption, and dark / narrow variants when the renderer made
 # them (panel$*_image_dark, *_image_narrow, *_image_narrow_dark).
@@ -890,7 +898,7 @@ montage_report_formatters <- function(manifest = NULL,
   kicker <- if (length(section)) paste(section, collapse = " / ") else
     if (nzchar(analysis_label) && !identical(analysis_label, label)) analysis_label
   stem <- .montage_report_file_stem(label)
-  slices <- .montage_report_slice_text(panel$volume$slice_labels)
+  slices <- .montage_report_slice_text(.montage_report_volume_meta(panel)$slice_labels)
   vol_alt <- paste0(label, ": slice montage",
                     if (nzchar(slices)) paste0(" at ", slices), ", ",
                     "positive effects in warm colours, negative in cool")
@@ -989,7 +997,9 @@ montage_report_formatters <- function(manifest = NULL,
            if (!(length(conn) == 1L && is.na(conn))) paste0(" (", sub("-connect$", "-connectivity", conn), ")"))
   }
   n <- .montage_report_scalar(row, "n")
-  meta <- panel[[kind]] %||% panel$volume %||% list()
+  meta <- panel[[kind]]
+  if (!is.list(meta)) meta <- panel[["volume"]]
+  if (!is.list(meta)) meta <- list()
   cap <- suppressWarnings(as.numeric(meta$cap %||% NA))
   signed <- isTRUE(meta$signed %||% TRUE)
   scale <- if (length(cap) == 1L && is.finite(cap) && cap > 0) {
@@ -2016,7 +2026,7 @@ montage_report_formatters <- function(manifest = NULL,
   maps <- nrow(qc_tbl)
   paste0("N = ", .montage_report_fmt_val(n),
          if (maps > 1L) paste0(" for all ", maps, " maps") else "",
-         " · QC: ok (as supplied)")
+         " \u00b7 QC: ok (as supplied)")
 }
 
 # Spec-line parts every map shares (stated once in the header facts line);
@@ -2186,7 +2196,7 @@ montage_report_formatters <- function(manifest = NULL,
 
 .montage_report_signed <- function(v, digits = 1L) {
   text <- formatC(abs(v), format = "f", digits = digits)
-  paste0(if (v < 0) "−" else "+", text)
+  paste0(if (v < 0) "\u2212" else "+", text)
 }
 
 .montage_report_emit_results_overview <- function(groups, manifest, panels,
@@ -2320,7 +2330,7 @@ montage_report_formatters <- function(manifest = NULL,
              if (identical(as.integer(r$n_total), 1L)) "cluster" else "clusters",
              if (length(r$by_sign) == 2L && r$n_total > 0L) {
                paste0(" <span class=\"nm-atlas-split\">(", r$by_sign[["positive"]],
-                      "+ / ", r$by_sign[["negative"]], "−)</span>")
+                      "+ / ", r$by_sign[["negative"]], "\u2212)</span>")
              } else "",
              "</span>")
     )
@@ -2477,7 +2487,7 @@ montage_report_formatters <- function(manifest = NULL,
   }, "")
   cat(
     "<details class=\"nm-details nm-provenance\"><summary>Show provenance",
-    "<span class=\"nm-details-meta\">", esc(paste(summary_bits, collapse = " · ")),
+    "<span class=\"nm-details-meta\">", esc(paste(summary_bits, collapse = " \u00b7 ")),
     "</span></summary><div class=\"nm-prov-body\">", paste(body, collapse = ""),
     "</div></details>\n\n", sep = ""
   )
@@ -2597,13 +2607,13 @@ montage_report_formatters <- function(manifest = NULL,
   p <- if (!is.null(policy)) policy$p else NULL
   if (!is.null(thr) && !is.null(tail)) {
     rule <- switch(as.character(tail),
-                   positive = paste0(sym, " ≥ ", fmt(thr), " (positive tail)"),
-                   negative = paste0(sym, " ≤ −", fmt(thr), " (negative tail)"),
-                   paste0("|", sym, "| ≥ ", fmt(thr), " (two-sided)"))
+                   positive = paste0(sym, " \u2265 ", fmt(thr), " (positive tail)"),
+                   negative = paste0(sym, " \u2264 \u2212", fmt(thr), " (negative tail)"),
+                   paste0("|", sym, "| \u2265 ", fmt(thr), " (two-sided)"))
     how <- if (fixed) {
       "a fixed voxelwise threshold of "
     } else if (!is.null(q)) {
-      paste0("Benjamini–Hochberg FDR q = ", format(signif(q, 3), scientific = FALSE, trim = TRUE), " per map, i.e. ")
+      paste0("Benjamini\u2013Hochberg FDR q = ", format(signif(q, 3), scientific = FALSE, trim = TRUE), " per map, i.e. ")
     } else if (is.numeric(p) && length(p) == 1L) {
       paste0("voxelwise p < ", format(signif(p, 3), scientific = FALSE, trim = TRUE),
              " (uncorrected), i.e. ")
@@ -2622,12 +2632,15 @@ montage_report_formatters <- function(manifest = NULL,
 
   # Colour cap.
   caps <- unlist(lapply(panels, function(pn) {
-    v <- if (is.list(pn) && is.list(pn$volume)) suppressWarnings(as.numeric(pn$volume$cap)) else NA
+    vm <- .montage_report_volume_meta(pn)
+    v <- if (!is.null(vm)) suppressWarnings(as.numeric(vm$cap)) else NA
     if (length(v) == 1L && is.finite(v)) v else NULL
   }))
-  signed <- any(vapply(panels, function(pn) isTRUE((pn$volume %||% list())$signed %||% TRUE), logical(1)))
+  signed <- any(vapply(panels, function(pn) {
+    isTRUE((.montage_report_volume_meta(pn) %||% list())$signed %||% TRUE)
+  }, logical(1)))
   if (length(caps)) {
-    pm <- if (signed) "±" else ""
+    pm <- if (signed) "\u00b1" else ""
     uniq <- unique(round(caps, 1))
     if (!is.null(policy) && !is.null(policy$cap)) {
       sentences <- c(sentences, paste0("Colour scales saturate at a fixed ", pm, fmt(policy$cap), "."))
@@ -2639,7 +2652,7 @@ montage_report_formatters <- function(manifest = NULL,
       sentences <- c(sentences, paste0(
         "Colour scales saturate at ",
         if (length(uniq) == 1L) paste0(pm, fmt(uniq)) else
-          paste0(pm, fmt(min(uniq)), "–", fmt(max(uniq))),
+          paste0(pm, fmt(min(uniq)), "\u2013", fmt(max(uniq))),
         ", the ", pct, " of suprathreshold |", sym, "|",
         if (pooled && length(uniq) == 1L && n_maps > 1L) " pooled across all maps of the same statistic" else
           if (pooled) " pooled within each group of comparable maps" else " of each map",
@@ -2651,7 +2664,7 @@ montage_report_formatters <- function(manifest = NULL,
 
   # Slices.
   slice_sets <- lapply(panels, function(pn) {
-    l <- if (is.list(pn) && is.list(pn$volume)) pn$volume$slice_labels else NULL
+    l <- .montage_report_volume_meta(pn)$slice_labels
     as.character(l %||% character())
   })
   slice_sets <- Filter(length, slice_sets)
@@ -2685,14 +2698,14 @@ montage_report_formatters <- function(manifest = NULL,
       paste0(" on the ", ul$template, " brain template",
              if (length(sp) == 3L && all(is.finite(sp))) {
                if (length(unique(round(sp, 2))) == 1L) paste0(" (", fmt(round(sp[[1L]], 2)), " mm voxels)") else
-                 paste0(" (", paste(fmt(round(sp, 2)), collapse = " × "), " mm voxels)")
+                 paste0(" (", paste(fmt(round(sp, 2)), collapse = " \u00d7 "), " mm voxels)")
              } else "")
     } else {
       ""
     }
     sentences <- c(sentences, paste0(
       "Volume figures show up to ", n_slices, " ", plane, " slices", underlay,
-      ", spaced in equal whole-voxel steps and centred within the 5th–95th percentile range of the",
+      ", spaced in equal whole-voxel steps and centred within the 5th\u201395th percentile range of the",
       " displayed (suprathreshold, extent-filtered) voxels' ", plane, " positions",
       if (shared) ", with one slice set shared by the maps of a section (chosen from their combined extent) so that related maps are shown at the same positions" else "",
       "; coordinates are MNI millimetres and the left hemisphere is on the left."
@@ -2721,7 +2734,7 @@ montage_report_formatters <- function(manifest = NULL,
         "Surface figures sample the unthresholded ", sym, " map", removed, " on ", mesh,
         " at ", depth, " (", if (identical(sm$interpolation, "linear")) "trilinear interpolation" else
           paste0(sm$interpolation, " interpolation"), "), average them per vertex",
-        if (!is.null(thr_s)) paste0(", and show vertices whose depth-averaged value reaches |", sym, "| ≥ ", fmt(thr_s)) else "",
+        if (!is.null(thr_s)) paste0(", and show vertices whose depth-averaged value reaches |", sym, "| \u2265 ", fmt(thr_s)) else "",
         ", drawn on the ", sm$surface %||% "inflated", " surface",
         if (isTRUE(sm$medial_wall)) " with the medial wall masked" else "",
         ". The voxel extent rule applies before projection, not to surface patches; ",
@@ -2759,7 +2772,7 @@ montage_report_formatters <- function(manifest = NULL,
     refs <- c(refs, labelling$citations)
     if (is.finite(labelling$radius %||% NA) && labelling$radius > 0) {
       s <- paste0(s, "; a peak outside every region took the nearest labelled region within ",
-                  fmt(labelling$radius), " mm (marked ≈, with the distance)")
+                  fmt(labelling$radius), " mm (marked \u2248, with the distance)")
     }
     s <- paste0(s, "; the hemisphere follows the peak's x coordinate (midline when |x| < ",
                 fmt(.montage_midline_mm), " mm)")

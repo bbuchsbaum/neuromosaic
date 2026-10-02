@@ -18,7 +18,8 @@ function reportPage(images, sources) {
   const listeners = { doc: {}, win: {} };
   const add = (bag) => (type, fn) => { (bag[type] = bag[type] || []).push(fn); };
   const ctx = {
-    console, setTimeout, clearTimeout, Promise,
+    console, setTimeout, clearTimeout, setInterval, clearInterval, Promise,
+    Event: class { constructor(type) { this.type = type; } },
     document: {
       readyState: "loading",
       addEventListener: add(listeners.doc),
@@ -37,6 +38,7 @@ function reportPage(images, sources) {
   };
   ctx.window = ctx;
   ctx.addEventListener = add(listeners.win);
+  ctx.dispatchEvent = (e) => { (listeners.win[e.type] || []).forEach((fn) => fn(e)); return true; };
   ctx.printed = [];
   ctx.print = () => ctx.printed.push(images.map((i) => i.currentSrc === i.src && i.decoded));
   runInNewContext(reportSource, ctx);
@@ -59,7 +61,9 @@ function fakeImage(name) {
 
 test("Ctrl/Cmd+P prints only after every light figure has loaded and decoded", async () => {
   const images = [fakeImage("a"), fakeImage("b"), fakeImage("c")];
-  const sources = [0, 1, 2].map(() => ({ media: "(max-width: 600px)", setAttribute(k, v) { this[k] = v; } }));
+  const sources = [0, 1, 2].map(() => ({
+    media: "(max-width: 600px)", setAttribute(k, v) { this[k] = v; }, getAttribute(k) { return k in this ? this[k] : null; }
+  }));
   const { ctx, listeners } = reportPage(images, sources);
   let prevented = 0;
   (listeners.doc.keydown || []).forEach((fn) => fn({
@@ -151,7 +155,7 @@ test("the runtime's arrow keys never act on a focused control", () => {
 test("the wheel scrolls the page unless the pane is focused or a modifier is held", () => {
   const w = display.wheelAction;
   assert.equal(w({ deltaY: 100 }), "page");
-  assert.equal(w({ deltaY: 100, focused: true }), "runtime");
+  assert.equal(w({ deltaY: 100, focused: true, byReader: true }), "runtime", "a pane the reader focused");
   assert.equal(w({ deltaY: 100, ctrlKey: true }), "runtime");
   assert.equal(w({ deltaY: 100, altKey: true }), 1);
   assert.equal(w({ deltaY: -100, shiftKey: true }), -1);

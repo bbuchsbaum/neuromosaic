@@ -1,4 +1,9 @@
 const { test, expect } = require("@playwright/test");
+
+// Figure alt text names the map, then describes the figure (e.g. "Surface Z
+// statistic: cortical surface, lateral and medial views ...").
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const surfaceAlt = (label) => new RegExp("^" + escapeRe(label) + ": cortical surface");
 const { resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
 
@@ -36,7 +41,7 @@ test("parcel report primary and auxiliary static panels match baselines", async 
   await expect(zPanel).toBeVisible();
   await expect(betaPanel).toBeHidden();
   await expect(zPanel.getByRole("img", {
-    name: "Parcel Z statistic surface montage"
+    name: surfaceAlt("Parcel Z statistic")
   })).toBeVisible();
   await expect(group).toHaveScreenshot("parcel-primary-static.png", {
     animations: "disabled",

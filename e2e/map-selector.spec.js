@@ -1,4 +1,9 @@
 const { test, expect } = require("@playwright/test");
+
+// Figure alt text names the map, then describes the figure (e.g. "Z statistic:
+// slice montage at z = ...").
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const volumeAlt = (label) => new RegExp("^" + escapeRe(label) + ": slice montage");
 const { resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
 
@@ -48,7 +53,7 @@ test("tabs switch the complete map panel and support keyboard navigation", async
   await expect(estimatePanel.locator(".nm-panel-meta")).toContainText("Estimate");
 
   const image = estimatePanel.getByRole("img", {
-    name: "Estimate volume montage"
+    name: volumeAlt("Estimate")
   });
   await expect(image).toBeVisible();
   await expect.poll(() => image.evaluate((node) =>

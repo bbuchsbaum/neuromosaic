@@ -1,4 +1,9 @@
 const { test, expect } = require("@playwright/test");
+
+// Figure alt text names the map, then describes the figure (e.g. "Surface Z
+// statistic: cortical surface, lateral and medial views ...").
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const surfaceAlt = (label) => new RegExp("^" + escapeRe(label) + ": cortical surface");
 const { resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
 
@@ -88,7 +93,7 @@ test("the static surface remains authoritative until the reader opts in", async 
 }) => {
   const host = await openSurfaceReport(page);
   await expect(page.getByRole("img", {
-    name: "Surface Z statistic surface montage"
+    name: surfaceAlt("Surface Z statistic")
   })).toBeVisible();
   // Nothing is loaded until the reader chooses the 3D surface view.
   await expect(host).toBeHidden();
@@ -105,8 +110,10 @@ test("the static surface remains authoritative until the reader opts in", async 
   })).toBeVisible();
   await expect(router.getByRole("radio", { name: "Slices" })).toHaveCount(0);
   await expect(viewerCanvas(host)).toHaveCount(0);
+  // The viewer copy names the Static view (not a montage "above", which
+  // the view router hides while a viewer is shown).
   await expect(host).toContainText(
-    "The static montage above is the figure of record."
+    "The Static view is the figure of record."
   );
   await expect(host).toContainText(/Includes <?\d+(\.\d+)? MB of per-vertex data\./);
 
@@ -201,7 +208,8 @@ test("display controls retain map-local exploration and reset exactly", async ({
   await expect(thresholdLow).toHaveValue("-3.1");
   await expect(thresholdHigh).toHaveValue("3.1");
   await expect(modifiedChip).toBeHidden();
-  await palette.selectOption("viridis");
+  // Signed maps offer the report palette and diverging maps only.
+  await palette.selectOption("coolwarm");
   await opacity.evaluate((node) => {
     node.value = "0.35";
     node.dispatchEvent(new Event("input", { bubbles: true }));
@@ -213,7 +221,7 @@ test("display controls retain map-local exploration and reset exactly", async ({
   await rangeHigh.fill("6");
   await rangeHigh.dispatchEvent("change");
   await expect.poll(async () => (await surfaceState(host)).display).toEqual({
-    colorMapId: "viridis",
+    colorMapId: "coolwarm",
     displayRange: [-6, 6],
     maskInterval: [-4, 4],
     opacity: 0.35
@@ -237,7 +245,7 @@ test("display controls retain map-local exploration and reset exactly", async ({
 
   await group.getByRole("tab", { name: "Z" }).click();
   await expect.poll(async () => (await surfaceState(host)).display).toEqual({
-    colorMapId: "viridis",
+    colorMapId: "coolwarm",
     displayRange: [-6, 6],
     maskInterval: [-4, 4],
     opacity: 0.35
@@ -269,7 +277,7 @@ test("embedded surface reports make no external requests and hide in print", asy
   await page.emulateMedia({ media: "print" });
   await expect(host).toBeHidden();
   await expect(page.getByRole("img", {
-    name: "Surface Z statistic surface montage"
+    name: surfaceAlt("Surface Z statistic")
   })).toBeVisible();
 });
 
@@ -342,7 +350,7 @@ test("mixed reports expose only eligible static, slice, and surface routes", asy
   await expect(surface).toBeHidden();
   await expect(volume).toBeHidden();
   await expect(page.getByRole("img", {
-    name: "Surface Z statistic surface montage"
+    name: surfaceAlt("Surface Z statistic")
   })).toBeVisible();
 });
 
@@ -356,15 +364,20 @@ test("corrupt surface payloads fail visibly without displacing static figures", 
     'xpath=preceding-sibling::*[@data-nm-view-router][1]'
   );
   await router.getByRole("radio", { name: "3D surface", exact: true }).check();
-  const fallback = host.locator("[data-nm-surface-author-fallback]");
-  await expect(fallback).toContainText(
-    "Interactive surface unavailable",
+  // A failed viewer hands the map back to Static; the router says why.
+  const note = page.locator(
+    '[data-nm-view-note="surface-interactive"]'
+  );
+  await expect(note).toContainText(
+    "The 3D surface could not load",
     { timeout: 20_000 }
   );
-  await expect(fallback).toBeVisible();
+  await expect(note).toContainText("The static figures are unaffected.");
+  await expect(note).toBeVisible();
+  await expect(router.getByRole("radio", { name: "Static" })).toBeChecked();
   await expect(host).not.toHaveAttribute("data-nm-surface-ready", "true");
   await expect(page.getByRole("img", {
-    name: "Surface Z statistic surface montage"
+    name: surfaceAlt("Surface Z statistic")
   })).toBeVisible();
 });
 
@@ -376,7 +389,7 @@ test.describe("without JavaScript", () => {
   }) => {
     const host = await openSurfaceReport(page);
     await expect(page.getByRole("img", {
-      name: "Surface Z statistic surface montage"
+      name: surfaceAlt("Surface Z statistic")
     })).toBeVisible();
     await expect(host.getByText(
       "JavaScript is disabled; use the static surface montage above.",

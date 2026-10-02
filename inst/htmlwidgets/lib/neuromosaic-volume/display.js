@@ -210,6 +210,9 @@
       var cap = positive ? rhi : -rlo;
       var a = Math.abs(v);
       if (!(capSrc > t0)) { out[e] = at(v); continue; }
+      // A range end inside the threshold: its end bin holds every shown
+      // value of that sign (clamped there), so it takes the cap colour.
+      if (!(cap > tn) && e === (positive ? n - 1 : 0)) { out[e] = ramp(sign * capSrc); continue; }
       if (a + 2 * half < tn) { out[e] = gap === null ? at(v) : gap; continue; }
       if (!(cap > tn)) { out[e] = ramp(sign * capSrc); continue; }
       var mapped = t0 + (Math.max(0, a - tn) * (capSrc - t0)) / (cap - tn);
@@ -241,10 +244,11 @@
     return { kind: "shown", value: shown, reason: null };
   }
 
-  // Wheel over a slice pane: "page" scrolls (default), "runtime" (focused
-  // pane, Ctrl/Cmd zoom) or a +1/-1 step (Alt or Shift + wheel).
+  // Wheel over a slice pane: "page" scrolls (default), "runtime" (a pane the
+  // reader focused, Ctrl/Cmd zoom) or a +1/-1 step (Alt or Shift + wheel). A
+  // pane focused by script (byReader false, e.g. a peak jump) scrolls.
   function wheelAction(e) {
-    if (e.focused || e.ctrlKey || e.metaKey) return "runtime";
+    if ((e.focused && e.byReader) || e.ctrlKey || e.metaKey) return "runtime";
     if (!(e.altKey || e.shiftKey)) return "page";
     var delta = Number(e.deltaY) || Number(e.deltaX) || 0;
     if (!delta) return "page";

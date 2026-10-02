@@ -99,6 +99,67 @@ test_that("the page prints through the report and hides file:// image-only links
   expect_match(js, "if (plainLink) plainLink.hidden = true;", fixed = TRUE)
   expect_match(js, "api.preparePrint = function", fixed = TRUE)
   expect_match(js, "e.preventDefault();\n    api.printReport();", fixed = TRUE)
-  expect_match(js, "NeuroMosaicReport.preparePrint() first, or use the R/PDF route", fixed = TRUE)
+  # Headless pipelines are pointed at preparePrint() (documented in
+  # ?render_montage_report).
+  expect_match(js, "should await NeuroMosaicReport.preparePrint() first", fixed = TRUE)
   expect_match(css, ".nm-print-action", fixed = TRUE)
+})
+
+test_that("precomputed panels with only an image path render (no partial matching)", {
+  # `panel$volume` partially matches `volume_image` (a path), so metadata
+  # lookups must take the exact `volume` entry, and only when it is a list.
+  row <- data.frame(map_id = "m1", label = "Faces", analysis_label = "Faces",
+                    threshold = 3.1, tail = "two_sided", stringsAsFactors = FALSE)
+  img <- tempfile(fileext = ".png")
+  grDevices::png(img, width = 40, height = 20)
+  graphics::par(mar = rep(0, 4))
+  graphics::plot.new()
+  grDevices::dev.off()
+  panel <- list(volume_image = img)
+  expect_no_error(
+    out <- utils::capture.output(
+      neuromosaic:::.montage_report_emit_map_figures(row, panel, is_html = TRUE)
+    )
+  )
+  expect_true(any(grepl("<img", out, fixed = TRUE)))
+  expect_no_error(cap <- neuromosaic:::.montage_report_figure_caption(row, panel, "volume"))
+  expect_type(cap, "character")
+  # The Methods colour-cap and slice rules use the same exact lookup.
+  expect_null(neuromosaic:::.montage_report_volume_meta(panel))
+  expect_identical(
+    neuromosaic:::.montage_report_volume_meta(list(volume = list(cap = 3)))$cap, 3
+  )
+})
+
+test_that("an HTML report rendered in a C locale keeps its non-ASCII text", {
+  skip_if_not(rmarkdown::pandoc_available())
+  # cat() in a non-UTF-8 locale prints UTF-8 text as "<U+00B7>"; the report
+  # renders with a UTF-8 character type whatever the session's locale.
+  dir <- withr::local_tempdir()
+  img <- file.path(dir, "z.png")
+  grDevices::png(img, width = 40, height = 20)
+  graphics::par(mar = rep(0, 4))
+  graphics::plot.new()
+  grDevices::dev.off()
+  manifest <- data.frame(
+    analysis_id = "faces", analysis_label = "Faces versus places",
+    map_id = "faces_z", role = "primary", quantity = "test_statistic",
+    distribution = "z", threshold = 3.1, label = "Z statistic",
+    n = 32, stringsAsFactors = FALSE
+  )
+  manifest$recipe <- I(list(function(row) 1))
+  old <- Sys.getlocale("LC_CTYPE")
+  withr::defer(Sys.setlocale("LC_CTYPE", old))
+  Sys.setlocale("LC_CTYPE", "C")
+  out <- render_montage_report(
+    manifest, output_file = file.path(dir, "c-locale.html"),
+    title = "C locale · fixture",
+    panels = list(faces_z = list(volume_image = img)),
+    materialize_recipes = FALSE, check_files = FALSE, quiet = TRUE
+  )
+  expect_identical(Sys.getlocale("LC_CTYPE"), "C", label = "the locale is restored")
+  html <- paste(readLines(out, encoding = "UTF-8", warn = FALSE), collapse = "\n")
+  expect_false(grepl("<U+", html, fixed = TRUE))
+  expect_false(grepl("&lt;U+", html, fixed = TRUE))
+  expect_true(grepl("·", html, fixed = TRUE))
 })

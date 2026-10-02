@@ -285,4 +285,20 @@ interactive legends use the resolved quantity and units together.
 Direct [stat_montage()] and [surf_montage()] calls accept `legend_title`
 and `units`; report-level `volume_args`/`surface_args` overrides are also
 reflected in their corresponding interactive display metadata.
+
+Printing and PDF output:
+Bundle-mode reports load their figures lazily, and dark or narrow-screen
+readers see variant images, while paper always takes the full-size light
+figure of record. The report's own "Print / Save PDF" button (and
+Ctrl/Cmd+P, which the page intercepts) loads every light figure first,
+waits at most about 10 seconds with a visible progress note and a
+"Print now" button, then opens the print dialog; a second Ctrl/Cmd+P
+prints at once. Printing from the browser menu before the page has loaded
+its figures marks each missing figure with a note on paper. Headless PDF
+pipelines (Chrome `--print-to-pdf`, Puppeteer, Playwright) should first
+evaluate `await NeuroMosaicReport.preparePrint()` in the page: it switches
+to the light sources, loads and decodes every figure and glance thumbnail,
+and resolves when the page is ready to print (for example
+`await page.evaluate(() => NeuroMosaicReport.preparePrint())` before
+`page.pdf()`).
 }

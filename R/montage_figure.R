@@ -310,7 +310,7 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
 
 # Formatting ----------------------------------------------------------------
 
-.nm_minus <- "−"
+.nm_minus <- "\u2212"
 
 .nm_format_signed <- function(x, digits = 0L, plus = TRUE) {
   txt <- formatC(abs(x), format = "f", digits = digits)
