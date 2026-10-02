@@ -126,54 +126,201 @@
     return kept.sort(function (a, b) { return a - b; });
   }
 
-  // Yeo 7/17 network codes as used by Schaefer parcellations.
+  // Labelled colour-bar ticks. When a symmetric threshold has room for only
+  // one of its two edges, a single centred "±5" replaces the lone "5", so
+  // the key never reads as if one sign had no threshold.
+  function legendLabels(range, mask, minGap) {
+    var r = pair(range);
+    var ticks = legendTicks(range, mask, minGap);
+    var m = pair(mask);
+    var label = function (value) { return { value: value, label: formatNumber(value, { minus: true }) }; };
+    var symmetric = m && m[1] > 0 && Math.abs(m[0] + m[1]) < 1e-9 * Math.max(1, Math.abs(m[1]));
+    if (!symmetric || !r || !(r[0] < m[0] && m[1] < r[1])) return ticks.map(label);
+    var hasLow = ticks.indexOf(m[0]) >= 0;
+    var hasHigh = ticks.indexOf(m[1]) >= 0;
+    if (hasLow === hasHigh) return ticks.map(label);
+    var gap = minGap === undefined ? 0.16 : Number(minGap);
+    var rest = ticks.filter(function (value) { return value !== m[0] && value !== m[1]; });
+    var fits = rest.every(function (value) { return Math.abs(value) / (r[1] - r[0]) >= gap; });
+    var out = rest.map(label);
+    if (fits) out.push({ value: 0, label: "\u00b1" + formatNumber(m[1], { minus: true }) });
+    return out.sort(function (a, b) { return a.value - b.value; });
+  }
+
+  // Yeo 7/17 network codes as used by Schaefer parcellations. The letter
+  // suffix of the 17-network codes (ContA, DefaultB) is appended as is.
   var NETWORKS = {
     Vis: "Visual", VisCent: "Visual (central)", VisPeri: "Visual (peripheral)",
-    SomMot: "Somatomotor", SomMotA: "Somatomotor A", SomMotB: "Somatomotor B",
-    DorsAttn: "Dorsal attention", DorsAttnA: "Dorsal attention A", DorsAttnB: "Dorsal attention B",
-    SalVentAttn: "Salience / ventral attention", SalVentAttnA: "Salience / ventral attention A",
-    SalVentAttnB: "Salience / ventral attention B",
-    Limbic: "Limbic", LimbicA: "Limbic A", LimbicB: "Limbic B",
-    Cont: "Control", ContA: "Control A", ContB: "Control B", ContC: "Control C",
-    Default: "Default", DefaultA: "Default A", DefaultB: "Default B", DefaultC: "Default C",
-    TempPar: "Temporal-parietal"
-  };
-  var REGIONS = {
-    PFC: "prefrontal", PFCl: "lateral prefrontal", PFCm: "medial prefrontal",
-    PFCd: "dorsal prefrontal", PFCv: "ventral prefrontal", PFCmp: "medial posterior prefrontal",
-    Par: "parietal", ParOper: "parietal operculum", Temp: "temporal", TempPole: "temporal pole",
-    TempOcc: "temporal-occipital", Med: "medial", FrOper: "frontal operculum",
-    FrOperIns: "frontal operculum / insula", Ins: "insula", PrC: "precentral", PrCv: "ventral precentral",
-    PrCd: "dorsal precentral", PostC: "postcentral", pCun: "precuneus", pCunPCC: "precuneus / PCC",
-    PCC: "posterior cingulate", Cingm: "mid-cingulate", ACC: "anterior cingulate",
-    OFC: "orbitofrontal", IPL: "inferior parietal", IPS: "intraparietal sulcus",
-    SPL: "superior parietal", FEF: "frontal eye field", ExStr: "extrastriate",
-    ExStrInf: "inferior extrastriate", ExStrSup: "superior extrastriate", Striate: "striate",
-    StriCal: "striate / calcarine", Aud: "auditory", Cent: "central", S2: "secondary somatosensory",
-    Rsp: "retrosplenial", PHC: "parahippocampal", Vent: "ventral", Post: "posterior",
-    Cinga: "anterior cingulate", ParMed: "medial parietal", Precuneus: "precuneus"
+    SomMot: "Somatomotor", DorsAttn: "Dorsal attention",
+    SalVentAttn: "Salience / ventral attention", Limbic: "Limbic",
+    Cont: "Control", Default: "Default", TempPar: "Temporoparietal"
   };
 
-  // Readable region text for a parcel id and its atlas table entry:
-  // { name: "Visual network, extrastriate", detail: "LH_Vis_3 · Schaefer ..." }.
-  // Parcel 0 (or a missing entry) is the medial wall / unlabelled cortex.
+  function networkName(code) {
+    if (NETWORKS[code]) return NETWORKS[code];
+    var m = /^([A-Za-z]+?)([A-C])$/.exec(String(code || ""));
+    return m && NETWORKS[m[1]] ? NETWORKS[m[1]] + " " + m[2] : null;
+  }
+
+  // "Schaefer-200-7networks" -> "Schaefer-200, 7 networks"; others unchanged.
+  function atlasName(atlas) {
+    var text = String(atlas || "");
+    var m = /^(.*?)-(\d+)networks$/i.exec(text);
+    return m ? m[1] + ", " + m[2] + " networks" : text;
+  }
+
+  // Readable region text for a parcel id and its atlas table entry, in the
+  // peak table's form: { name: "Control · PFCl 4 (L)",
+  // detail: "Schaefer-200, 7 networks" }. Parcel 0 (or a missing entry) is
+  // the medial wall / unlabelled cortex. Unrecognised labels stay verbatim.
   function describeParcel(id, entry, atlas) {
     var parcel = Number(id);
-    if (!parcel || !entry) return { name: "Medial wall", detail: atlas || "" };
-    var code = entry.full || entry.label || String(parcel);
-    var parts = String(entry.label || code).split("_");
-    var network = entry.network || parts[0];
-    var name = NETWORKS[network] ? NETWORKS[network] + " network" : network;
-    var region = parts.slice(1).filter(function (token) {
-      return !/^\d+$/.test(token) && token !== network;
-    }).map(function (token) { return REGIONS[token] || token; });
-    if (region.length) name += ", " + region.join(" ");
-    return { name: name, detail: code + (atlas ? " \u00b7 " + atlas : "") };
+    var atlasText = atlasName(atlas);
+    if (!parcel || !entry) return { name: "Medial wall", detail: atlasText };
+    var full = String(entry.full || entry.label || parcel);
+    var side = /^(LH|RH)_/.exec(full);
+    var base = full.replace(/^(LH|RH)_/, "");
+    var code = entry.network || base.split("_")[0];
+    var network = networkName(code);
+    var area = null;
+    if (network && base.indexOf(code + "_") === 0) {
+      area = base.slice(code.length + 1);
+    } else if (network && entry.label && String(entry.label).indexOf(code + "_") !== 0) {
+      area = String(entry.label);
+    }
+    if (!network || area === null) {
+      return {
+        name: String(entry.label || full),
+        detail: full + (atlas ? " · " + atlasText : "")
+      };
+    }
+    var name = network + (area ? " · " + area.split("_").join(" ") : "") +
+      (side ? " (" + side[1].charAt(0) + ")" : "");
+    return { name: name, detail: atlasText };
+  }
+
+  // Colour maps ---------------------------------------------------------------
+  // Signed maps are offered diverging palettes only: a sequential or
+  // single-hue map would paint one sign as "low". Unsigned maps get the
+  // perceptually ordered sequential set. Labels are reader-facing names.
+  var COLOR_MAP_LABELS = {
+    "surface-heat": "Heat (two-sided)",
+    "surface-heat-positive": "Heat",
+    RdBu: "Red–blue",
+    bluered: "Blue–red",
+    coolwarm: "Cool–warm",
+    viridis: "Viridis", inferno: "Inferno", magma: "Magma", plasma: "Plasma",
+    hot: "Hot", greys: "Greys"
+  };
+  var SIGNED_COLOR_MAPS = ["coolwarm", "surface-heat", "bluered"];
+  var UNSIGNED_COLOR_MAPS = [
+    "surface-heat-positive", "viridis", "inferno", "magma", "plasma", "greys"
+  ];
+  var REPORT_PALETTE_PREFIX = "nm-signed-";
+
+  function curateColorMaps(options, currentId, signed) {
+    var enabled = (options || []).filter(function (option) {
+      return option.availability && option.availability.enabled;
+    });
+    var byId = function (id) {
+      return enabled.filter(function (option) { return option.id === id; })[0];
+    };
+    var out = [];
+    var current = byId(currentId);
+    if (current && currentId.indexOf(REPORT_PALETTE_PREFIX) === 0) {
+      out.push({ id: current.id, label: "Report (nm-signed)" });
+    }
+    (signed ? SIGNED_COLOR_MAPS : UNSIGNED_COLOR_MAPS).forEach(function (id) {
+      var option = byId(id);
+      if (option) out.push({ id: id, label: COLOR_MAP_LABELS[id] || option.label || id });
+    });
+    // A current map outside the curated set stays selectable.
+    if (current && !out.some(function (option) { return option.id === currentId; })) {
+      out.unshift({ id: current.id, label: COLOR_MAP_LABELS[current.id] || current.label || current.id });
+    }
+    return out;
+  }
+
+  // A threshold magnitude in [0, max |data|]; null for non-numeric input.
+  function clampMagnitude(value, dataRange) {
+    var x = Math.abs(Number(value));
+    if (!Number.isFinite(x)) return null;
+    var r = pair(dataRange);
+    if (r && r.every(Number.isFinite)) x = Math.min(x, Math.max(Math.abs(r[0]), Math.abs(r[1])));
+    return x;
+  }
+
+  // An ordered mask interval with both ends clamped into the data range
+  // (widened to include zero); null for non-numeric or reversed input.
+  function clampInterval(low, high, dataRange) {
+    var p = orderedFinitePair(low, high);
+    if (!p) return null;
+    var r = pair(dataRange);
+    if (!r || !r.every(Number.isFinite)) return p;
+    var lo = Math.min(r[0], 0);
+    var hi = Math.max(r[1], 0);
+    return [Math.min(Math.max(p[0], lo), hi), Math.min(Math.max(p[1], lo), hi)];
+  }
+
+  // The never-shown band of a threshold palette (a run of one neutral colour
+  // around the centre) recoloured with the threshold colours on either side.
+  // Hidden vertices still feed colour interpolation across a cluster's edge
+  // triangles; a grey band there paints a pale fringe on every cluster.
+  function bleedGap(colors) {
+    var out = (colors || []).slice();
+    var n = out.length;
+    if (n < 3) return out;
+    var mid = Math.floor((n - 1) / 2);
+    var gap = String(out[mid]).toUpperCase();
+    var lo = mid;
+    var hi = mid;
+    while (lo > 0 && String(out[lo - 1]).toUpperCase() === gap) lo -= 1;
+    while (hi < n - 1 && String(out[hi + 1]).toUpperCase() === gap) hi += 1;
+    if (hi - lo < 1 || lo === 0 || hi === n - 1) return out;
+    for (var i = lo; i <= hi; i += 1) out[i] = i <= mid ? out[lo - 1] : out[hi + 1];
+    return out;
+  }
+
+  // "#B40426" -> [180, 4, 38]; null when malformed.
+  function hexRgb(hex) {
+    var m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ""));
+    if (!m) return null;
+    var n = parseInt(m[1], 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+
+  // Hover values: two decimals with a true minus, as in the peak tables.
+  function formatFixed(value) {
+    var x = Number(value);
+    if (!Number.isFinite(x)) return "";
+    var text = x.toFixed(2);
+    return /^-0\.00$/.test(text) ? "0.00" : text.replace(/^-/, "\u2212");
+  }
+
+  // A bundle-mode surface scene (companion .bin.gz files) cannot be read from
+  // a report opened from disk; embedded payloads ("nm-surface-asset:", data:
+  // or blob: URLs) can.
+  function manifestNeedsServer(protocol, manifestText) {
+    if (protocol !== "file:") return false;
+    var found = String(manifestText || "").match(/"(?:url|uri|href|src)"\s*:\s*"[^"]*"/g) || [];
+    return found.some(function (entry) {
+      var url = entry.replace(/^[^:]*:\s*"/, "").replace(/"$/, "");
+      return !/^(nm-surface-asset:|data:|blob:)/.test(url);
+    });
   }
 
   return Object.freeze({
+    formatFixed: formatFixed,
+    manifestNeedsServer: manifestNeedsServer,
+    atlasName: atlasName,
+    bleedGap: bleedGap,
+    clampInterval: clampInterval,
+    clampMagnitude: clampMagnitude,
+    curateColorMaps: curateColorMaps,
     describeParcel: describeParcel,
+    hexRgb: hexRgb,
     formatNumber: formatNumber,
+    legendLabels: legendLabels,
     legendTicks: legendTicks,
     pair: pair,
     samePair: samePair,

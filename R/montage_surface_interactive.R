@@ -75,7 +75,8 @@
 #'   coherent brain in RAS position that rotates as a whole; `"split"` rotates
 #'   each hemisphere into the chosen view and places them side by side.
 #' @param view Initial whole-brain view for the anatomical layout. The default
-#'   `"oblique"` is the Overview pose set by `oblique`.
+#'   `"left"` (lateral left hemisphere) matches the first panel of the static
+#'   surface strip; `"oblique"` is the Overview pose set by `oblique`.
 #' @param oblique Overview camera angle for the anatomical layout: `"auto"`
 #'   chooses, per displayed map, the oblique angle that faces the most
 #'   suprathreshold cortex; a numeric `c(azimuth, elevation)` in degrees fixes
@@ -85,7 +86,9 @@
 #'   gyral/sulcal contrast) or `"curvature"` (white-surface mean curvature, as
 #'   in the static montage).
 #' @param height Canvas height as a positive number of pixels or a CSS size
-#'   string. `NULL` (default) uses a responsive 16:10 stage (square on phones).
+#'   string. `NULL` (default) uses a responsive stage `min(560px, 70vh)` tall
+#'   (about square on phones), so the router, canvas and view bar fit on one
+#'   screen.
 #' @param fallback Optional plain-text failure message. Static surface figures
 #'   remain present separately in the report.
 #' @param alt_text Optional alternative text. When omitted it is generated per
@@ -111,7 +114,7 @@ montage_surface <- function(geometry = NULL,
                             controls = .montage_surface_control_names,
                             preset = "report",
                             layout = c("anatomical", "split"),
-                            view = c("oblique", "left", "right", "dorsal",
+                            view = c("left", "oblique", "right", "dorsal",
                                      "ventral", "anterior", "posterior",
                                      "left-medial", "right-medial"),
                             anatomy = c("sulcal_depth", "curvature"),
@@ -403,6 +406,34 @@ montage_surface <- function(geometry = NULL,
       manifest$effective_display_mode[[i]]
     tail <- panel_surface$tail %||% manifest$effective_tail[[i]]
     support_mask <- surface_args$support_mask %||% support_masks[[i]]
+    # Report display extent: reuse the volume panel's extent-aware support
+    # when it exists, otherwise derive it from the manifest.
+    volume_meta <- panels[[map_id]][["volume"]]
+    if (is.null(surface_args$support_mask) && is.null(sources[[i]]$vals) &&
+        identical(display_mode, "thresholded")) {
+      if (is.list(volume_meta) && !is.null(volume_meta$display_support_mask) &&
+          length(volume_meta$display_support_mask) ==
+            length(source_values[[i]])) {
+        support_mask <- volume_meta$display_support_mask
+      } else {
+        extent <- .montage_row_extent(manifest, i)
+        values_i <- as.numeric(source_values[[i]])
+        shown <- .montage_display_mask(
+          values_i, display_mode = display_mode,
+          threshold = manifest$effective_threshold[[i]], tail = tail,
+          support_mask = support_mask
+        )
+        excluded <- .montage_extent_excluded(
+          values_i, dim(source_values[[i]]), shown,
+          min_cluster_size = extent$min_cluster_size,
+          connectivity = extent$connectivity
+        )
+        base_support <- .normalize_montage_support_mask(
+          support_mask, length(values_i)
+        )
+        support_mask <- base_support & !excluded
+      }
+    }
     if (!is.null(custom_values)) {
       projected[[i]] <- .normalize_montage_surface_values(
         custom_values[[map_id]], geometry, map_id
@@ -534,7 +565,7 @@ montage_surface <- function(geometry = NULL,
       scenes = scenes,
       preset = surface$preset,
       layout = surface$layout %||% "split",
-      view = surface$view %||% "oblique",
+      view = surface$view %||% "left",
       oblique = surface$oblique %||% "auto",
       height = surface$height,
       projection = surface$projection,
@@ -1011,11 +1042,17 @@ montage_surface <- function(geometry = NULL,
       "runtime hash.", call. = FALSE
     )
   }
+  # An attachment, not a script: the 1.4 MB runtime is copied next to the
+  # report (or inlined as a data URI when self-contained) but only fetched
+  # when a reader first opens a 3D surface. The bridge finds it by the
+  # link id "surfview-runtime-attachment".
   htmltools::htmlDependency(
     name = runtime$name,
     version = runtime$version,
     src = c(file = root),
-    script = runtime$script
+    attachment = c(runtime = runtime$script),
+    # Copy only the runtime, not the rest of neurosurf's library directory.
+    all_files = FALSE
   )
 }
 
@@ -1203,7 +1240,13 @@ montage_surface <- function(geometry = NULL,
         " ", hemi, " vertices for map_id '", map_id, "'.", call. = FALSE
       )
     }
-    as.numeric(values)
+    values <- as.numeric(values)
+    # The static surface figure leaves the atlas's medial wall uncoloured;
+    # without the same mask, medial-wall vertices sample caudate and thalamus
+    # and the 3D view paints subcortical signal on the cortex.
+    cortex <- .montage_surface_cortex_mask(surfatlas, short, hemi, display_n)
+    if (!is.null(cortex)) values[!cortex] <- NA_real_
+    values
   })
   names(out) <- names(geometry)
   list(
@@ -1220,6 +1263,17 @@ montage_surface <- function(geometry = NULL,
       surface_smooth_fwhm = config$surface_smooth_fwhm %||% 0
     )
   )
+}
+
+# The surface atlas's cortex domain for one hemisphere (TRUE = cortex,
+# FALSE = medial wall), as the static surface figure uses it; NULL when the
+# atlas declares none or it does not match the display mesh.
+.montage_surface_cortex_mask <- function(surfatlas, short, hemi, n) {
+  masks <- surfatlas$cortex_mask
+  if (is.null(masks)) return(NULL)
+  mask <- if (is.list(masks)) masks[[short]] %||% masks[[hemi]] else masks
+  if (!is.logical(mask) || length(mask) != n || anyNA(mask)) return(NULL)
+  mask
 }
 
 .montage_surface_scene_layer <- function(row,
@@ -1243,8 +1297,10 @@ montage_surface <- function(geometry = NULL,
   palette <- metadata$palette %||% .montage_surface_palette(
     row$effective_palette_family[[1L]], row$effective_scale[[1L]]
   )
-  if (isTRUE(heat) ||
-      (identical(heat, "thresholded") && identical(display_mode, "thresholded"))) {
+  # The report palette is the default for every view; the heat preset only
+  # replaces palettes that are not the report's own.
+  if (!.nm_is_palette(palette) && (isTRUE(heat) ||
+      (identical(heat, "thresholded") && identical(display_mode, "thresholded")))) {
     palette <- if (identical(row$effective_scale[[1L]], "diverging")) {
       "surface-heat"
     } else {
@@ -1259,13 +1315,29 @@ montage_surface <- function(geometry = NULL,
   }
   units <- legend$units
   layer_id <- paste0("map-", substr(.montage_md5_text(map_id), 1L, 16L))
+  report_palette <- .nm_is_palette(palette)
+  palette_colors <- if (report_palette) {
+    nm_palette_colors(
+      as.numeric(limits),
+      threshold = if (identical(display_mode, "continuous")) 0 else {
+        abs(as.numeric(threshold))
+      },
+      palette = palette
+    )
+  } else {
+    NULL
+  }
 
   neurosurf::surface_layer(
     name = layer_id,
     values = values,
-    colormap = .montage_surface_browser_palette(
-      palette, row$effective_scale[[1L]]
-    ),
+    # The report palette depends on this map's threshold and cap, so it is
+    # registered per layer in the browser from metadata$palette_colors.
+    colormap = if (report_palette) {
+      paste0("nm-signed-", layer_id)
+    } else {
+      .montage_surface_browser_palette(palette, row$effective_scale[[1L]])
+    },
     limits = as.numeric(limits),
     opacity = as.numeric(layer_opacity),
     units = units,
@@ -1287,11 +1359,23 @@ montage_surface <- function(geometry = NULL,
       } else {
         as.numeric(threshold)
       },
-      display_only = TRUE
+      display_only = TRUE,
+      palette = if (report_palette) palette else NULL,
+      palette_colors = palette_colors,
+      # Lets the browser mark values beyond the colour range on its key and
+      # clamp thresholds to values that exist.
+      data_range = .montage_surface_value_range(values)
     ),
     provenance = provenance,
     threshold = threshold_pair
   )
+}
+
+.montage_surface_value_range <- function(values) {
+  v <- suppressWarnings(as.numeric(unlist(values, use.names = FALSE)))
+  v <- v[is.finite(v)]
+  if (!length(v)) return(NULL)
+  range(v)
 }
 
 .montage_surface_threshold_pair <- function(display_mode,
@@ -1514,6 +1598,7 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
     `data-nm-surface-host` = "",
     `data-nm-surface-analysis` = analysis_id,
     `data-nm-surface-map` = group$primary_map_id,
+    `data-nm-surface-primary-map` = group$primary_map_id,
     `data-nm-surface-map-to-layer` = map_json,
     `data-nm-surface-layer-to-map` = reverse_json,
     `data-nm-surface-labels` = label_json,
@@ -1523,7 +1608,7 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
     `data-nm-surface-compression` = surface$summary$compression,
     `data-nm-surface-preset` = group$preset,
     `data-nm-surface-layout` = surface$layout %||% "split",
-    `data-nm-surface-view` = surface$view %||% "oblique",
+    `data-nm-surface-view` = surface$view %||% "left",
     `data-nm-surface-oblique` = if (is.numeric(surface$oblique)) {
       paste(format(surface$oblique, trim = TRUE), collapse = ",")
     } else {
@@ -1597,7 +1682,10 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
           .montage_surface_icon("download")
         )
       ),
-      .montage_surface_control_tags(surface$controls, paste0(safe_id, "-display")),
+      .montage_surface_control_tags(
+        surface$controls, paste0(safe_id, "-display"),
+        label = primary_label
+      ),
       htmltools::tags$div(
         class = "nm-sv-overlay nm-sv-legend",
         `data-nm-surface-legend` = "",
@@ -1672,7 +1760,7 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
     ),
     htmltools::tags$p(
       class = "nm-sv-foot",
-      "Exploratory view. The static montage above is the figure of record. ",
+      "Exploratory view. The Static view is the figure of record. ",
       disclosure
     ),
     htmltools::tags$noscript(
@@ -1703,7 +1791,7 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
   ))
 }
 
-.montage_surface_control_tags <- function(controls, id = NULL) {
+.montage_surface_control_tags <- function(controls, id = NULL, label = NULL) {
   if (!length(controls)) return(NULL)
   fields <- list()
   if ("palette" %in% controls) {
@@ -1777,12 +1865,26 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
     id = id,
     class = "nm-sv-display",
     `data-nm-surface-display-controls` = "",
-    `aria-label` = "Surface display settings",
+    `aria-label` = if (is.null(label)) {
+      "Surface display settings"
+    } else {
+      paste0("Surface display settings: ", label)
+    },
     tabindex = "-1",
     hidden = "",
     htmltools::tags$header(
       class = "nm-sv-display-head",
-      htmltools::tags$h3("Display"),
+      # h4 under the map's h3; the visually hidden suffix keeps the eight
+      # headings distinct for screen-reader heading lists.
+      htmltools::tags$h4(
+        "Display",
+        if (!is.null(label)) {
+          htmltools::tags$span(
+            class = "nm-sv-visually-hidden",
+            paste0(" \u2014 ", label)
+          )
+        }
+      ),
       htmltools::tags$button(
         type = "button",
         class = "nm-sv-close",

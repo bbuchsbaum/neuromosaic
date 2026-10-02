@@ -19,6 +19,15 @@
   --nm-vv-stage-ink-2: #bac3c8;
   --nm-vv-stage-muted: #9aa4ac;
   --nm-vv-stage-rule: rgba(255, 255, 255, 0.1);
+  --nm-vv-stage-strong: #fff;
+  --nm-vv-gutter: #22282c;
+  --nm-vv-gutter-edge: rgba(0, 0, 0, 0.55);
+  --nm-vv-wash: rgba(255, 255, 255, 0.04);
+  --nm-vv-wash-2: rgba(255, 255, 255, 0.1);
+  --nm-vv-hair: rgba(255, 255, 255, 0.16);
+  --nm-vv-cut: rgba(255, 255, 255, 0.75);
+  --nm-vv-marker-edge: rgba(0, 0, 0, 0.6);
+  --nm-vv-focus: #8fc7ca;
 
   margin: 1.25rem 0 1.5rem;
   padding: 14px 16px 16px;
@@ -137,6 +146,47 @@
   display: none;
 }
 
+/* A viewer released to free graphics memory keeps its place on the page. */
+.nm-volume-paused {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  box-sizing: border-box;
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: 8px;
+  background: var(--nm-vv-stage);
+  color: var(--nm-vv-stage-ink-2);
+  text-align: center;
+}
+
+.nm-volume-paused[hidden] {
+  display: none;
+}
+
+.nm-volume-paused-text {
+  max-width: 34em;
+  margin: 0;
+}
+
+.nm-volume-paused-resume {
+  min-height: 28px;
+  padding: 4px 12px;
+  border: 1px solid var(--nm-vv-stage-rule);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nm-vv-stage-ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.nm-volume-paused-resume:focus-visible {
+  outline: 2px solid var(--nm-vv-accent);
+  outline-offset: 2px;
+}
+
 /* ---- Stage ------------------------------------------------------------ */
 
 .nm-volume-viewer {
@@ -144,8 +194,8 @@
   overflow: hidden;
   border-radius: 10px;
   /* Shows through the 1px grid gap as hairline gutters between views. */
-  background: #22282c;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  background: var(--nm-vv-gutter);
+  box-shadow: 0 0 0 1px var(--nm-vv-gutter-edge);
 }
 
 .nm-volume-viewer [data-nij-view],
@@ -157,10 +207,29 @@
   transition: box-shadow 120ms ease;
 }
 
-.nm-volume-viewer [data-nij-view][data-nij-hover],
+.nm-volume-viewer [data-nij-view][data-nij-hover] {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--nm-vv-hair);
+}
+
+/* Keyboard focus on a slice pane: a clear accent ring inside the pane. The
+   pane's canvas would paint over an inset shadow, so the ring is an overlay
+   above it that never takes pointer input. */
+.nm-volume-viewer [data-nij-view] {
+  position: relative;
+}
+
 .nm-volume-viewer [data-nij-view]:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+.nm-volume-viewer [data-nij-view]:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  border: 2px solid var(--nm-vv-focus);
+  pointer-events: none;
 }
 
 .nm-volume-viewer [data-nij-legend] {
@@ -182,6 +251,64 @@
   position: absolute;
   top: clamp(8px, 5cqi, 18px);
   right: clamp(8px, 5cqi, 18px);
+  display: flex;
+  gap: 6px;
+}
+
+/* Slice panes are pointing surfaces: click or drag sets the cursor. */
+.nm-volume-viewer [data-nij-view] canvas {
+  cursor: crosshair;
+}
+
+.nm-volume-save {
+  appearance: none;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  margin: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--nm-vv-stage-rule);
+  border-radius: 6px;
+  background: var(--nm-vv-wash);
+  color: var(--nm-vv-stage-ink-2);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.nm-volume-save:hover {
+  background: var(--nm-vv-wash-2);
+  color: var(--nm-vv-stage-strong);
+}
+
+.nm-volume-save:focus-visible,
+.nm-volume-reset-position--stage:focus-visible {
+  outline: 2px solid var(--nm-vv-focus);
+  outline-offset: 2px;
+}
+
+.nm-volume-save svg {
+  width: 13px;
+  height: 13px;
+}
+
+.nm-volume-save[data-done="true"] {
+  border-color: var(--nm-vv-focus);
+}
+
+.nm-volume-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 
@@ -215,7 +342,8 @@
 .nm-volume-readout-key,
 .nm-volume-readout-unit,
 .nm-volume-readout-label,
-.nm-volume-readout-units {
+.nm-volume-readout-units,
+.nm-volume-readout-hidden {
   color: var(--nm-vv-stage-muted);
 }
 
@@ -232,11 +360,19 @@
 }
 
 .nm-volume-readout-number {
-  color: #ffffff;
+  color: var(--nm-vv-stage-strong);
   font-size: 30px;
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.15;
+}
+
+/* Not drawn at the cursor: below threshold, hidden by the extent rule, or
+   outside the map. Muted, so it never reads like a displayed value. */
+.nm-volume-readout-number.is-muted {
+  color: var(--nm-vv-stage-muted);
+  font-size: 20px;
+  font-weight: 500;
 }
 
 .nm-volume-cluster {
@@ -259,7 +395,20 @@
   flex-basis: auto;
 }
 
+.nm-volume-cluster-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--nm-vv-stage-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nm-volume-cluster-id {
+  font-weight: 650;
+}
+
 .nm-volume-cluster-key,
+.nm-volume-cluster-contains,
 .nm-volume-cluster-atpeak,
 .nm-volume-cluster-empty {
   color: var(--nm-vv-stage-muted);
@@ -267,10 +416,11 @@
 
 .nm-volume-cluster-peak {
   appearance: none;
+  min-height: 24px;
   padding: 3px 8px;
   border: 1px solid var(--nm-vv-stage-rule);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--nm-vv-wash);
   color: var(--nm-vv-stage-ink);
   font: inherit;
   font-size: 11.5px;
@@ -279,7 +429,7 @@
 }
 
 .nm-volume-cluster-peak:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--nm-vv-wash-2);
 }
 
 .nm-volume-cluster-peak:disabled {
@@ -290,7 +440,7 @@
 }
 
 .nm-volume-cluster-peak:focus-visible {
-  outline: 2px solid #8fc7ca;
+  outline: 2px solid var(--nm-vv-focus);
   outline-offset: 2px;
 }
 
@@ -331,7 +481,7 @@
 /* The cursor value lies beyond this end: the cap (in the end colour) is the marker. */
 .nm-volume-scale-bar[data-clipped="high"] .nm-volume-scale-cap--high,
 .nm-volume-scale-bar[data-clipped="low"] .nm-volume-scale-cap--low {
-  filter: drop-shadow(0 0 0.5px #ffffff) drop-shadow(0 0 0.5px #ffffff);
+  filter: drop-shadow(0 0 0.5px var(--nm-vv-stage-strong)) drop-shadow(0 0 0.5px var(--nm-vv-stage-strong));
 }
 
 /* Cursor value inside the hidden band: shown, but not drawn on the slices. */
@@ -370,7 +520,7 @@
   height: 10px;
   border-radius: 3px;
   background: var(--nm-scale-gradient, #555);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1px var(--nm-vv-hair);
 }
 
 /* The transparent band: values here are not drawn on the slices. */
@@ -382,9 +532,9 @@
   left: var(--nm-scale-cut-lo, 50%);
   right: calc(100% - var(--nm-scale-cut-hi, 50%));
   background:
-    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(135deg, var(--nm-vv-wash-2) 0 1px, transparent 1px 4px),
     var(--nm-vv-stage);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 1px var(--nm-vv-hair);
 }
 
 /* Threshold edges drawn as dashed marks, like the static figures' key. */
@@ -395,7 +545,7 @@
   bottom: -5px;
   width: 0;
   margin-left: -0.5px;
-  border-left: 1px dashed rgba(255, 255, 255, 0.75);
+  border-left: 1px dashed var(--nm-vv-cut);
 }
 
 .nm-volume-scale-marker {
@@ -406,8 +556,8 @@
   width: 2px;
   margin-left: -1px;
   border-radius: 1px;
-  background: #ffffff;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  background: var(--nm-vv-stage-strong);
+  box-shadow: 0 0 0 1px var(--nm-vv-marker-edge);
 }
 
 .nm-volume-scale-marker::before {
@@ -418,7 +568,7 @@
   margin-left: -4px;
   border-left: 4px solid transparent;
   border-right: 4px solid transparent;
-  border-top: 5px solid #ffffff;
+  border-top: 5px solid var(--nm-vv-stage-strong);
 }
 
 .nm-volume-scale-marker[data-clip="high"] {
@@ -464,8 +614,8 @@
   align-self: center;
   padding: 2px 6px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #aeb6bc;
+  background: var(--nm-vv-wash-2);
+  color: var(--nm-vv-stage-ink-2);
   font-size: 11px;
   font-weight: 500;
 }
@@ -566,17 +716,18 @@
   padding: 4px 8px;
   border: 1px solid var(--nm-vv-stage-rule);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--nm-vv-wash);
   color: var(--nm-vv-stage-ink-2);
   font: inherit;
   font-size: 11.5px;
   font-weight: 500;
+  min-height: 28px;
   cursor: pointer;
 }
 
 .nm-volume-reset-position--stage:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ffffff;
+  background: var(--nm-vv-wash-2);
+  color: var(--nm-vv-stage-strong);
 }
 
 .nm-volume-reset-position--stage svg {
@@ -601,11 +752,16 @@
     font-size: 9.5px;
   }
 
-  .nm-volume-reset-position--stage {
+  .nm-volume-reset-position--stage,
+  .nm-volume-save {
     width: 36px;
     height: 36px;
     padding: 0;
     justify-content: center;
+  }
+
+  .nm-volume-save-label {
+    display: none;
   }
 
   .nm-volume-readout-coords {
@@ -651,6 +807,29 @@
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.nm-volume-map-field--single {
+  margin: 0;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--nm-vv-ink);
+}
+
+.nm-volume-map-field--single .nm-volume-map-key {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--nm-vv-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.nm-volume-map-select[hidden] {
+  display: none;
 }
 
 .nm-volume-map-select {
@@ -707,8 +886,15 @@
     min-height: 44px;
   }
 
-  .nm-volume-reset-position--stage {
+  .nm-volume-reset-position--stage,
+  .nm-volume-save,
+  .nm-volume-cluster-peak,
+  .nm-volume-toggle {
     min-height: 40px;
+  }
+
+  .nm-volume-controls layer-control-panel::part(input) {
+    min-height: 32px;
   }
 }
 
@@ -735,4 +921,74 @@
   .nm-volume-interactive {
     display: none !important;
   }
+}
+
+/* WCAG 2.5.8: the panel's link and reset controls are at least 24 px. */
+.nm-volume-controls layer-control-panel::part(link),
+.nm-volume-controls layer-control-panel::part(reset) {
+  min-width: 24px;
+  min-height: 24px;
+}
+
+/* ---- Light ground: the slices as the static figures draw them, with dark
+   ink on the light figure ground. */
+.nm-volume-interactive[data-nm-volume-ground="light"] {
+  --nm-vv-stage: #fafaf7;
+  --nm-vv-stage-ink: #1c2226;
+  --nm-vv-stage-ink-2: #3e4952;
+  --nm-vv-stage-muted: #5f6a73;
+  --nm-vv-stage-rule: rgba(28, 34, 38, 0.16);
+  --nm-vv-stage-strong: #16191b;
+  --nm-vv-gutter: #e3e5e2;
+  --nm-vv-gutter-edge: #d5d9d6;
+  --nm-vv-wash: #fff;
+  --nm-vv-wash-2: rgba(28, 34, 38, 0.08);
+  --nm-vv-hair: rgba(28, 34, 38, 0.18);
+  --nm-vv-cut: rgba(28, 34, 38, 0.7);
+  --nm-vv-marker-edge: rgba(255, 255, 255, 0.8);
+  --nm-vv-focus: var(--nm-vv-accent);
+}
+
+/* Sidebar: the slice ground, a two-way segmented choice. */
+.nm-volume-grounds {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 14px 0 0;
+}
+
+.nm-volume-grounds-label {
+  margin-right: auto;
+  color: var(--nm-vv-muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.nm-volume-ground {
+  appearance: none;
+  min-width: 52px;
+  min-height: 28px;
+  padding: 3px 10px;
+  border: 1px solid var(--nm-vv-rule-strong);
+  border-radius: 6px;
+  background: var(--nm-vv-surface);
+  color: var(--nm-vv-ink-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nm-volume-ground[aria-pressed="true"] {
+  border-color: var(--nm-vv-accent);
+  background: var(--nm-vv-accent-soft);
+  color: var(--nm-vv-accent-ink);
+  font-weight: 600;
+  cursor: default;
+}
+
+.nm-volume-ground:focus-visible {
+  outline: 2px solid var(--nm-vv-accent);
+  outline-offset: 2px;
 }

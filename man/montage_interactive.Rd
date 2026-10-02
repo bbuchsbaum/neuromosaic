@@ -26,7 +26,8 @@ in the HTML for direct `file://` use.}
 lossless default; `"none"` is intended for diagnostics.}
 
 \item{initial_position}{Initial coordinate strategy when `world_coord` is
-`NULL`: the tail-aware primary-map peak or the field-of-view centre.}
+`NULL`: the tail-aware primary-map peak (for two-sided signed maps, the
+strongest positive peak when one exists) or the field-of-view centre.}
 
 \item{world_coord}{Optional finite numeric `(x, y, z)` world coordinate. When
 supplied it overrides `initial_position` with an explicit starting point.}

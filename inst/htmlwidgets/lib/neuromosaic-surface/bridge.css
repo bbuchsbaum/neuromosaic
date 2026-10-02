@@ -10,7 +10,10 @@
   --nm-sv-rule-strong: var(--nm-rule-strong, #c9cfd2);
   --nm-sv-accent: var(--nm-accent, #2f6f73);
   --nm-sv-accent-soft: var(--nm-accent-soft, #e4efef);
+  --nm-sv-raised: var(--nm-raised, #fff);
   --nm-sv-glass: rgba(251, 251, 248, 0.86);
+  --nm-sv-hover: rgba(28, 34, 38, 0.05);
+  --nm-sv-hatch: #c4c8c5;
   --nm-sv-shadow: 0 1px 2px rgba(28, 34, 38, 0.06), 0 4px 14px rgba(28, 34, 38, 0.08);
   --nm-sv-sans: var(--nm-sans, -apple-system, BlinkMacSystemFont, "Segoe UI",
     "Helvetica Neue", Helvetica, Arial, sans-serif);
@@ -19,14 +22,30 @@
   font: 13px/1.4 var(--nm-sv-sans);
   font-variant-numeric: tabular-nums;
 }
+/* Dark theme: the stage takes the page's dark ground (the canvas follows it
+   from bridge.js), so every overlay keeps light ink on a dark glass. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .nm-surface-interactive {
+    --nm-sv-glass: rgba(27, 33, 36, 0.86);
+    --nm-sv-hover: rgba(255, 255, 255, 0.07);
+    --nm-sv-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 14px rgba(0, 0, 0, 0.35);
+  }
+}
+:root[data-theme="dark"] .nm-surface-interactive {
+  --nm-sv-glass: rgba(27, 33, 36, 0.86);
+  --nm-sv-hover: rgba(255, 255, 255, 0.07);
+  --nm-sv-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 14px rgba(0, 0, 0, 0.35);
+}
 .nm-surface-interactive *, .nm-surface-interactive *::before,
 .nm-surface-interactive *::after { box-sizing: border-box; }
 
 .nm-sv-frame { position: relative; }
+/* Tall enough that the brain is never cut off, short enough that the router,
+   the canvas and its view bar fit in one screen. */
 .nm-sv-stage {
   position: relative;
   overflow: hidden;
-  aspect-ratio: 16 / 10;
+  height: min(560px, 70vh);
   max-height: 640px;
   min-height: 300px;
   border: 1px solid var(--nm-sv-rule);
@@ -108,7 +127,7 @@
 .nm-sv-icon:focus-visible { outline-offset: -2px; }
 .nm-sv-icon + .nm-sv-icon { box-shadow: -1px 0 0 var(--nm-sv-rule); border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .nm-sv-icon svg { width: 16px; height: 16px; }
-.nm-sv-icon:hover { color: var(--nm-sv-ink); background: rgba(28, 34, 38, 0.05); }
+.nm-sv-icon:hover { color: var(--nm-sv-ink); background: var(--nm-sv-hover); }
 .nm-sv-icon[aria-expanded="true"] { background: var(--nm-sv-accent); color: #fff; box-shadow: none; }
 
 /* View switcher: a toolbar row under the canvas ----------------------------- */
@@ -156,8 +175,8 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.nm-sv-view:hover { background: rgba(255, 255, 255, 0.7); color: var(--nm-sv-ink); }
-.nm-sv-view[aria-pressed="true"] { background: #fff; color: var(--nm-sv-ink); box-shadow: 0 1px 2px rgba(28, 34, 38, 0.14); font-weight: 600; }
+.nm-sv-view:hover { background: var(--nm-sv-hover); color: var(--nm-sv-ink); }
+.nm-sv-view[aria-pressed="true"] { background: var(--nm-sv-raised); color: var(--nm-sv-ink); box-shadow: 0 1px 2px rgba(28, 34, 38, 0.14); font-weight: 600; }
 .nm-sv-view-sep { flex: none; width: 1px; margin: 5px 3px; background: var(--nm-sv-rule-strong); }
 
 /* Colour bar --------------------------------------------------------------- */
@@ -202,7 +221,7 @@
 }
 .nm-sv-display[hidden] { display: none; }
 .nm-sv-display-head { display: flex; align-items: center; justify-content: space-between; margin: -2px 0 -2px; }
-.nm-sv-display-head h3 { margin: 0; font-size: 13px; font-weight: 650; color: var(--nm-sv-ink); }
+.nm-sv-display-head h3, .nm-sv-display-head h4 { margin: 0; font-size: 13px; font-weight: 650; color: var(--nm-sv-ink); }
 .nm-sv-close {
   width: 26px;
   height: 26px;
@@ -215,7 +234,7 @@
   line-height: 1;
   cursor: pointer;
 }
-.nm-sv-close:hover { background: rgba(28, 34, 38, 0.06); color: var(--nm-sv-ink); }
+.nm-sv-close:hover { background: var(--nm-sv-hover); color: var(--nm-sv-ink); }
 .nm-sv-display-foot { padding-top: 10px; border-top: 1px solid var(--nm-sv-rule); }
 .nm-sv-restore { color: var(--nm-sv-muted); font-weight: 550; }
 .nm-sv-display:focus { outline: none; }
@@ -236,7 +255,7 @@
   padding: 0 8px;
   border: 1px solid var(--nm-sv-rule-strong);
   border-radius: 6px;
-  background: #fff;
+  background: var(--nm-sv-raised);
   color: var(--nm-sv-ink);
   font: 13px var(--nm-sv-sans);
   font-variant-numeric: tabular-nums;
@@ -288,10 +307,20 @@
   margin-left: -1px;
   border-radius: 1px;
   background: var(--nm-sv-ink);
-  box-shadow: 0 0 0 1px #fff;
+  box-shadow: 0 0 0 1px var(--nm-sv-ground);
 }
 .nm-sv-marker[hidden] { display: none; }
 .nm-sv-barwrap { position: relative; }
+/* Cap triangles: values beyond the colour range, as on the static key. */
+.nm-sv-cap {
+  position: absolute;
+  top: 0;
+  width: 7px;
+  height: 10px;
+}
+.nm-sv-cap[hidden] { display: none; }
+.nm-sv-cap-low { right: 100%; clip-path: polygon(100% 0, 0 50%, 100% 100%); }
+.nm-sv-cap-high { left: 100%; clip-path: polygon(0 0, 100% 50%, 0 100%); }
 
 /* Hint and touch gate ------------------------------------------------------- */
 .nm-sv-touch-gate, .nm-sv-touch-done {
@@ -343,6 +372,7 @@
 }
 .nm-sv-status[data-kind="loading"] { align-content: center; }
 .nm-sv-status[data-kind="error"] { color: var(--nm-warn-ink, #7a4206); }
+.nm-sv-status[data-kind="paused"] { max-width: none; color: var(--nm-sv-ink-2); }
 @keyframes nm-sv-spin { to { transform: rotate(360deg); } }
 .nm-surface-author-fallback {
   position: absolute;
@@ -392,8 +422,19 @@
 /* The native radio stays invisible but covers its whole pill, so a click
    anywhere on the pill lands on the radio itself. */
 .nm-view-router input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-.nm-view-router label:has(input:checked) { background: #fff; color: var(--nm-ink, #1c2226); box-shadow: 0 1px 2px rgba(28, 34, 38, 0.14); }
+.nm-view-router label:has(input:checked) { background: var(--nm-raised, #fff); color: var(--nm-ink, #1c2226); box-shadow: 0 1px 2px rgba(28, 34, 38, 0.14); }
 .nm-view-router label:has(input:focus-visible) { outline: 2px solid var(--nm-accent, #2f6f73); outline-offset: 1px; }
+.nm-view-router label { min-height: 28px; display: inline-flex; align-items: center; }
+.nm-view-router label[data-disabled="true"] { color: var(--nm-muted, #66717b); opacity: 0.55; cursor: not-allowed; }
+.nm-view-router label[data-disabled="true"] input { cursor: not-allowed; }
+.nm-view-note {
+  margin: -0.35rem 0 0.75rem;
+  max-width: 62ch;
+  color: var(--nm-ink-2, #3e4952);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.nm-view-note[hidden] { display: none; }
 
 @media (max-width: 760px) {
   .nm-sv-views {
@@ -403,7 +444,7 @@
 }
 @media (max-width: 600px) {
   .nm-sv-icon { width: 40px; height: 40px; }
-  .nm-sv-stage { aspect-ratio: 1 / 1; max-height: none; min-height: 0; }
+  .nm-sv-stage { height: min(100vw, 70vh); max-height: none; min-height: 280px; }
   .nm-sv-head { right: 148px; left: 12px; top: 10px; }
   .nm-sv-title { font-size: 13px; }
   .nm-sv-meta { font-size: 11px; }

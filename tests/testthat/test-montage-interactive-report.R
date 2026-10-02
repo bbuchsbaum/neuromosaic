@@ -72,7 +72,7 @@ test_that("bundle reports carry a primary-first VolumeScene beside static panels
   )
   expect_identical(analysis$maps[[1L]]$display$mode, "thresholded")
   expect_equal(analysis$maps[[1L]]$display$threshold, 3)
-  expect_identical(analysis$maps[[1L]]$display$palette, "blue-red")
+  expect_identical(analysis$maps[[1L]]$display$palette, "nm-signed")
   expect_identical(analysis$maps[[3L]]$display$mode, "continuous")
   expect_null(analysis$maps[[3L]]$display$threshold)
   expect_identical(analysis$maps[[3L]]$display$palette, "inferno")

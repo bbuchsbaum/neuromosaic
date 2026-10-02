@@ -1,16 +1,230 @@
 (function (root) {
   "use strict";
 
-  var ADAPTER_VERSION = "1.2.0";
+  var ADAPTER_VERSION = "1.4.0";
   var RUNTIME_VERSION = "0.4.0";
   var OVERLAY_LAYER_ID = "neuromosaic-overlay";
   var UNDERLAY_HEADROOM = 1.3;
-  var STAGE_COLOR = 0x111619;
+  // Stage grounds: "light" matches the static figures, "dark" is the
+  // instrument stage. Theme picks the default; a reader's choice is kept.
+  var GROUNDS = {
+    dark: {
+      stage: 0x111619, gutter: "#22282c", rampLow: 0x111619, rampHigh: 0xffffff, hideOutside: false,
+      cross: 0xffffff, crossAlpha: 0.58, halo: 0x000000, haloAlpha: 0.35,
+      label: 0xe6eaec, labelAlpha: 0.6, labelShadow: 0.9,
+      hist: { hidden: "rgba(255, 255, 255, 0.10)", base: "rgba(255, 255, 255, 0.18)",
+        guide: "rgba(255, 255, 255, 0.55)", caret: "rgba(255, 255, 255, 0.95)" }
+    },
+    light: {
+      stage: 0xfafaf7, gutter: "#e3e5e2", rampLow: 0x16191b, rampHigh: 0xf6f6f3, hideOutside: true,
+      cross: 0x1c2226, crossAlpha: 0.55, halo: 0xffffff, haloAlpha: 0.6,
+      label: 0x3e4952, labelAlpha: 0.9, labelShadow: 0,
+      hist: { hidden: "rgba(28, 34, 38, 0.10)", base: "rgba(28, 34, 38, 0.2)",
+        guide: "rgba(28, 34, 38, 0.5)", caret: "rgba(28, 34, 38, 0.9)" }
+    }
+  };
+  var GROUND_KEY = "neuromosaic.volume.ground";
+
+  function pageIsDark() {
+    var forced = document.documentElement.getAttribute("data-theme");
+    if (forced === "dark") return true;
+    if (forced === "light") return false;
+    return typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+
+  function groundOf(host) {
+    var chosen = host.dataset.nmVolumeGroundChoice;
+    if (!chosen) {
+      try { chosen = root.localStorage && root.localStorage.getItem(GROUND_KEY); } catch (error) { chosen = null; }
+    }
+    if (chosen === "light" || chosen === "dark") return chosen;
+    return pageIsDark() ? "dark" : "light";
+  }
   var MINUS = "\u2212";
+  var REPORT_PALETTE = "Report (nm-signed)";
+  // Qualitative, rainbow and duplicate presets have no place in a menu for
+  // statistical maps; the report palette leads the list.
+  var HIDDEN_PRESETS = [
+    "Set1", "Set2", "Set3", "Accent", "Dark2", "Paired", "Pastel1",
+    "Pastel2", "Greys", "Spectral", "RdYlGn"
+  ];
   var states = new WeakMap();
+
+  // <nm-gl-budget> -- identical in neuromosaic-volume/adapter.js and
+  // neuromosaic-surface/bridge.js; whichever script runs first installs it.
+  // Browsers kill the oldest WebGL context past a page-wide pool (16 in
+  // Chrome). Keep at most BUDGET live by releasing least recently used
+  // viewers that are not visible; a released chosen view is "parked" (keeps
+  // its height) and is rebuilt only on screen and within the budget.
+  var GL = (function (scope) {
+    var VERSION = 2;
+    var existing = scope.NeuroMosaicGL;
+    if (existing && existing.version >= VERSION) return existing;
+    var BUDGET = 8;
+    var HARD = 14;
+    var MARGIN = 120;
+    var live = [];
+    var parked = [];
+    var observer = null;
+    var proto = typeof HTMLCanvasElement !== "undefined" && HTMLCanvasElement.prototype;
+    // Remember each canvas's WebGL context so releasing it never has to ask
+    // getContext() (which would create a context on a bare canvas).
+    if (proto && !proto.getContext.__nmTracked) {
+      var getContext = proto.getContext;
+      var tracked = function (type) {
+        var context = getContext.apply(this, arguments);
+        if (context && /webgl/.test(String(type)) && !this.__nmGL) this.__nmGL = context;
+        return context;
+      };
+      tracked.__nmTracked = true;
+      proto.getContext = tracked;
+    }
+    // On screen: displayed and within MARGIN px of the viewport.
+    function onScreen(element) {
+      if (!element || element.hidden || !element.getClientRects().length) return false;
+      var box = element.getBoundingClientRect();
+      var height = scope.innerHeight || (document.documentElement && document.documentElement.clientHeight) || 0;
+      return box.width > 0 && box.height > 0 && box.bottom > -MARGIN && box.top < height + MARGIN;
+    }
+    // Visible: the chosen view and (when the entry names its element) on
+    // screen.
+    function visible(entry) {
+      try {
+        return Boolean(entry.shown()) && (!entry.element || onScreen(entry.element));
+      } catch (error) {
+        return false;
+      }
+    }
+    function total(exceptKey) {
+      return live.reduce(function (sum, entry) {
+        return entry.key === exceptKey ? sum : sum + entry.cost;
+      }, 0);
+    }
+    function find(list, key) {
+      for (var i = 0; i < list.length; i += 1) if (list[i].key === key) return list[i];
+      return null;
+    }
+    function drop(key) {
+      live = live.filter(function (entry) { return entry.key !== key; });
+    }
+    function unpark(key) {
+      parked = parked.filter(function (entry) { return entry.key !== key; });
+    }
+    // Release least recently used viewers that are not visible until `need`
+    // more contexts fit under BUDGET. `keep` is never released; its own live
+    // contexts count unless it is about to be rebuilt (`replacing`).
+    function trim(need, keep, replacing) {
+      var sum = total(replacing ? keep : null);
+      for (var i = 0; sum + need > BUDGET && i < live.length;) {
+        var entry = live[i];
+        if (entry.key === keep || visible(entry)) { i += 1; continue; }
+        live.splice(i, 1);
+        sum -= entry.cost;
+        try { entry.release(); } catch (error) { /* already gone */ }
+      }
+      return sum;
+    }
+    function watch(element) {
+      if (!element || typeof IntersectionObserver === "undefined") return;
+      if (!observer) {
+        observer = new IntersectionObserver(function (records) {
+          records.forEach(function (record) {
+            if (record.isIntersecting) {
+              var waiting = parked.filter(function (entry) { return entry.element === record.target; });
+              waiting.forEach(function (entry) {
+                // Let a fast scroll pass by before rebuilding anything.
+                setTimeout(function () {
+                  if (find(parked, entry.key) === entry && onScreen(entry.element)) {
+                    try { entry.resume(); } catch (error) { /* reported by the viewer */ }
+                  }
+                }, 150);
+              });
+            } else if (total() > BUDGET) {
+              trim(0, null);
+            }
+          });
+        }, { rootMargin: MARGIN + "px 0px" });
+      }
+      if (!element.__nmGLWatched) {
+        element.__nmGLWatched = true;
+        observer.observe(element);
+      }
+    }
+    var api = scope.NeuroMosaicGL = {
+      version: VERSION,
+      budget: BUDGET,
+      hard: HARD,
+      onScreen: onScreen,
+      // Register (or refresh) a live viewer as most recently used:
+      // { key, cost, element, shown(), release() }.
+      touch: function (entry) {
+        drop(entry.key);
+        unpark(entry.key);
+        live.push(entry);
+        watch(entry.element);
+        trim(0, entry.key);
+      },
+      drop: drop,
+      // Make room for `cost` new contexts for `key`. True when they fit
+      // without passing HARD (visible viewers are never released for it).
+      reserve: function (key, cost) {
+        return trim(cost, key, true) + cost <= HARD;
+      },
+      // A released viewer that is still the chosen view waits here until it
+      // is back on screen: { key, element, resume() }.
+      park: function (entry) {
+        unpark(entry.key);
+        parked.push(entry);
+        watch(entry.element);
+      },
+      unpark: unpark,
+      isParked: function (key) { return Boolean(find(parked, key)); },
+      live: function () { return total(null); },
+      keys: function () { return live.map(function (entry) { return entry.key; }); },
+      isLost: function (canvases) {
+        if (!canvases) return false;
+        if (typeof canvases.querySelectorAll === "function") canvases = canvases.querySelectorAll("canvas");
+        return Array.prototype.some.call(canvases, function (canvas) {
+          return Boolean(canvas.__nmGL && canvas.__nmGL.isContextLost());
+        });
+      },
+      // Hand each context back to the browser now rather than at garbage
+      // collection, so the pool is free for the next viewer.
+      loseContexts: function (canvases) {
+        if (!canvases) return;
+        if (typeof canvases.querySelectorAll === "function") canvases = canvases.querySelectorAll("canvas");
+        Array.prototype.forEach.call(canvases, function (canvas) {
+          var context = canvas.__nmGL;
+          if (!context || context.isContextLost()) return;
+          canvas.__nmReleased = true;
+          var ext = context.getExtension("WEBGL_lose_context");
+          if (ext) ext.loseContext();
+        });
+      }
+    };
+    return api;
+  }(typeof globalThis !== "undefined" ? globalThis : window));
+  // </nm-gl-budget>
 
   function fail(message) {
     throw new Error(message);
+  }
+
+  var FILE_MESSAGE = "Interactive views need the report served over HTTP — open the shared link, or ask the author for the single-file version.";
+
+  // Companion assets cannot be fetched from a report opened from disk.
+  function needsServer(scene) {
+    var displayApi = root.NeuroMosaicVolumeDisplay;
+    return Boolean(displayApi && root.location && displayApi.needsServer(
+      root.location.protocol, scene,
+      Boolean(document.querySelector("script[data-nm-volume-runtime-src]"))
+    ));
+  }
+
+  function readerMessage(error) {
+    if (root.location && root.location.protocol === "file:") return FILE_MESSAGE;
+    return "The interactive view could not load (" + ((error && error.message) || "unknown error") +
+      "). The static figures are unaffected.";
   }
 
   function byId(id) {
@@ -70,14 +284,49 @@
       if (!response.ok) fail("HTTP " + response.status);
       return await response.arrayBuffer();
     } catch (error) {
-      if (window.location.protocol === "file:") {
-        fail(
-          "Companion volume assets cannot be fetched from file://. " +
-          "Serve this report over HTTP or render with montage_interactive(assets = 'embed')."
-        );
-      }
+      if (window.location.protocol === "file:") fail(FILE_MESSAGE);
       throw error;
     }
+  }
+
+  // Bundle reports ship the ~1 MB neuroimjs runtime as a companion file and
+  // load it on the first open; embedded reports inline it. One promise per
+  // page, cleared on failure so a later open can retry.
+  var runtimePromise = null;
+
+  function runtimeSource() {
+    var node = document.querySelector("script[data-nm-volume-runtime-src]");
+    if (!node) return null;
+    try {
+      var spec = JSON.parse(node.textContent || "null");
+      return spec && typeof spec.src === "string" ? spec.src : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function ensureRuntime() {
+    if (root.neuroimjs) return Promise.resolve(root.neuroimjs);
+    if (runtimePromise) return runtimePromise;
+    var src = runtimeSource();
+    if (!src) return Promise.reject(new Error("The bundled neuroimjs runtime did not load."));
+    runtimePromise = new Promise(function (resolve, reject) {
+      var script = document.createElement("script");
+      script.src = new URL(src, document.baseURI).href;
+      script.async = true;
+      script.dataset.nmVolumeRuntimeLoaded = "";
+      script.onload = function () {
+        if (root.neuroimjs) resolve(root.neuroimjs);
+        else reject(new Error("The neuroimjs runtime loaded but did not initialise."));
+      };
+      script.onerror = function () {
+        script.remove();
+        reject(new Error("The viewer runtime (" + src + ") could not be loaded."));
+      };
+      document.head.appendChild(script);
+    });
+    runtimePromise.catch(function () { runtimePromise = null; });
+    return runtimePromise;
   }
 
   async function decodeAsset(state, assetId, isBackground) {
@@ -111,8 +360,73 @@
     return volume;
   }
 
+  // Curate the shared preset registry once: drop qualitative/rainbow maps and
+  // the duplicate "Greys" (shown as a second "Grayscale"), and put the report
+  // palette first.
+  function curatePresets(api) {
+    var ColorMap = api.ColorMap;
+    if (!ColorMap || ColorMap.__nmCurated) return;
+    var presets = ColorMap.presetMaps;
+    if (!presets || typeof presets !== "object") return;
+    var ordered = {};
+    ordered[REPORT_PALETTE] = presets[REPORT_PALETTE] || presets.BlueRed;
+    Object.keys(presets).forEach(function (name) {
+      if (name === REPORT_PALETTE || HIDDEN_PRESETS.indexOf(name) >= 0) return;
+      ordered[name] = presets[name];
+    });
+    var displayApi = root.NeuroMosaicVolumeDisplay;
+    var aliases = (displayApi && displayApi.menuAliases) || {};
+    Object.keys(aliases).forEach(function (label) {
+      if (presets[aliases[label]]) ordered[label] = presets[aliases[label]];
+    });
+    if (Object.prototype.hasOwnProperty.call(ColorMap, "_presetMaps")) {
+      ColorMap._presetMaps = ordered;
+    } else {
+      Object.keys(presets).forEach(function (name) { delete presets[name]; });
+      Object.keys(ordered).forEach(function (name) { presets[name] = ordered[name]; });
+    }
+    ColorMap.__nmCurated = true;
+  }
+
+  // The report palette (from R, per map) restretched to the live threshold
+  // and range. The preset registry is page-wide, so each viewer re-registers
+  // its colours before its panel reads them.
+  function registerReportPalette(api, display, threshold, range) {
+    curatePresets(api);
+    var colors = display && display.palette_colors;
+    if (!Array.isArray(colors) || colors.length < 2) return;
+    if (display.mode === "thresholded") {
+      var t = Number(display.threshold);
+      threshold = threshold || (display.tail === "positive" ? [-Infinity, t] :
+        (display.tail === "negative" ? [-t, Infinity] : [-t, t]));
+      colors = root.NeuroMosaicVolumeDisplay.resaturate(
+        colors, display.limits, display.threshold, threshold, range
+      );
+    }
+    api.ColorMap.presetMaps[REPORT_PALETTE] = colors.slice();
+  }
+
+  function syncReportPalette(state, apply) {
+    var map = currentMap(state);
+    var layer = overlayVolLayer(state);
+    if (!map || !layer) return;
+    var api = root.neuroimjs;
+    var range = layer.getRange().map(Number);
+    registerReportPalette(api, map.display, layer.getThreshold().map(Number), range);
+    state.paletteKey = thresholdKey(layer.getThreshold()) + "|" + thresholdKey(range);
+    if (!apply || !layer.colorMap || layer.colorMap.name !== REPORT_PALETTE) return;
+    state.viewer.updateLayer(OVERLAY_LAYER_ID, {
+      colormap: api.ColorMap.fromPreset(REPORT_PALETTE, { existingColorMap: layer.colorMap })
+    });
+    // Redraw the panel's colour-map swatch from the restretched colours.
+    if (state.controls && typeof state.controls.requestUpdate === "function") {
+      state.controls.requestUpdate();
+    }
+  }
+
   function mapDisplay(map, volume) {
     var api = root.neuroimjs;
+    registerReportPalette(api, map.display);
     var displayApi = root.NeuroMosaicVolumeDisplay;
     if (!displayApi) fail("The bundled display translator did not load.");
     var resolved = displayApi.resolve(
@@ -155,10 +469,7 @@
       left.visible === right.visible);
   }
 
-  // Intensity of the template's empty field of view. Otsu's split of a strided
-  // sample separates background from tissue; the floor sits well below that
-  // split so the dark background (and its faint halo) maps to the stage colour
-  // while CSF and grey matter keep their contrast.
+  // Background floor: well below Otsu's tissue split of a strided sample.
   function backgroundFloor(volume, range) {
     var data = typeof volume.getData === "function" ? volume.getData() : null;
     var lo = range[0], span = range[1] - range[0];
@@ -219,19 +530,93 @@
 
   // Grey ramp that starts at the stage colour, so empty field of view is the
   // stage itself and slice rectangles never show against it.
-  function underlayColorMap(api, range) {
-    var r0 = ((STAGE_COLOR >> 16) & 255) / 255;
-    var g0 = ((STAGE_COLOR >> 8) & 255) / 255;
-    var b0 = (STAGE_COLOR & 255) / 255;
+  function underlayColorMap(api, range, ground) {
+    var spec = GROUNDS[ground] || GROUNDS.dark;
+    var channel = function (hex, shift) { return ((hex >> shift) & 255) / 255; };
+    var lo = [channel(spec.rampLow, 16), channel(spec.rampLow, 8), channel(spec.rampLow, 0)];
+    var hi = [channel(spec.rampHigh, 16), channel(spec.rampHigh, 8), channel(spec.rampHigh, 0)];
     var colors = [];
     for (var i = 0; i < 256; i += 1) {
       var t = i / 255;
-      colors.push([r0 + (1 - r0) * t, g0 + (1 - g0) * t, b0 + (1 - b0) * t]);
+      colors.push([lo[0] + (hi[0] - lo[0]) * t, lo[1] + (hi[1] - lo[1]) * t, lo[2] + (hi[2] - lo[2]) * t]);
     }
     return new api.ColorMap(colors, { range: range, name: "Custom" });
   }
 
-  function backgroundLayer(volume) {
+  // The underlay as the static figures draw it: the head is everything not
+  // connected to the border through voxels at or below the floor (inner CSF
+  // kept, outside set to `outside`); rim voxels take a blurred copy so the
+  // 2 mm contour is smooth like the static 1 mm rim.
+  function prepareUnderlay(volume, floor, outside, inside) {
+    var data = typeof volume.getData === "function" ? volume.getData() : null;
+    var dim = volume.space && volume.space.dim;
+    if (!data || !dim || dim.length < 3 || data.length !== dim[0] * dim[1] * dim[2]) return volume;
+    var nx = dim[0], ny = dim[1], nz = dim[2], n = data.length, plane = nx * ny;
+    var low = new Uint8Array(n);
+    for (var a = 0; a < n; a += 1) low[a] = !(Number(data[a]) > floor) ? 1 : 0;
+    // Flood the outside from the border (6-connected).
+    var out = new Uint8Array(n);
+    var stack = [];
+    var seed = function (index) { if (low[index] && !out[index]) { out[index] = 1; stack.push(index); } };
+    for (var z0 = 0; z0 < nz; z0 += 1) {
+      for (var y0 = 0; y0 < ny; y0 += 1) {
+        for (var x0 = 0; x0 < nx; x0 += 1) {
+          if (x0 === 0 || y0 === 0 || z0 === 0 || x0 === nx - 1 || y0 === ny - 1 || z0 === nz - 1) {
+            seed((z0 * ny + y0) * nx + x0);
+          }
+        }
+      }
+    }
+    while (stack.length) {
+      var at = stack.pop();
+      var x = at % nx, y = Math.floor(at / nx) % ny, z = Math.floor(at / plane);
+      if (x > 0) seed(at - 1);
+      if (x < nx - 1) seed(at + 1);
+      if (y > 0) seed(at - nx);
+      if (y < ny - 1) seed(at + nx);
+      if (z > 0) seed(at - plane);
+      if (z < nz - 1) seed(at + plane);
+    }
+    var src = new Float32Array(n);
+    for (var b = 0; b < n; b += 1) {
+      var v = Number(data[b]);
+      src[b] = out[b] ? outside : Math.max(Number.isFinite(v) ? v : inside, inside);
+    }
+    var kernel = [1 / 16, 4 / 16, 6 / 16, 4 / 16, 1 / 16];
+    var pass = function (from, to, stride, count) {
+      for (var idx = 0; idx < n; idx += 1) {
+        var pos = Math.floor(idx / stride) % count;
+        var sum = 0;
+        for (var k = -2; k <= 2; k += 1) {
+          var q = Math.min(count - 1, Math.max(0, pos + k));
+          sum += kernel[k + 2] * from[idx + (q - pos) * stride];
+        }
+        to[idx] = sum;
+      }
+    };
+    var tmp = new Float32Array(n), blur = new Float32Array(n);
+    pass(src, tmp, 1, nx);
+    pass(tmp, blur, nx, ny);
+    pass(blur, tmp, plane, nz);
+    var result = src.slice();
+    for (var c = 0; c < n; c += 1) {
+      var cx = c % nx, cy = Math.floor(c / nx) % ny, cz = Math.floor(c / plane);
+      var rim = false;
+      for (var dz = -1; dz <= 1 && !rim; dz += 1) {
+        for (var dy = -1; dy <= 1 && !rim; dy += 1) {
+          for (var dx = -1; dx <= 1; dx += 1) {
+            var xx = cx + dx, yy = cy + dy, zz = cz + dz;
+            if (xx < 0 || yy < 0 || zz < 0 || xx >= nx || yy >= ny || zz >= nz) continue;
+            if (out[(zz * ny + yy) * nx + xx] !== out[c]) { rim = true; break; }
+          }
+        }
+      }
+      if (rim) result[c] = tmp[c];
+    }
+    return withData(volume, result);
+  }
+
+  function backgroundLayer(volume, ground) {
     var api = root.neuroimjs;
     var range = volume.getRange().map(Number);
     if (range.length !== 2 || !range.every(Number.isFinite)) {
@@ -242,12 +627,19 @@
     // Hold the brightest tissue below white so suprathreshold colour reads
     // against the underlay instead of competing with it.
     range = [floor, floor + (range[1] - floor) * UNDERLAY_HEADROOM];
+    var span = Math.abs(range[1] - floor) || 1;
+    volume = prepareUnderlay(volume, floor, floor - 0.25 * span, floor + 0.01 * span);
+    var spec = GROUNDS[ground] || GROUNDS.dark;
+    // On the light ground, voxels at or below the floor (outside the head)
+    // are not drawn, so the brain sits on the figure ground as in the static
+    // montage.
+    var hide = spec.hideOutside ? [Math.min(range[0], floor) - Math.abs(range[1] - floor) - 1, floor] : [0, 0];
     var layer = new api.VolLayer(
       "neuromosaic-background",
       volume,
-      underlayColorMap(api, range),
+      underlayColorMap(api, range, ground),
       range,
-      [0, 0],
+      hide,
       1
     );
     // Templates often end inside tissue (neck, lower cerebellum); fade the
@@ -259,9 +651,82 @@
     return layer;
   }
 
-  function overlayLayer(volume, map) {
+  // A volume sharing `volume`'s space with new voxel data.
+  function withData(volume, data) {
+    var Volume = volume.constructor;
+    try {
+      var made = new Volume(volume.space, data);
+      if (made.getData() === data) return made;
+    } catch (error) {
+      // Fall through to a prototype clone.
+    }
+    var clone = Object.create(Object.getPrototypeOf(volume));
+    Object.assign(clone, volume);
+    clone.data = data;
+    return clone;
+  }
+
+  // The map as displayed at `threshold`: clusters below the extent -> NaN.
+  function extentVolume(raw, map, threshold) {
+    var displayApi = root.NeuroMosaicVolumeDisplay;
+    var data = raw.getData();
+    var excluded = displayApi.extentExcluded(
+      data, raw.space.dim, threshold,
+      map.display.min_cluster_size, map.display.connectivity
+    );
+    if (!excluded) return raw;
+    var shown = data.slice();
+    var any = false;
+    for (var i = 0; i < excluded.length; i += 1) {
+      if (excluded[i]) { shown[i] = NaN; any = true; }
+    }
+    return any ? withData(raw, shown) : raw;
+  }
+
+  function thresholdKey(threshold) {
+    return Number(threshold[0]) + ":" + Number(threshold[1]);
+  }
+
+  // Re-apply the extent rule after the reader commits a new threshold.
+  function applyExtent(state) {
+    state.extentTimer = null;
+    var layer = overlayVolLayer(state);
+    var map = currentMap(state);
+    if (!layer || !map || !state.rawOverlay || !state.viewer) return;
+    var threshold = layer.getThreshold().map(Number);
+    var key = thresholdKey(threshold);
+    if (state.extentKey === key && layer.volume === state.displayVolume) return;
+    var shown = extentVolume(state.rawOverlay, map, threshold);
+    state.extentKey = key;
+    state.displayVolume = shown;
+    if (layer.volume !== shown) {
+      state.viewer.updateLayerVolume(OVERLAY_LAYER_ID, shown, {
+        range: layer.getRange().slice(),
+        threshold: threshold,
+        alpha: layer.opacity,
+        colormap: layer.colorMap
+      });
+    }
+    syncReportPalette(state, true);
+    updateLegend(state);
+    updateReadout(state);
+  }
+
+  function scheduleExtent(state) {
+    var layer = overlayVolLayer(state);
+    if (!layer) return;
+    if (thresholdKey(layer.getThreshold()) === state.extentKey) return;
+    if (state.extentTimer) clearTimeout(state.extentTimer);
+    state.extentTimer = setTimeout(function () { applyExtent(state); }, 120);
+  }
+
+  function overlayLayer(state, raw, map) {
     var api = root.neuroimjs;
-    var display = mapDisplay(map, volume);
+    var display = mapDisplay(map, raw);
+    var volume = extentVolume(raw, map, display.threshold);
+    state.rawOverlay = raw;
+    state.displayVolume = volume;
+    state.extentKey = thresholdKey(display.threshold);
     var layer = new api.VolLayer(
       OVERLAY_LAYER_ID,
       volume,
@@ -277,9 +742,11 @@
     // A dark rim on the threshold contour keeps pale near-threshold colour
     // legible against bright white matter.
     if (typeof layer.setOutline === "function") layer.setOutline(0.3);
-    // Outline only clusters of at least 10 voxels (3-D, 26-connected), so
-    // isolated specks are drawn but not contoured into confetti.
-    if (typeof layer.setMinOutlineClusterSize === "function") layer.setMinOutlineClusterSize(10);
+    // Outline only clusters that meet the report's minimum extent, so
+    // isolated specks revealed at a lower threshold are not contoured.
+    if (typeof layer.setMinOutlineClusterSize === "function") {
+      layer.setMinOutlineClusterSize(Math.max(1, Number(map.display.min_cluster_size) || 10));
+    }
     return layer;
   }
 
@@ -297,6 +764,11 @@
 
   function signed(text) {
     return String(text).replace(/^-/, MINUS);
+  }
+
+  function formatPeak(value, record) {
+    var v = record && Number.isFinite(Number(record.peak_value)) ? record.peak_value : value;
+    return root.NeuroMosaicVolumeDisplay.peakText(v, record && record.peak_digits, formatValue);
   }
 
   function formatValue(value) {
@@ -346,11 +818,29 @@
       coords.appendChild(el("span", "nm-volume-readout-voxel", "voxel " + vox.join(" ")));
     }
     var line = el("span", "nm-volume-readout-value");
-    line.appendChild(el(
+    var layer = overlayVolLayer(state);
+    var status = root.NeuroMosaicVolumeDisplay.readoutState(
+      value, rawValueAt(state, vox),
+      layer && layer.getThreshold ? layer.getThreshold().map(Number) : null,
+      map.display && map.display.min_cluster_size
+    );
+    var shown = status.kind === "shown";
+    line.dataset.state = status.kind;
+    var number = el(
       "strong", "nm-volume-readout-number",
-      value === null ? "outside map" : formatValue(value)
-    ));
-    if (map.units && value !== null) line.appendChild(el("span", "nm-volume-readout-units", map.units));
+      shown ? formatValue(status.value) : status.reason
+    );
+    if (!shown) number.classList.add("is-muted");
+    line.appendChild(number);
+    if (map.units && shown) {
+      line.appendChild(document.createTextNode(" "));
+      line.appendChild(el("span", "nm-volume-readout-units", map.units));
+    }
+    if (!shown && status.value !== null) {
+      line.appendChild(document.createTextNode(" "));
+      line.appendChild(el("span", "nm-volume-readout-hidden", "(value " + formatValue(status.value) + ")"));
+    }
+    line.appendChild(document.createTextNode(" "));
     state.clipChip = el("span", "nm-volume-readout-clip");
     state.clipChip.hidden = true;
     line.appendChild(state.clipChip);
@@ -358,9 +848,20 @@
     readout.appendChild(line);
     readout.appendChild(document.createTextNode(" "));
     readout.appendChild(coords);
-    updateLegendMarker(state, value);
+    updateLegendMarker(state, status.kind === "outside" ? null : status.value);
     updateCluster(state, coord);
     updateViewCoords(state, coord);
+  }
+
+  // The map's value at a voxel (before the extent rule); null if unknown.
+  function rawValueAt(state, voxel) {
+    var raw = state.rawOverlay;
+    var data = raw && typeof raw.getData === "function" ? raw.getData() : null;
+    var dim = raw && raw.space && raw.space.dim;
+    if (!data || !dim || !voxel) return null;
+    var i = voxel[0], j = voxel[1], k = voxel[2];
+    if (i < 0 || j < 0 || k < 0 || i >= dim[0] || j >= dim[1] || k >= dim[2]) return NaN;
+    return Number(data[(k * dim[1] + j) * dim[0] + i]);
   }
 
   function voxelOf(state, coord) {
@@ -373,8 +874,14 @@
 
   var VIEW_AXIS = { sagittal: 0, coronal: 1, axial: 2 };
 
-  // The suprathreshold cluster under the cursor: 26-connected voxels of the
-  // same sign beyond the current threshold (FSL cluster's default connectivity).
+  // Neighbour offsets for the report's cluster connectivity (6, 18 or 26).
+  function neighbourOffsets(connectivity) {
+    return root.NeuroMosaicVolumeDisplay.neighbourOffsets(connectivity);
+  }
+
+  // The suprathreshold cluster under the cursor: voxels of the same sign
+  // beyond the current threshold, joined with the connectivity the report's
+  // cluster table uses (18-connected unless the manifest says otherwise).
   function clusterAt(state, voxel) {
     var layer = overlayVolLayer(state);
     if (!layer || !voxel) return null;
@@ -391,7 +898,10 @@
     var positive = v0 >= thr[1] && v0 > 0;
     var negative = v0 <= thr[0] && v0 < 0;
     if (!(thr[0] < thr[1]) || (!positive && !negative)) return null;
-    var key = thr[0] + ":" + thr[1];
+    var map = currentMap(state);
+    var connectivity = (map && map.display && map.display.connectivity) || "18-connect";
+    var offsets = neighbourOffsets(connectivity);
+    var key = thr[0] + ":" + thr[1] + ":" + connectivity;
     var memo = state.clusterMemo;
     if (memo && memo.volume === vol && memo.key === key && memo.members[seed]) return memo.result;
     var inside = positive ?
@@ -407,18 +917,13 @@
       var v = data[idx];
       if (Math.abs(v) > Math.abs(peak)) { peak = v; peakIndex = idx; }
       var i = idx % nx, j = Math.floor(idx / nx) % ny, k = Math.floor(idx / (nx * ny));
-      for (var dk = -1; dk <= 1; dk += 1) {
-        var kk = k + dk; if (kk < 0 || kk >= nz) continue;
-        for (var dj = -1; dj <= 1; dj += 1) {
-          var jj = j + dj; if (jj < 0 || jj >= ny) continue;
-          for (var di = -1; di <= 1; di += 1) {
-            var ii = i + di; if (ii < 0 || ii >= nx) continue;
-            var n = (kk * ny + jj) * nx + ii;
-            if (members[n] || !inside(data[n])) continue;
-            members[n] = 1;
-            stack.push(n);
-          }
-        }
+      for (var o = 0; o < offsets.length; o += 1) {
+        var ii = i + offsets[o][0], jj = j + offsets[o][1], kk = k + offsets[o][2];
+        if (ii < 0 || ii >= nx || jj < 0 || jj >= ny || kk < 0 || kk >= nz) continue;
+        var n = (kk * ny + jj) * nx + ii;
+        if (members[n] || !inside(data[n])) continue;
+        members[n] = 1;
+        stack.push(n);
       }
     }
     var sp = vol.space.spacing || [1, 1, 1];
@@ -433,6 +938,26 @@
     return result;
   }
 
+  // The report cluster whose peak is the peak of the cluster under the cursor
+  // (at the report threshold the two clusters are identical).
+  function clusterRecord(state, cluster) {
+    var map = currentMap(state);
+    var records = map && Array.isArray(map.clusters) ? map.clusters : [];
+    var peak = voxelOf(state, cluster.peakWorld);
+    if (!peak || !records.length) return null;
+    return records.find(function (record) {
+      return record.voxel[0] === peak[0] && record.voxel[1] === peak[1] &&
+        record.voxel[2] === peak[2];
+    }) || null;
+  }
+
+  function atReportThreshold(state) {
+    var layer = overlayVolLayer(state);
+    var defaults = state.reportDefaults && state.reportDefaults.get(state.currentMapId);
+    if (!layer || !defaults) return true;
+    return samePair(layer.getThreshold().map(Number), defaults.threshold.map(Number));
+  }
+
   function updateCluster(state, coord) {
     var line = state.clusterLine;
     if (!line) return;
@@ -445,20 +970,32 @@
     var fmtInt = function (n) { return Math.round(n).toLocaleString("en-US"); };
     line.appendChild(el("span", "nm-volume-cluster-key", "Cluster"));
     line.appendChild(document.createTextNode(" "));
+    var record = clusterRecord(state, c);
+    if (record) {
+      var name = el("span", "nm-volume-cluster-name");
+      if (!atReportThreshold(state)) name.appendChild(el("span", "nm-volume-cluster-contains", "contains "));
+      name.appendChild(el("strong", "nm-volume-cluster-id", record.id));
+      var region = record.region + (record.hemisphere ? " (" + record.hemisphere + ")" : "");
+      name.appendChild(document.createTextNode(" \u00b7 " + region));
+      name.title = record.id + " \u00b7 " + region;
+      line.appendChild(name);
+      line.appendChild(document.createTextNode(" "));
+    }
     line.appendChild(el("span", "nm-volume-cluster-size",
       fmtInt(c.voxels) + " voxels \u00b7 " + fmtInt(c.mm3) + " mm\u00b3"));
     line.appendChild(document.createTextNode(" "));
     var atPeak = voxelOf(state, coord).join() === voxelOf(state, c.peakWorld).join();
+    var peakText = formatPeak(c.peak, record);
     var where = c.peakWorld.map(function (v) { return signed(Number(v).toFixed(1)); }).join(", ");
     if (atPeak) {
       line.appendChild(el("span", "nm-volume-cluster-atpeak",
-        "Peak " + formatValue(c.peak) + " at (" + where + ")"));
+        "Peak " + peakText + " at (" + where + ")"));
       return;
     }
-    var go = el("button", "nm-volume-cluster-peak", "Go to peak " + formatValue(c.peak));
+    var go = el("button", "nm-volume-cluster-peak", "Go to peak " + peakText);
     go.type = "button";
     go.title = "Peak at (" + where + ") mm";
-    go.setAttribute("aria-label", "Go to cluster peak " + formatValue(c.peak) + " at " + where + " mm");
+    go.setAttribute("aria-label", "Go to cluster peak " + peakText + " at " + where + " mm");
     go.addEventListener("click", function () {
       state.viewer.setWorldCoord(c.peakWorld);
       updateReadout(state);
@@ -515,8 +1052,167 @@
     if (!state.viewCoords) return;
     Object.keys(state.viewCoords).forEach(function (view) {
       var axis = VIEW_AXIS[view];
-      state.viewCoords[view].textContent =
-        ["x", "y", "z"][axis] + " " + signed(Number(coord[axis]).toFixed(1));
+      var text = ["x", "y", "z"][axis] + " " + signed(Number(coord[axis]).toFixed(1));
+      state.viewCoords[view].textContent = text;
+      var cell = state.viewerElement.querySelector('[data-nij-view="' + view + '"]');
+      if (cell) {
+        cell.setAttribute("aria-label", view.charAt(0).toUpperCase() + view.slice(1) +
+          " slice, " + text + " mm. Up and Down arrows step through the slice.");
+      }
+    });
+  }
+
+  // Keyboard stepping on a focused slice pane: Up/Right (and Page Up) move
+  // the slice forward along that pane's through-plane axis, Down/Left back.
+  // Bound in the capture phase so the runtime's hover-based handler, which
+  // steps whichever view the pointer last entered, never sees these keys.
+  function bindSliceKeys(state) {
+    var keys = {
+      ArrowUp: 1, ArrowRight: 1, PageUp: 5,
+      ArrowDown: -1, ArrowLeft: -1, PageDown: -5
+    };
+    Object.keys(VIEW_AXIS).forEach(function (view) {
+      var cell = state.viewerElement.querySelector('[data-nij-view="' + view + '"]');
+      if (!cell) return;
+      cell.setAttribute("role", "group");
+      if (!cell.hasAttribute("tabindex")) cell.tabIndex = 0;
+    });
+    var step = function (cell, steps) {
+      var axis = VIEW_AXIS[cell.dataset.nijView];
+      if (axis === undefined) return false;
+      var layer = state.stack && state.stack.getLayer(0);
+      var spacing = layer && layer.space && layer.space.spacing ?
+        Math.abs(Number(layer.space.spacing[axis])) || 1 : 1;
+      var coord = state.viewer.getWorldCoord().slice();
+      coord[axis] = Number(coord[axis]) + steps * spacing;
+      state.viewer.setWorldCoord(coord);
+      updateReadout(state);
+      return true;
+    };
+    state.onSliceKey = function (event) {
+      var steps = keys[event.key];
+      if (!steps || event.altKey || event.ctrlKey || event.metaKey) return;
+      var cell = event.target && event.target.closest ?
+        event.target.closest("[data-nij-view]") : null;
+      if (!cell || !state.viewerElement.contains(cell)) return;
+      if (VIEW_AXIS[cell.dataset.nijView] === undefined) return;
+      event.preventDefault();
+      event.stopPropagation();
+      step(cell, steps);
+    };
+    // The wheel scrolls the page; it steps a focused pane, or with Alt/Shift.
+    state.onSliceWheel = function (event) {
+      var cell = event.target && event.target.closest ?
+        event.target.closest("[data-nij-view]") : null;
+      if (!cell || !state.viewerElement.contains(cell)) return;
+      var action = root.NeuroMosaicVolumeDisplay.wheelAction({
+        focused: !!(document.activeElement && cell.contains(document.activeElement)),
+        ctrlKey: event.ctrlKey, metaKey: event.metaKey,
+        altKey: event.altKey, shiftKey: event.shiftKey,
+        deltaX: event.deltaX, deltaY: event.deltaY
+      });
+      if (action === "runtime") return;
+      // Keep it from the runtime's canvas listener (it would cancel it).
+      event.stopPropagation();
+      if (action === "page") return;
+      event.preventDefault();
+      step(cell, action);
+    };
+    state.viewerElement.addEventListener("wheel", state.onSliceWheel, { capture: true, passive: false });
+    state.viewerElement.addEventListener("keydown", state.onSliceKey, true);
+    guardRuntimeKeys(state);
+  }
+
+  // The runtime's document-level Left/Right handler steps the hovered pane
+  // and cancels the key even in a focused slider; run it only from the page
+  // or a slice pane.
+  function keyOrigin(origin, viewerElement) {
+    if (!origin || origin === document.body || origin === document.documentElement) {
+      return { isPage: true };
+    }
+    return {
+      tag: origin.tagName,
+      editable: !!origin.isContentEditable,
+      inPane: !!(viewerElement && viewerElement.contains(origin) &&
+        origin.closest && origin.closest("[data-nij-view]"))
+    };
+  }
+
+  function guardRuntimeKeys(state) {
+    // SimpleOrthogonalViewer wraps the orthogonal viewer that listens.
+    var viewer = state.viewer && typeof state.viewer.handleKeydownBound === "function" ?
+      state.viewer : (state.viewer && state.viewer.viewer);
+    if (!viewer || typeof viewer.handleKeydownBound !== "function" || viewer.__nmKeysGuarded) return;
+    var inner = viewer.handleKeydownBound;
+    document.removeEventListener("keydown", inner);
+    viewer.handleKeydownBound = function (event) {
+      var path = typeof event.composedPath === "function" ? event.composedPath() : [];
+      var origin = path.length ? path[0] : event.target;
+      if (origin && origin.nodeType !== 1) origin = origin.parentElement || null;
+      if (!root.NeuroMosaicVolumeDisplay.runtimeKeyAllowed(keyOrigin(origin, state.viewerElement))) return;
+      inner(event);
+    };
+    viewer.__nmKeysGuarded = true;
+    document.addEventListener("keydown", viewer.handleKeydownBound);
+  }
+
+  // The two-thumb slider's inputs are 0 px tall: give them the hit height and
+  // every panel slider a focus ring.
+  var SLIDER_CSS =
+    ".range-slider input[type='range'] { height: var(--rs-hit); }" +
+    ".range-slider input[type='range']::-webkit-slider-runnable-track { height: var(--rs-hit); }" +
+    ".range-slider input[type='range']::-webkit-slider-thumb { margin-top: 0; }" +
+    ".range-slider input[type='range']:focus-visible {" +
+    " outline: 2px solid var(--rs-fill) !important; outline-offset: 1px !important; border-radius: 6px; }";
+  var PANEL_CSS =
+    "input[type='range']:focus-visible { outline: 2px solid var(--nm-vv-accent, #2f6f73) !important;" +
+    " outline-offset: 2px !important; border-radius: 4px; }";
+  function styleSlider(shadowRoot, panel) {
+    if (!shadowRoot || shadowRoot.querySelector("style[data-nm-slider]")) return;
+    var style = document.createElement("style");
+    style.setAttribute("data-nm-slider", "");
+    style.textContent = panel ? PANEL_CSS : SLIDER_CSS;
+    shadowRoot.appendChild(style);
+  }
+
+  // Accessible names for the control panel's two-thumb sliders, which the
+  // runtime renders without labels inside nested shadow roots.
+  function labelSliders(state) {
+    var panel = state.controls;
+    var shadow = panel && panel.shadowRoot;
+    if (!shadow) return;
+    styleSlider(shadow, true);
+    shadow.querySelectorAll("range-slider").forEach(function (slider) {
+      var section = slider.closest(".section");
+      var labelNode = section && section.querySelector(".label");
+      var name = labelNode ? labelNode.textContent.trim() : "Range";
+      var apply = function () {
+        var inner = slider.shadowRoot;
+        if (!inner) return;
+        styleSlider(inner);
+        var inputs = inner.querySelectorAll('input[type="range"]');
+        // The panel's own state is authoritative: the inner inputs may not
+        // have received their values yet when this runs.
+        var pair = name === "Threshold" ? panel.threshold : (name === "Range" ? panel.range : null);
+        inputs.forEach(function (input, index) {
+          var which = index === 0 ? "low" : "high";
+          var current = pair && Number.isFinite(Number(pair[index])) ? pair[index] : input.value;
+          if (state.sliderStep && Number(slider.step) !== state.sliderStep) slider.step = state.sliderStep;
+          input.setAttribute("aria-label", name + " " + which);
+          input.setAttribute("aria-valuetext", name + " " + which + " " + niceTick(current));
+          if (!input.__nmLabelled) {
+            input.__nmLabelled = true;
+            input.addEventListener("input", function () {
+              input.setAttribute("aria-valuetext", name + " " + which + " " + niceTick(input.value));
+            });
+          }
+        });
+      };
+      if (slider.updateComplete && typeof slider.updateComplete.then === "function") {
+        slider.updateComplete.then(apply);
+      } else {
+        apply();
+      }
     });
   }
 
@@ -530,10 +1226,10 @@
     return null;
   }
 
-  // Same precision as the panel's numeric fields, so legend and controls agree.
+  // Scale values use the report's rounding (3 significant digits: 22.2539
+  // reads 22.3 as in captions); cursor values keep two decimals.
   function niceTick(value) {
-    var a = Math.abs(value);
-    return signed(a >= 100 ? value.toFixed(0) : value.toFixed(2));
+    return root.NeuroMosaicVolumeDisplay.reportNumber(value);
   }
 
   function buildLegend(state) {
@@ -554,6 +1250,16 @@
       reset.classList.add("nm-volume-reset-position--stage");
       head.appendChild(reset);
     }
+    var save = el("button", "nm-volume-save");
+    save.type = "button";
+    save.title = "Save the three slices and the colour key as a PNG";
+    save.setAttribute("aria-label", "Save view as PNG");
+    save.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M8 2.5v7M5 7l3 3 3-3M3 13h10"/></svg><span class="nm-volume-save-label">Save PNG</span>';
+    save.addEventListener("click", function () { exportPNG(state); });
+    head.appendChild(save);
+    state.saveButton = save;
     legend.appendChild(state.readout);
     state.clusterLine = el("p", "nm-volume-cluster");
     legend.appendChild(state.clusterLine);
@@ -576,12 +1282,42 @@
     cell.appendChild(legend);
     var coarse = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
     var sidebar = state.host.querySelector(".nm-volume-sidebar");
+    if (sidebar) buildGroundSwitch(state, sidebar);
     if (sidebar && !sidebar.querySelector(".nm-volume-hint")) {
       sidebar.appendChild(el("p", "nm-volume-hint", coarse ?
         "Tap or drag on a slice to move the cursor. L is left." :
-        "Click or drag on a slice to move the cursor; arrow keys step through slices. L is left."));
+        "Click or drag on a slice to move the cursor. With a slice focused, \u2191/\u2193 (or Page Up/Down for 5) and the scroll wheel step through it; elsewhere the wheel scrolls the page (Alt or Shift + wheel steps the slice under the pointer). L is left."));
     }
     state.legend = legend;
+  }
+
+  // "Ground: Light | Dark" in the sidebar (kept across rebuilds).
+  function buildGroundSwitch(state, sidebar) {
+    var group = sidebar.querySelector(".nm-volume-grounds");
+    if (!group) {
+      group = el("div", "nm-volume-grounds");
+      group.setAttribute("role", "group");
+      group.setAttribute("aria-label", "Slice ground");
+      group.appendChild(el("span", "nm-volume-grounds-label", "Ground"));
+      ["light", "dark"].forEach(function (ground) {
+        var button = el("button", "nm-volume-ground", ground === "light" ? "Light" : "Dark");
+        button.type = "button";
+        button.dataset.ground = ground;
+        button.title = ground === "light" ?
+          "Slices on the figure ground, as in the static montage" :
+          "Slices on a dark instrument stage";
+        button.addEventListener("click", function () {
+          if (button.getAttribute("aria-pressed") === "true") return;
+          switchGround(state.host, ground);
+        });
+        group.appendChild(button);
+      });
+      var controls = sidebar.querySelector("[data-nm-volume-controls]");
+      sidebar.insertBefore(group, controls ? controls.nextSibling : null);
+    }
+    group.querySelectorAll(".nm-volume-ground").forEach(function (button) {
+      button.setAttribute("aria-pressed", button.dataset.ground === state.ground ? "true" : "false");
+    });
   }
 
   function updateLegend(state) {
@@ -692,6 +1428,7 @@
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
+    var histInk = (GROUNDS[state.ground] || GROUNDS.dark).hist;
     var counts = histogramCounts(state, h.layer, h.lo, h.hi);
     var peak = 0;
     for (var i = 0; i < counts.length; i += 1) peak = Math.max(peak, Math.log1p(counts[i]));
@@ -702,12 +1439,12 @@
       var centre = h.lo + ((b + 0.5) / HIST_BINS) * (h.hi - h.lo);
       var hidden = h.thresholded && centre > h.threshold[0] && centre < h.threshold[1];
       var c = h.colors[Math.round(((b + 0.5) / HIST_BINS) * (h.colors.length - 1))];
-      ctx.fillStyle = hidden ? "rgba(255, 255, 255, 0.10)" :
+      ctx.fillStyle = hidden ? histInk.hidden :
         "rgba(" + Math.round(c[0] * 255) + "," + Math.round(c[1] * 255) + "," + Math.round(c[2] * 255) + ",0.85)";
       var bh = Math.max(1, (Math.log1p(counts[b]) / peak) * (cssH - 1));
       ctx.fillRect(b * bw + 0.5, cssH - bh, Math.max(1, bw - 1), bh);
     }
-    ctx.fillStyle = "rgba(255, 255, 255, 0.18)";
+    ctx.fillStyle = histInk.base;
     ctx.fillRect(0, cssH - 1, cssW, 1);
     // Cursor value, on the same x-scale as the key (pinned to the end if clipped).
     var v = state.viewer.getValue(OVERLAY_LAYER_ID);
@@ -716,16 +1453,196 @@
     if (v !== null && Number.isFinite(Number(v)) && Number(v) >= h.lo && Number(v) <= h.hi) {
       var t = (Number(v) - h.lo) / ((h.hi - h.lo) || 1);
       var x = Math.round(t * (cssW - 1)) + 0.5;
-      ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
+      ctx.fillStyle = histInk.guide;
       ctx.fillRect(x - 0.5, 0, 1, cssH - 6);
       // Caret sits on the baseline, pointing down at the key.
-      ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+      ctx.fillStyle = histInk.caret;
       ctx.beginPath();
       ctx.moveTo(x - 4.5, cssH - 6);
       ctx.lineTo(x + 4.5, cssH - 6);
       ctx.lineTo(x, cssH);
       ctx.closePath();
       ctx.fill();
+    }
+  }
+
+  // Save view (PNG): the three slices as shown, with a title line and the
+  // colour key on a light ground (whatever the page theme), for slides and
+  // lab meetings. The slices keep the ground the reader chose.
+  function paneImages(state) {
+    var cells = Array.prototype.slice.call(state.viewerElement.querySelectorAll("[data-nij-view]"));
+    var order = ["sagittal", "coronal", "axial"];
+    cells.sort(function (a, b) { return order.indexOf(a.dataset.nijView) - order.indexOf(b.dataset.nijView); });
+    return cells.map(function (cell) {
+      var view = cell.dataset.nijView;
+      var canvas = cell.querySelector("canvas");
+      if (!canvas || !canvas.width || !canvas.height) return null;
+      // Draw a fresh frame so the drawing buffer is current when copied.
+      try {
+        var app = state.viewer.viewer.getSliceViewer(view).view.app;
+        app.renderer.render(app.stage);
+      } catch (error) { /* fall back to the last presented frame */ }
+      var copy = document.createElement("canvas");
+      copy.width = canvas.width;
+      copy.height = canvas.height;
+      copy.getContext("2d").drawImage(canvas, 0, 0);
+      var axis = VIEW_AXIS[view];
+      var coord = state.viewer.getWorldCoord();
+      return {
+        image: copy,
+        label: view.charAt(0).toUpperCase() + view.slice(1) + "  " +
+          ["x", "y", "z"][axis] + " = " + signed(String(Math.round(Number(coord[axis])))) + " mm"
+      };
+    }).filter(Boolean);
+  }
+
+  // "story-gt-math_slices.png": the report's file stem for the map (the same
+  // slug as its figure downloads); other maps of a multi-map analysis keep
+  // their ids.
+  function exportName(state) {
+    var article = state.host.closest && state.host.closest("[data-nm-file-stem]");
+    var stem = article && article.getAttribute("data-nm-file-stem");
+    if (!stem || state.currentMapId !== state.analysis.primary_map_id) {
+      stem = [state.analysis.analysis_id, state.currentMapId].filter(Boolean).join("_");
+    }
+    return (stem + "_slices").replace(/[^A-Za-z0-9_.-]+/g, "-") + ".png";
+  }
+
+  function exportPNG(state) {
+    var map = currentMap(state);
+    var h = state.legendHistState;
+    if (!map || !h) return;
+    var panes = paneImages(state);
+    if (!panes.length) return;
+    var S = 2, PANE = 300, GAP = 12, PAD = 24;
+    var widths = panes.map(function (p) { return Math.round(PANE * p.image.width / p.image.height); });
+    var width = PAD * 2 + widths.reduce(function (a, b) { return a + b; }, 0) + GAP * (panes.length - 1);
+    var height = PAD + 26 + PANE + 26 + 70 + PAD;
+    var out = document.createElement("canvas");
+    out.width = width * S;
+    out.height = height * S;
+    var ctx = out.getContext("2d");
+    ctx.scale(S, S);
+    var font = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = "#16191b";
+    ctx.font = "600 15px " + font;
+    ctx.textBaseline = "alphabetic";
+    var coord = state.viewer.getWorldCoord().map(function (v) { return signed(String(Math.round(Number(v)))); });
+    ctx.fillText((map.label || map.selector_label || "") + "  \u00b7  cursor (" + coord.join(", ") + ") mm", PAD, PAD + 14);
+    var x = PAD, top = PAD + 26;
+    ctx.font = "12px " + font;
+    panes.forEach(function (pane, i) {
+      ctx.drawImage(pane.image, x, top, widths[i], PANE);
+      ctx.fillStyle = "#4a5256";
+      ctx.fillText(pane.label, x, top + PANE + 17);
+      x += widths[i] + GAP;
+    });
+    // Colour key: the viewer's own scale, threshold band hatched as on the page.
+    var keyTop = top + PANE + 40, keyH = 12, CAP = 9;
+    var keyW = Math.min(360, width - 2 * PAD - 2 * CAP);
+    var KX = PAD + CAP;
+    ctx.fillStyle = "#16191b";
+    ctx.font = "600 12px " + font;
+    ctx.fillText(map.legend_title || map.units || "Value", PAD, keyTop - 6);
+    var values = [];
+    for (var q = 0; q < keyW; q += 1) values.push(h.lo + ((q + 0.5) / keyW) * (h.hi - h.lo));
+    var keyColors = h.layer && h.layer.colorMap && typeof h.layer.colorMap.getColors === "function" ?
+      h.layer.colorMap.getColors(values) : null;
+    var n = h.colors.length;
+    for (var k = 0; k < keyW; k += 1) {
+      var value = values[k];
+      var hidden = h.thresholded && value > h.threshold[0] && value < h.threshold[1];
+      var c = keyColors ? keyColors[k] : h.colors[Math.min(n - 1, Math.floor((k / keyW) * n))];
+      ctx.fillStyle = hidden ? (((k % 6) < 2) ? "#c4c8c5" : "#efefeb") :
+        "rgb(" + Math.round(c[0] * 255) + "," + Math.round(c[1] * 255) + "," + Math.round(c[2] * 255) + ")";
+      ctx.fillRect(KX + k, keyTop, 1, keyH);
+    }
+    ctx.strokeStyle = "#8a9296";
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(KX, keyTop, keyW, keyH);
+    // Cap triangles, as on the page: data beyond the colour scale's ends
+    // take the end colour.
+    var extentRange = h.layer && typeof h.layer.getVolumeRange === "function" ?
+      h.layer.getVolumeRange().map(Number) : null;
+    var endColor = function (end) {
+      var c = keyColors ? keyColors[end ? keyW - 1 : 0] : h.colors[end ? n - 1 : 0];
+      return "rgb(" + Math.round(c[0] * 255) + "," + Math.round(c[1] * 255) + "," + Math.round(c[2] * 255) + ")";
+    };
+    [[0, extentRange && extentRange[0] < h.lo], [1, extentRange && extentRange[1] > h.hi]].forEach(function (cap) {
+      if (!cap[1]) return;
+      var edge = cap[0] ? KX + keyW : KX;
+      var tip = cap[0] ? edge + CAP : edge - CAP;
+      ctx.beginPath();
+      ctx.moveTo(edge, keyTop);
+      ctx.lineTo(tip, keyTop + keyH / 2);
+      ctx.lineTo(edge, keyTop + keyH);
+      ctx.closePath();
+      ctx.fillStyle = endColor(cap[0]);
+      ctx.fill();
+      ctx.stroke();
+    });
+    state.lastExportCaps = [Boolean(extentRange && extentRange[0] < h.lo), Boolean(extentRange && extentRange[1] > h.hi)];
+    ctx.fillStyle = "#4a5256";
+    ctx.font = "11px " + font;
+    var ticks = [h.lo, h.hi];
+    if (h.thresholded) {
+      if (h.threshold[0] > h.lo) ticks.push(h.threshold[0]);
+      if (h.threshold[1] < h.hi) ticks.push(h.threshold[1]);
+    }
+    ticks.forEach(function (t) {
+      var tx = KX + ((t - h.lo) / ((h.hi - h.lo) || 1)) * keyW;
+      var label = niceTick(t);
+      var w = ctx.measureText(label).width;
+      ctx.fillText(label, Math.max(PAD, Math.min(KX + keyW - w, tx - w / 2)), keyTop + keyH + 14);
+    });
+    var sym = /^\s*z/i.test(map.legend_title || "") ? "z" : (map.units || "value");
+    var extent = Number(map.display && map.display.min_cluster_size);
+    var note = root.NeuroMosaicVolumeDisplay.exportNote({
+      modified: state.host.dataset.nmVolumeModified === "true",
+      threshold: h.thresholded ? h.threshold : null,
+      extent: extent,
+      symbol: sym,
+      lo: h.lo,
+      hi: h.hi
+    });
+    state.lastExportNote = note;
+    // Wrap the note to the image width (at most two lines).
+    var words = note.split(" "), lines = [""];
+    words.forEach(function (word) {
+      var next = lines[lines.length - 1] ? lines[lines.length - 1] + " " + word : word;
+      if (ctx.measureText(next).width > width - 2 * PAD && lines[lines.length - 1]) lines.push(word);
+      else lines[lines.length - 1] = next;
+    });
+    lines.slice(0, 2).forEach(function (line, index) {
+      ctx.fillText(line, PAD, keyTop + keyH + 34 + index * 15);
+    });
+    var name = exportName(state);
+    var finish = function (url) {
+      var anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      var live = state.host.querySelector("[data-nm-volume-live]");
+      if (live) live.textContent = "Saved " + name + ".";
+      if (state.saveButton) {
+        state.saveButton.dataset.done = "true";
+        setTimeout(function () { if (state.saveButton) delete state.saveButton.dataset.done; }, 1600);
+      }
+    };
+    state.lastExport = { name: name, width: out.width, height: out.height };
+    if (typeof out.toBlob === "function") {
+      out.toBlob(function (blob) {
+        if (!blob) { finish(out.toDataURL("image/png")); return; }
+        var url = URL.createObjectURL(blob);
+        finish(url);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+      }, "image/png");
+    } else {
+      finish(out.toDataURL("image/png"));
     }
   }
 
@@ -802,7 +1719,7 @@
     if (modified) {
       setStatus(
         state,
-        "Display modified for " + state.currentMapId +
+        "Display modified for " + ((currentMap(state) || {}).label || state.currentMapId) +
           " (exploratory only; static results are unchanged).",
         "modified"
       );
@@ -849,9 +1766,14 @@
     state.switchingMap = true;
     setStatus(state, "Loading " + map.label + "...", "loading");
     try {
-      var volume = await decodeAsset(state, map.asset_id, false);
-      root.neuroimjs.assertSameVolumeGeometry(state.backgroundVolume, volume);
-      var display = mapDisplay(map, volume);
+      var raw = await decodeAsset(state, map.asset_id, false);
+      root.neuroimjs.assertSameVolumeGeometry(state.backgroundVolume, raw);
+      var display = mapDisplay(map, raw);
+      var volume = extentVolume(raw, map, display.threshold);
+      state.rawOverlay = raw;
+      state.displayVolume = volume;
+      state.extentKey = thresholdKey(display.threshold);
+      state.menuMap = map;
       state.viewer.updateLayerVolume(OVERLAY_LAYER_ID, volume, {
         range: display.range,
         threshold: display.threshold,
@@ -865,11 +1787,16 @@
       var defaults = state.controls.setDefaultsFromCurrent(OVERLAY_LAYER_ID);
       state.reportDefaults.set(mapId, copyControlState(defaults));
       var saved = state.mapStates.get(mapId);
-      if (saved) state.controls.applyState(saved);
+      if (saved) {
+        state.controls.applyState(saved);
+        applyExtent(state);
+      }
       state.mapSelect.value = mapId;
+      state.host.dataset.nmVolumeMap = mapId;
       updateLauncherTarget(state.host, map);
       updateLegend(state);
       updateReadout(state);
+      labelSliders(state);
       updateModifiedState(
         state, state.controls.getState(OVERLAY_LAYER_ID)
       );
@@ -882,6 +1809,7 @@
 
   async function createViewer(host) {
     var scene = sceneFor(host);
+    if (needsServer(scene)) fail(FILE_MESSAGE);
     var analysis = analysisFor(scene, host.dataset.nmVolumeAnalysis);
     var viewerElement = host.querySelector("[data-nm-volume-viewer]");
     var controlsElement = host.querySelector("[data-nm-volume-controls]");
@@ -906,7 +1834,9 @@
       switchingMap: false
     };
     states.set(host, state);
-    setStatus(state, "Loading interactive view...", "loading");
+    // A parked viewer resumes in place: its status line keeps its text so
+    // nothing on the page moves while it rebuilds.
+    if (!isParked(host)) setStatus(state, "Loading interactive view...", "loading");
 
     var backgroundAsset = assetFor(scene, scene.background.asset_id);
     var primary = analysis.maps.find(function (map) {
@@ -921,10 +1851,16 @@
     ]);
     root.neuroimjs.assertSameVolumeGeometry(volumes[0], volumes[1]);
 
+    state.menuMap = initialMap;
+    var ground = groundOf(host);
+    var look = GROUNDS[ground];
+    state.ground = ground;
+    host.dataset.nmVolumeGround = ground;
     var stack = new root.neuroimjs.VolStack(
-      backgroundLayer(volumes[0]),
-      overlayLayer(volumes[1], initialMap)
+      backgroundLayer(volumes[0], ground),
+      overlayLayer(state, volumes[1], initialMap)
     );
+    var restoreConsole = quietPixiDeprecations();
     state.viewer = await root.neuroimjs.SimpleOrthogonalViewer.create(
       state.viewerElement,
       stack,
@@ -938,25 +1874,25 @@
         stackBelowPx: 520,
         stackedLegendHeightPx: 292,
         stackMode: "single",
-        backgroundColor: STAGE_COLOR,
+        backgroundColor: look.stage,
         focusOutline: null,
         crosshairOptions: {
-          crossColor: 0xffffff,
-          crossAlpha: 0.58,
+          crossColor: look.cross,
+          crossAlpha: look.crossAlpha,
           crossThickness: 1,
           crosshairGap: 22,
-          haloColor: 0x000000,
-          haloAlpha: 0.35
+          haloColor: look.halo,
+          haloAlpha: look.haloAlpha
         },
         orientationLabelOptions: {
           fontSize: 11,
           fontWeight: "600",
           fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
           letterSpacing: 0.6,
-          color: 0xe6eaec,
-          alpha: 0.6,
+          color: look.label,
+          alpha: look.labelAlpha,
           strokeWidth: 0,
-          shadowAlpha: 0.9,
+          shadowAlpha: look.labelShadow,
           shadowBlur: 3,
           margin: 5,
           anchor: "image"
@@ -964,6 +1900,9 @@
       }
     );
     state.stack = stack;
+    // Orientation labels are built on the first frames; release the console
+    // filter once those have rendered.
+    requestAnimationFrame(function () { requestAnimationFrame(restoreConsole); });
     var bounds = headBounds(volumes[0]);
     if (bounds && typeof state.viewer.setFitBounds === "function") state.viewer.setFitBounds(bounds);
     Array.prototype.forEach.call(state.viewerElement.children, function (element, index) {
@@ -973,6 +1912,8 @@
     buildLegend(state);
     buildViewCoords(state);
     buildViewSwitch(state);
+    bindSliceKeys(state);
+    bindSliceDrag(state);
     if (typeof ResizeObserver !== "undefined" && state.legend) {
       state.legendObserver = new ResizeObserver(function () {
         if (state.legendTicks) hideCrowdedTicks(state.legendTicks);
@@ -983,6 +1924,7 @@
     state.viewer.setWorldCoord(analysis.initial_world_coord);
 
     state.controls = new root.neuroimjs.LayerControlPanel();
+    customizeControls(state);
     state.controls.visibleControls = visibleControls(state, initialMap);
     state.controls.volStack = stack;
     state.controls.viewer = state.viewer;
@@ -992,6 +1934,7 @@
     var initialDefaults = state.controls.setDefaultsFromCurrent(
       OVERLAY_LAYER_ID
     );
+    labelSliders(state);
 
     analysis.maps.forEach(function (map) {
       var option = document.createElement("option");
@@ -1011,6 +1954,16 @@
       state.mapStates.set(state.currentMapId, snapshot);
       updateModifiedState(state, snapshot);
       updateLegend(state);
+      labelSliders(state);
+      updateReadout(state);
+      // A new colour range re-splits the palette now (threshold: applyExtent).
+      var layer = overlayVolLayer(state);
+      if (layer && thresholdKey(layer.getThreshold()) === state.extentKey &&
+          state.paletteKey !== thresholdKey(layer.getThreshold()) + "|" + thresholdKey(layer.getRange())) {
+        syncReportPalette(state, true);
+        updateLegend(state);
+      }
+      scheduleExtent(state);
     };
     state.controls.addEventListener(
       "layer-control-change", state.onControlChange
@@ -1028,6 +1981,7 @@
     state.mapSelect.addEventListener("change", state.onMapSelectChange);
     state.offCoord = state.viewer.onCoordChange(function () {
       updateReadout(state);
+      announcePeak(state);
     });
     state.onResetPosition = function () {
       state.viewer.setWorldCoord(analysis.initial_world_coord);
@@ -1036,42 +1990,552 @@
     if (state.resetPosition) {
       state.resetPosition.addEventListener("click", state.onResetPosition);
     }
+    restoreMemo(state);
     updateLegend(state);
     updateReadout(state);
-    updateModifiedState(state, initialDefaults);
+    updateModifiedState(state, state.controls.getState(OVERLAY_LAYER_ID));
     host.dataset.nmVolumeReady = "true";
+    applyPendingCoord(state);
     return state;
+  }
+
+  // What a reader set up in a viewer that was released (to free WebGL
+  // contexts) or hidden: cursor and per-map display changes come back on
+  // the next open.
+  function saveMemo(state) {
+    if (!state || !state.viewer || !state.currentMapId) return;
+    try {
+      var mapStates = new Map(state.mapStates);
+      if (state.controls) {
+        mapStates.set(state.currentMapId, copyControlState(state.controls.getState(OVERLAY_LAYER_ID)));
+      }
+      state.host.__nmMemo = {
+        mapId: state.currentMapId,
+        coord: state.viewer.getWorldCoord().slice(),
+        mapStates: mapStates
+      };
+    } catch (error) {
+      state.host.__nmMemo = null;
+    }
+  }
+
+  function restoreMemo(state) {
+    var memo = state.host.__nmMemo;
+    state.host.__nmMemo = null;
+    if (!memo || memo.mapId !== state.currentMapId) return;
+    state.mapStates = memo.mapStates;
+    var defaults = state.reportDefaults.get(state.currentMapId);
+    var saved = memo.mapStates.get(state.currentMapId);
+    if (saved && !sameControlState(saved, defaults)) {
+      try {
+        state.switchingMap = true;
+        state.controls.applyState(saved);
+        applyExtent(state);
+      } catch (error) {
+        // A saved state the new viewer rejects falls back to the report display.
+      } finally {
+        state.switchingMap = false;
+      }
+    }
+    if (!state.host.__nmPendingCoord && Array.isArray(memo.coord)) {
+      state.viewer.setWorldCoord(memo.coord);
+    }
+  }
+
+  // A requested cursor position (for example from a peak-table row) that
+  // arrived before the viewer finished loading.
+  function applyPendingCoord(state) {
+    var pending = state.host.__nmPendingCoord;
+    if (pending) {
+      state.host.__nmPendingCoord = null;
+      state.viewer.setWorldCoord(pending);
+      updateReadout(state);
+    }
+    announcePeak(state);
+  }
+
+  // Peak-table jumps are announced once, by the report page; the viewer
+  // stays quiet so screen readers do not hear the jump twice.
+  function announcePeak(state) {
+    if (state && state.host) state.host.__nmAnnounce = null;
+  }
+
+  // Reader-facing control panel policy: a curated colour-map menu with plain
+  // names for the map's scale, and threshold entries clamped to the data,
+  // mirrored while "Link symmetric" is pressed.
+  function customizeControls(state) {
+    var panel = state.controls;
+    var displayApi = root.NeuroMosaicVolumeDisplay;
+    panel.colormapNamesIncluding = function (name) {
+      var map = state.menuMap || currentMap(state);
+      return displayApi.colormapMenu(map && map.display.scale, name);
+    };
+    // The map's own values bound the threshold (a cut beyond every voxel hides
+    // the map); the sliders' domain also reaches the colour range, so the
+    // shared cap (which may exceed this map's data) stays representable.
+    var dataRange = function () {
+      var layer = overlayVolLayer(state);
+      var range = layer && typeof layer.getVolumeRange === "function" ?
+        layer.getVolumeRange() : (panel.volumeRange || [0, 1]);
+      return range.map(Number);
+    };
+    var thresholdDomain = function () {
+      var range = dataRange();
+      var bound = Math.max(Math.abs(range[0]), Math.abs(range[1]));
+      return range[0] < 0 && range[1] > 0 ? [-bound, bound] : range;
+    };
+    var clamp = function (v) {
+      var domain = thresholdDomain();
+      return Math.max(domain[0], Math.min(domain[1], v));
+    };
+    panel.clampToThresholdDomain = clamp;
+    var widen = function () {
+      var layer = overlayVolLayer(state);
+      if (!layer) return;
+      var data = dataRange();
+      var range = layer.getRange().map(Number);
+      // Rounded outward to the slider grid so arrow-key steps land on round
+      // values (an input's step base is its minimum).
+      var grid = displayApi.sliderGrid(Math.min(data[0], range[0]), Math.max(data[1], range[1]));
+      var lo = grid.min;
+      var hi = grid.max;
+      state.sliderStep = grid.step;
+      var current = panel.volumeRange || [];
+      if (Number.isFinite(lo) && Number.isFinite(hi) && (current[0] !== lo || current[1] !== hi)) {
+        panel.volumeRange = [lo, hi];
+      }
+    };
+    state.widenControls = widen;
+    // Unlinked thresholds keep a valid band: low never above high, and for
+    // a two-sided map low <= 0 <= high (one cut per sign).
+    var orderBand = function (pair, which) {
+      var map = currentMap(state) || state.menuMap;
+      var range = dataRange();
+      var twoSided = Boolean(map && map.display && map.display.tail === "two_sided" &&
+        range[0] < 0 && range[1] > 0);
+      return displayApi.orderThresholdBand(pair, which, twoSided);
+    };
+    var thresholdInput = function (which) {
+      return function (event) {
+        var value = panel.readField(event);
+        if (value === undefined) return;
+        var bound = Math.max.apply(null, thresholdDomain().map(Math.abs));
+        var current = panel.threshold.slice();
+        if (panel.thresholdLinked) {
+          var r = Math.min(Math.abs(value), bound);
+          panel.threshold = [-r, r];
+        } else {
+          panel.threshold = orderBand(which === "low" ?
+            [clamp(value), current[1]] : [current[0], clamp(value)], which);
+        }
+        panel.applyThreshold();
+        // The field shows the clamped value even when the state is unchanged.
+        if (event.target) {
+          event.target.value = panel.fmt(panel.threshold[which === "low" ? 0 : 1]);
+        }
+      };
+    };
+    panel.onThresholdLowInput = thresholdInput("low");
+    panel.onThresholdHighInput = thresholdInput("high");
+    // A colour-range end typed past the other end is rejected (the field
+    // returns to the current value) instead of inverting the colour scale.
+    var rangeInput = function (which, original) {
+      return function (event) {
+        var value = panel.readField(event);
+        if (value === undefined) return;
+        var kept = displayApi.rejectCrossedRange(panel.range.map(Number), which, value);
+        if (kept) {
+          if (event.target) {
+            event.target.value = panel.fmt(kept[which === "low" ? 0 : 1]);
+            event.target.setAttribute("aria-invalid", "true");
+            setTimeout(function () { event.target.removeAttribute("aria-invalid"); }, 1600);
+          }
+          var live = state.host.querySelector("[data-nm-volume-live]");
+          if (live) {
+            live.textContent = "Range " + which + " must stay " + (which === "low" ? "below " : "above ") +
+              niceTick(kept[which === "low" ? 1 : 0]) + "; kept " + niceTick(kept[which === "low" ? 0 : 1]) + ".";
+          }
+          return;
+        }
+        original.call(panel, event);
+      };
+    };
+    panel.onRangeLowInput = rangeInput("low", panel.onRangeLowInput);
+    panel.onRangeHighInput = rangeInput("high", panel.onRangeHighInput);
+    var onThresholdUpdate = panel.onThresholdUpdate;
+    panel.onThresholdUpdate = function (event) {
+      var before = panel.threshold.slice();
+      onThresholdUpdate.call(panel, event);
+      if (panel.thresholdLinked) return;
+      var which = panel.threshold[1] !== before[1] ? "high" : "low";
+      var fixed = orderBand(panel.threshold, which);
+      if (!samePair(fixed, panel.threshold.map(Number))) {
+        panel.threshold = fixed;
+        panel.applyThreshold();
+      }
+    };
+    // "Reset to defaults" restores the report display, including the linked
+    // (symmetric) threshold the report opened with.
+    var resetToDefaults = panel.resetToDefaults;
+    panel.resetToDefaults = function () {
+      var out = resetToDefaults.apply(panel, arguments);
+      if (typeof panel.syncThresholdLink === "function") panel.syncThresholdLink(true);
+      widen();
+      return out;
+    };
+    var selectLayer = panel.selectLayer;
+    panel.selectLayer = function () {
+      var out = selectLayer.apply(panel, arguments);
+      widen();
+      return out;
+    };
+    panel.fmt = function (value) { return niceTick(value); };
+    // The panel reads the shared preset registry while handling input (reset,
+    // colour-map choice); make it hold this viewer's colours first.
+    state.onPanelIntent = function () { syncReportPalette(state, false); };
+    ["pointerdown", "keydown"].forEach(function (type) {
+      state.controlsElement.addEventListener(type, state.onPanelIntent, true);
+    });
+  }
+
+  // Drop PixiJS's collapsed "Deprecation Warning" group (orientation labels)
+  // while the viewer mounts; every other message passes through.
+  function quietPixiDeprecations() {
+    var original = {
+      groupCollapsed: console.groupCollapsed,
+      groupEnd: console.groupEnd,
+      warn: console.warn
+    };
+    var inGroup = false, skipNext = 0;
+    var isPixi = function (value) {
+      return typeof value === "string" && value.indexOf("PixiJS Deprecation Warning") >= 0;
+    };
+    console.groupCollapsed = function (first) {
+      if (isPixi(first)) { inGroup = true; return; }
+      return original.groupCollapsed.apply(console, arguments);
+    };
+    console.groupEnd = function () {
+      if (inGroup) { inGroup = false; return; }
+      return original.groupEnd.apply(console, arguments);
+    };
+    console.warn = function (first) {
+      if (inGroup) return;
+      if (skipNext) { skipNext -= 1; return; }
+      if (isPixi(first)) { skipNext = 1; return; }
+      return original.warn.apply(console, arguments);
+    };
+    return function restore() {
+      console.groupCollapsed = original.groupCollapsed;
+      console.groupEnd = original.groupEnd;
+      console.warn = original.warn;
+    };
+  }
+
+  // Dragging on a slice moves the cursor: while the primary button is held,
+  // each animation frame replays the latest pointer position to the pane's
+  // own click handling.
+  function bindSliceDrag(state) {
+    var drag = null, frame = 0;
+    state.onDragDown = function (event) {
+      if (event.__nmReplay || event.button !== 0) return;
+      var canvas = event.target;
+      if (!canvas || canvas.tagName !== "CANVAS" || !canvas.closest("[data-nij-view]")) return;
+      drag = { canvas: canvas, pointerId: event.pointerId, pointerType: event.pointerType };
+    };
+    state.onDragMove = function (event) {
+      if (!drag || event.__nmReplay || event.pointerId !== drag.pointerId) return;
+      if (!(event.buttons & 1)) { drag = null; return; }
+      drag.x = event.clientX;
+      drag.y = event.clientY;
+      if (frame) return;
+      frame = requestAnimationFrame(function () {
+        frame = 0;
+        if (!drag || drag.x === undefined) return;
+        var box = drag.canvas.getBoundingClientRect();
+        if (drag.x < box.left || drag.x > box.right || drag.y < box.top || drag.y > box.bottom) return;
+        var replay = new PointerEvent("pointerdown", {
+          bubbles: true, cancelable: true, clientX: drag.x, clientY: drag.y,
+          button: 0, buttons: 1, pointerId: drag.pointerId,
+          pointerType: drag.pointerType, isPrimary: true
+        });
+        replay.__nmReplay = true;
+        drag.canvas.dispatchEvent(replay);
+      });
+    };
+    state.onDragEnd = function () { drag = null; };
+    state.viewerElement.addEventListener("pointerdown", state.onDragDown, true);
+    document.addEventListener("pointermove", state.onDragMove, true);
+    document.addEventListener("pointerup", state.onDragEnd, true);
+    document.addEventListener("pointercancel", state.onDragEnd, true);
+  }
+
+  // Displayed: the reader chose Slices for this map (it may be off screen).
+  function isShown(host) {
+    var shell = host.querySelector("[data-nm-volume-shell]");
+    if (host.hidden || !host.getClientRects().length) return false;
+    return isParked(host) || (Boolean(shell) && !shell.hidden);
+  }
+
+  function isParked(host) {
+    return host.dataset.nmVolumePaused === "true";
+  }
+
+  function glKey(host) {
+    return "volume:" + (host.dataset.nmVolumeAnalysis || "");
+  }
+
+  var GL_COST = 3;
+
+  // Register (or refresh) this viewer in the page's WebGL budget.
+  function touchBudget(host) {
+    GL.touch({
+      key: glKey(host),
+      cost: 3,
+      element: host,
+      shown: function () { return isShown(host); },
+      release: function () { release(host); }
+    });
+  }
+
+  // Free the viewer's contexts, keeping what the reader set up for later. A
+  // viewer that is still the chosen view keeps its place on the page (no
+  // layout shift) and resumes when it is next on screen.
+  function release(host) {
+    var state = states.get(host);
+    var keepPlace = Boolean(state && state.viewer && state.shell && !state.shell.hidden && isShown(host));
+    var height = keepPlace ? state.shell.getBoundingClientRect().height : 0;
+    if (state) saveMemo(state);
+    dispose(host, { keepMemo: true });
+    if (keepPlace) park(host, height, false);
+  }
+
+  // Rebuild the viewer on the other ground, keeping the cursor and any
+  // display change (the same path as a budget release and resume).
+  async function switchGround(host, ground) {
+    host.dataset.nmVolumeGroundChoice = ground;
+    try { if (root.localStorage) root.localStorage.setItem(GROUND_KEY, ground); } catch (error) { /* per-view only */ }
+    var state = states.get(host);
+    if (!state || !state.viewer) return;
+    var height = state.shell.getBoundingClientRect().height;
+    saveMemo(state);
+    dispose(host, { keepMemo: true });
+    park(host, height, false);
+    GL.unpark(glKey(host));
+    try {
+      await activate(host);
+      var button = host.querySelector('.nm-volume-ground[data-ground="' + ground + '"]');
+      if (button) button.focus();
+      var live = host.querySelector("[data-nm-volume-live]");
+      if (live) live.textContent = "Slices shown on a " + ground + " ground.";
+    } catch (error) {
+      unpark(host);
+    }
+  }
+
+  var PAUSED_TEXT = "Paused to free graphics memory; it resumes when it is back on screen.";
+  var BLOCKED_TEXT = "Paused: too many interactive views are open on this page. Return another map to Static, or resume this one now.";
+  var LOST_TEXT = "Paused: the browser reclaimed this view's graphics memory several times. Resume when ready.";
+
+  // blocked: false (off screen), "budget" or "lost" (repeated context loss).
+  function pausedText(blocked) {
+    if (blocked === "lost") return LOST_TEXT;
+    return blocked ? BLOCKED_TEXT : PAUSED_TEXT;
+  }
+
+  // A resumed view takes focus on its first slice pane (reading order).
+  function focusFirstPane(host) {
+    var cells = Array.prototype.slice.call(host.querySelectorAll("[data-nij-view]"))
+      .filter(function (c) { return c.getClientRects().length; });
+    cells.sort(function (a, b) {
+      var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      return (ra.top - rb.top) || (ra.left - rb.left);
+    });
+    var target = cells[0] || host.querySelector("[data-nm-volume-toggle]");
+    if (target && typeof target.focus === "function") target.focus({ preventScroll: true });
+  }
+
+  function park(host, height, blocked) {
+    host.dataset.nmVolumePaused = "true";
+    var holder = host.querySelector("[data-nm-volume-paused]");
+    if (!holder) {
+      holder = el("div", "nm-volume-paused");
+      holder.setAttribute("data-nm-volume-paused", "");
+      var text = el("p", "nm-volume-paused-text");
+      var button = el("button", "nm-volume-paused-resume", "Resume interactive view");
+      button.type = "button";
+      button.addEventListener("click", function () { resume(host, true); });
+      holder.append(text, button);
+      var shell = host.querySelector("[data-nm-volume-shell]");
+      shell.parentNode.insertBefore(holder, shell);
+    }
+    if (height > 0) holder.style.height = Math.round(height) + "px";
+    holder.querySelector(".nm-volume-paused-text").textContent = pausedText(blocked);
+    holder.hidden = false;
+    // The toggle keeps claiming the open view (its label must not reflow).
+    var toggle = host.querySelector("[data-nm-volume-toggle]");
+    if (toggle) {
+      toggle.setAttribute("aria-expanded", "true");
+      toggle.textContent = "Hide interactive view";
+    }
+    if (blocked) GL.unpark(glKey(host));
+    else GL.park({ key: glKey(host), element: host, resume: function () { resume(host, false); } });
+  }
+
+  function unpark(host) {
+    GL.unpark(glKey(host));
+    if (!isParked(host)) return;
+    delete host.dataset.nmVolumePaused;
+    var holder = host.querySelector("[data-nm-volume-paused]");
+    if (holder) holder.hidden = true;
+  }
+
+  // Rebuild a parked viewer: only while it is on screen, and only when its
+  // contexts fit the budget (a reader's click may go up to the hard limit).
+  async function resume(host, byReader) {
+    if (!isParked(host) || host.__nmActivating) return;
+    if (host.hidden || !host.getClientRects().length) { unpark(host); collapse(host); return; }
+    if (!byReader && !GL.onScreen(host)) return;
+    if (!GL.reserve(glKey(host), GL_COST) && !byReader) {
+      park(host, 0, "budget");
+      return;
+    }
+    GL.unpark(glKey(host));
+    var holder = host.querySelector("[data-nm-volume-paused]");
+    var hadFocus = !!(byReader && holder && holder.contains(document.activeElement));
+    if (holder) holder.querySelector(".nm-volume-paused-text").textContent = "Resuming the interactive view\u2026";
+    if (byReader) host.__nmLosses = [];
+    try {
+      await activate(host);
+      if (byReader && (hadFocus || document.activeElement === document.body || !document.activeElement)) {
+        focusFirstPane(host);
+      }
+    } catch (error) {
+      unpark(host);
+    }
   }
 
   async function activate(host) {
     var state = states.get(host);
+    if (state && state.viewer && GL.isLost(state.viewerElement)) {
+      // The browser reclaimed this viewer's contexts; rebuild it.
+      dispose(host, { keepMemo: false });
+      state = null;
+    }
     if (state && state.viewer) {
       state.shell.hidden = false;
+      unpark(host);
+      if (typeof state.viewer.handleResize === "function") state.viewer.handleResize();
+      touchBudget(host);
+      applyPendingCoord(state);
       return state;
     }
-    try {
-      state = await createViewer(host);
-      state.shell.hidden = false;
-      return state;
-    } catch (error) {
-      var status = host.querySelector("[data-nm-volume-status]");
-      dispose(host);
-      status.textContent = "Interactive view unavailable: " + error.message +
-        " The static panel remains authoritative.";
-      status.dataset.state = "error";
-      host.dataset.nmVolumeFailed = "true";
-      throw error;
-    }
+    if (host.__nmActivating) return host.__nmActivating;
+    host.__nmActivating = (async function () {
+      try {
+        if (!root.neuroimjs) {
+          var status = host.querySelector("[data-nm-volume-status]");
+          status.textContent = "Loading the interactive viewer…";
+          status.dataset.state = "loading";
+        }
+        if (needsServer(sceneFor(host))) fail(FILE_MESSAGE);
+        await ensureRuntime();
+        // Free room first, so creating these contexts never makes the
+        // browser drop someone else's.
+        GL.reserve(glKey(host), GL_COST);
+        var created = await createViewer(host);
+        unpark(host);
+        created.shell.hidden = false;
+        touchBudget(host);
+        return created;
+      } catch (error) {
+        var status = host.querySelector("[data-nm-volume-status]");
+        unpark(host);
+        dispose(host);
+        var message = readerMessage(error);
+        status.textContent = message;
+        status.dataset.state = "error";
+        host.dataset.nmVolumeFailed = "true";
+        // The view router returns to the static figures and says why.
+        host.dispatchEvent(new CustomEvent("nm-viewer-failed", {
+          detail: { analysisId: host.dataset.nmVolumeAnalysis, view: "slices", message: message },
+          bubbles: true
+        }));
+        throw error;
+      } finally {
+        host.__nmActivating = null;
+      }
+    }());
+    return host.__nmActivating;
   }
+
+  // The browser took this viewer's contexts (it never does for a viewer we
+  // released ourselves). Rebuild only a viewer the reader can see, only when
+  // it fits the budget, and at most twice in 15 s; anything else waits,
+  // parked, for the reader to come back to it.
+  document.addEventListener("webglcontextlost", function (event) {
+    var canvas = event.target;
+    if (!canvas || canvas.__nmReleased || !canvas.closest) return;
+    var host = canvas.closest("[data-nm-volume-host]");
+    if (!host || !states.get(host)) return;
+    if (host.__nmRemountTimer) return;
+    host.__nmRemountTimer = setTimeout(function () {
+      host.__nmRemountTimer = null;
+      var state = states.get(host);
+      if (!state || !state.viewer) return;
+      if (!isShown(host)) {
+        // A hidden viewer is rebuilt by activate() on its next open.
+        release(host);
+        return;
+      }
+      var now = Date.now();
+      host.__nmLosses = (host.__nmLosses || []).filter(function (t) { return now - t < 15000; });
+      host.__nmLosses.push(now);
+      var height = state.shell.getBoundingClientRect().height;
+      release(host);
+      if (!GL.onScreen(host)) return;
+      if (host.__nmLosses.length > 2) {
+        park(host, height, "lost");
+        return;
+      }
+      if (!GL.reserve(glKey(host), GL_COST)) {
+        park(host, height, "budget");
+        return;
+      }
+      resume(host, false);
+    }, 0);
+  }, true);
 
   function bindHost(host) {
     if (host.dataset.nmVolumeBound === "true") return;
     host.dataset.nmVolumeBound = "true";
     var button = host.querySelector("[data-nm-volume-toggle]");
     var shell = host.querySelector("[data-nm-volume-shell]");
+    if (!host.querySelector("[data-nm-volume-live]")) {
+      var live = el("p", "nm-volume-live");
+      live.setAttribute("data-nm-volume-live", "");
+      live.setAttribute("aria-live", "polite");
+      live.setAttribute("role", "status");
+      host.appendChild(live);
+    }
+    // When the view router hides this panel (3D surface or Static), collapse
+    // it so the toggle never claims an open view. The viewer keeps its state
+    // and reappears instantly on the next open.
+    if (typeof MutationObserver !== "undefined") {
+      new MutationObserver(function () {
+        if (!host.hidden) return;
+        if (isParked(host)) { unpark(host); collapse(host); return; }
+        if (!shell.hidden) collapse(host);
+      }).observe(host, { attributes: true, attributeFilter: ["hidden"] });
+    }
     button.addEventListener("click", async function () {
-      if (!shell.hidden) {
+      if (!shell.hidden || isParked(host)) {
+        unpark(host);
         dispose(host);
+        // Tell the view router (surface bridge) so its radios stay in sync.
+        host.dispatchEvent(new CustomEvent("nm-volume-hidden", {
+          detail: { analysisId: host.dataset.nmVolumeAnalysis },
+          bubbles: true
+        }));
         return;
       }
       button.disabled = true;
@@ -1086,6 +2550,16 @@
         button.disabled = false;
       }
     });
+  }
+
+  function collapse(host) {
+    var shell = host.querySelector("[data-nm-volume-shell]");
+    var button = host.querySelector("[data-nm-volume-toggle]");
+    if (shell) shell.hidden = true;
+    if (button) {
+      button.setAttribute("aria-expanded", "false");
+      button.textContent = "Explore volume interactively";
+    }
   }
 
   function initAll(container) {
@@ -1113,14 +2587,36 @@
     }
   }
 
-  function dispose(host) {
+  function dispose(host, options) {
     var state = states.get(host);
+    if (!(options && options.keepMemo)) {
+      if (state) saveMemo(state);
+    }
+    GL.drop(glKey(host));
     if (state) {
       if (state.legendObserver) state.legendObserver.disconnect();
       if (state.viewSwitchObserver) state.viewSwitchObserver.disconnect();
       if (state.viewSwitch) state.viewSwitch.remove();
       restoreSidebarNodes(state);
       if (typeof state.offCoord === "function") state.offCoord();
+      if (state.extentTimer) clearTimeout(state.extentTimer);
+      if (state.onPanelIntent && state.controlsElement) {
+        ["pointerdown", "keydown"].forEach(function (type) {
+          state.controlsElement.removeEventListener(type, state.onPanelIntent, true);
+        });
+      }
+      if (state.onDragDown && state.viewerElement) {
+        state.viewerElement.removeEventListener("pointerdown", state.onDragDown, true);
+        document.removeEventListener("pointermove", state.onDragMove, true);
+        document.removeEventListener("pointerup", state.onDragEnd, true);
+        document.removeEventListener("pointercancel", state.onDragEnd, true);
+      }
+      if (state.onSliceKey && state.viewerElement) {
+        state.viewerElement.removeEventListener("keydown", state.onSliceKey, true);
+      }
+      if (state.onSliceWheel && state.viewerElement) {
+        state.viewerElement.removeEventListener("wheel", state.onSliceWheel, { capture: true });
+      }
       if (state.controls && state.onControlChange) {
         state.controls.removeEventListener(
           "layer-control-change", state.onControlChange
@@ -1132,9 +2628,25 @@
       if (state.resetPosition && state.onResetPosition) {
         state.resetPosition.removeEventListener("click", state.onResetPosition);
       }
-      if (state.viewer) state.viewer.dispose();
+      if (state.viewer) {
+        var canvases = state.viewerElement ?
+          Array.prototype.slice.call(state.viewerElement.querySelectorAll("canvas")) : [];
+        // neuroimjs 0.4.0 schedules onResize two frames after a resize and
+        // does not check for disposal; a viewer released right after its
+        // panel was hidden would then draw into destroyed graphics.
+        ["axial", "coronal", "sagittal"].forEach(function (view) {
+          try {
+            var pane = state.viewer.viewer.getSliceViewer(view).view;
+            if (pane) pane.onResize = function () {};
+          } catch (error) { /* no such pane */ }
+        });
+        try { state.viewer.dispose(); } catch (error) { /* lost context */ }
+        GL.loseContexts(canvases);
+      }
       if (state.overlayCache) state.overlayCache.clear();
       state.backgroundVolume = null;
+      state.rawOverlay = null;
+      state.displayVolume = null;
       states.delete(host);
     }
     var shell = host.querySelector("[data-nm-volume-shell]");
@@ -1175,6 +2687,24 @@
     });
   });
 
+  // Move the cursor of an analysis's viewer, e.g. from a peak-table row:
+  // detail { analysisId, world: [x, y, z] }. Applied now when the viewer is
+  // open, otherwise as soon as it next opens.
+  document.addEventListener("nm-volume-goto", function (event) {
+    var detail = event.detail || {};
+    var world = Array.isArray(detail.world) ? detail.world.map(Number) : null;
+    if (!detail.analysisId || !world || world.length !== 3 ||
+        !world.every(Number.isFinite)) return;
+    document.querySelectorAll("[data-nm-volume-host]").forEach(function (host) {
+      if (host.dataset.nmVolumeAnalysis !== detail.analysisId) return;
+      host.__nmPendingCoord = world;
+      var state = states.get(host);
+      if (state && state.viewer && host.dataset.nmVolumeReady === "true") {
+        applyPendingCoord(state);
+      }
+    });
+  });
+
   root.NeuroMosaicVolumeReport = {
     version: ADAPTER_VERSION,
     runtimeVersion: RUNTIME_VERSION,
@@ -1186,6 +2716,11 @@
       return selectMap(state, mapId);
     },
     getState: function (host) { return states.get(host); },
+    exportPNG: function (host) {
+      var state = states.get(host);
+      if (state && state.viewer) exportPNG(state);
+    },
+    ensureRuntime: ensureRuntime,
     dispose: dispose
   };
 

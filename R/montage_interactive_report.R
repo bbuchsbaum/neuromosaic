@@ -1,7 +1,7 @@
 # Materialization and HTML emission for optional interactive volume reports.
 
 .montage_neuroimjs_version <- "0.4.0"
-.montage_neuroimjs_adapter_version <- "1.2.0"
+.montage_neuroimjs_adapter_version <- "1.4.0"
 .montage_volume_runtime_dir <- file.path(
   "htmlwidgets", "lib", "neuromosaic-volume"
 )
@@ -45,6 +45,10 @@
   ref_prefix <- if (temporary_assets) "" else file.path(
     companion_name, "interactive", "volumes"
   )
+  # Assets carry every value inside the analysis support. The browser applies
+  # the manifest's cluster extent itself at whatever threshold is shown, with
+  # the report's connectivity, so lowering the threshold never reveals holes
+  # where sub-extent clusters were.
   support_masks <- lapply(as.character(manifest$map_id), function(map_id) {
     report_data$panels[[map_id]][["volume"]]$support_mask
   })
@@ -109,6 +113,12 @@
   )
   json <- .montage_volume_scene_json(scene)
   scene_id <- paste0("nm-volume-scene-", .montage_md5_text(json))
+  # Bundle reports load the ~1 MB neuroimjs runtime on first use from the
+  # companion folder instead of inlining it in the page.
+  runtime_ref <- if (temporary_assets) NULL else file.path(
+    companion_name, "interactive", "runtime",
+    paste0("neuroimjs-", .montage_neuroimjs_version, ".umd.js")
+  )
   bundle_files <- if (temporary_assets) {
     character()
   } else {
@@ -135,6 +145,7 @@
       scene_id = scene_id,
       payloads = payloads,
       bundle_files = bundle_files,
+      runtime_ref = runtime_ref,
       summary = summary,
       engine_version = .montage_neuroimjs_version,
       adapter_version = .montage_neuroimjs_adapter_version,
@@ -202,7 +213,8 @@
       .montage_volume_scene_map(
         row = row,
         metadata = metadata,
-        asset_id = bundle$maps[[map_id]]$asset$asset_id
+        asset_id = bundle$maps[[map_id]]$asset$asset_id,
+        peak_table = panels[[map_id]][["peak_table"]]
       )
     })
     primary <- panels[[group$primary_map_id]][["volume"]]
@@ -211,7 +223,10 @@
     } else if (identical(interactive$initial_position, "center")) {
       .montage_geometry_center(bundle$background$asset$geometry)
     } else {
-      primary$initial_world_coord
+      .montage_volume_scene_p1_coord(
+        panels[[group$primary_map_id]][["peak_table"]],
+        bundle$background$asset$geometry
+      ) %||% primary$initial_world_coord
     }
     list(
       analysis_id = as.character(group$analysis_id),
@@ -242,7 +257,8 @@
   )
 }
 
-.montage_volume_scene_map <- function(row, metadata, asset_id) {
+.montage_volume_scene_map <- function(row, metadata, asset_id,
+                                      peak_table = NULL) {
   units <- metadata$units
   if (is.null(units) || is.na(units) || !nzchar(units)) units <- NULL
   selector_label <- metadata$selector_label
@@ -269,21 +285,109 @@
       },
       tail = metadata$tail,
       palette = metadata$palette,
-      alpha = as.numeric(metadata$alpha),
+      # The report palette is drawn opaque above threshold in every view.
+      alpha = if (.nm_is_palette(metadata$palette) &&
+                  identical(metadata$display_mode, "thresholded")) {
+        max(as.numeric(metadata$alpha), 0.92)
+      } else {
+        as.numeric(metadata$alpha)
+      },
       alpha_mode = metadata$alpha_mode,
       support = if (metadata$support %in% c("analysis", "primary")) {
         metadata$support
       } else {
         "analysis"
       },
-      units = units
+      units = units,
+      connectivity = metadata$connectivity %||% "18-connect",
+      min_cluster_size = as.integer(metadata$min_cluster_size %||% 1L),
+      palette_colors = if (.nm_is_palette(metadata$palette)) {
+        nm_palette_colors(
+          as.numeric(metadata$limits),
+          threshold = if (identical(metadata$display_mode, "continuous")) {
+            0
+          } else {
+            as.numeric(metadata$threshold)
+          },
+          palette = metadata$palette
+        )
+      } else {
+        NULL
+      }
     ),
     status = list(
       state = metadata$status,
       n_display_voxels = as.integer(metadata$n_display_voxels)
     ),
-    selector_label = selector_label
+    selector_label = selector_label,
+    clusters = .montage_volume_scene_clusters(peak_table)
   )
+}
+
+# Every report cluster (not only the rows the table shows) with its peak voxel
+# and table region text, so the viewer can name the cluster under the cursor.
+.montage_volume_scene_clusters <- function(peak_table) {
+  clusters <- attr(peak_table, "all_clusters") %||% peak_table
+  needed <- c("cluster_id", "sign", "peak_x", "peak_y", "peak_z")
+  if (!is.data.frame(clusters) || nrow(clusters) == 0L ||
+      !all(needed %in% names(clusters))) {
+    return(NULL)
+  }
+  clusters <- as.data.frame(clusters, stringsAsFactors = FALSE)
+  region <- as.character(.montage_report_region_text(clusters))
+  region[is.na(region) | !nzchar(region)] <- "outside atlas"
+  hemisphere <- if ("hemisphere" %in% names(clusters)) {
+    as.character(clusters$hemisphere)
+  } else {
+    rep(NA_character_, nrow(clusters))
+  }
+  hemisphere[is.na(hemisphere) |
+    !hemisphere %in% c("left", "right", "midline")] <- ""
+  voxel <- cbind(clusters$peak_x, clusters$peak_y, clusters$peak_z)
+  # Peaks equal at 2 dp but different unrounded print with 3-4 dp, as in the
+  # table; the viewer reads the digits from here.
+  digits <- if ("max_stat" %in% names(clusters)) {
+    .montage_report_tie_digits(clusters$max_stat)
+  } else {
+    rep(2L, nrow(clusters))
+  }
+  keep <- !is.na(clusters$cluster_id) &
+    as.character(clusters$sign) %in% c("positive", "negative") &
+    stats::complete.cases(voxel)
+  out <- lapply(which(keep), function(i) {
+    rec <- list(
+      id = as.character(clusters$cluster_id[[i]]),
+      sign = as.character(clusters$sign[[i]]),
+      # Zero-based (i, j, k), the browser's voxel indexing.
+      voxel = as.integer(voxel[i, ]) - 1L,
+      region = region[[i]],
+      hemisphere = hemisphere[[i]]
+    )
+    if (digits[[i]] > 2L) {
+      # R's rounding, as printed in the table (JS toFixed rounds differently).
+      rec$peak_digits <- as.integer(digits[[i]])
+      rec$peak_value <- round(as.numeric(clusters$max_stat[[i]]), digits[[i]])
+    }
+    rec
+  })
+  if (length(out)) out else NULL
+}
+
+# The peak of cluster P1, the first row of the map's peak table: viewers open
+# where the table starts. NULL when the map has no positive cluster.
+.montage_volume_scene_p1_coord <- function(peak_table, geometry) {
+  clusters <- .montage_volume_scene_clusters(peak_table)
+  if (is.null(clusters)) return(NULL)
+  positive <- Filter(function(x) identical(x$sign, "positive"), clusters)
+  if (!length(positive)) return(NULL)
+  number <- suppressWarnings(as.numeric(gsub("\\D+", "", vapply(
+    positive, `[[`, character(1), "id"
+  ))))
+  number[is.na(number)] <- Inf
+  first <- positive[[order(number)[[1L]]]]
+  affine <- matrix(as.numeric(geometry$affine), nrow = 4L, ncol = 4L)
+  world <- as.numeric(affine %*% c(first$voxel, 1))
+  world[seq_len(3L)] / world[[4L]]
 }
 
 .montage_geometry_center <- function(geometry) {
@@ -302,7 +406,11 @@
     digits = NA,
     pretty = FALSE
   )
-  .montage_json_script_escape(as.character(json))
+  # Region labels carry "\u00b7" and "\u2248"; keep the page ASCII-safe in any
+  # output locale (\uXXXX escapes are plain JSON).
+  .montage_ascii_escape(
+    .montage_json_script_escape(enc2utf8(as.character(json))), "js"
+  )
 }
 
 .montage_json_script_escape <- function(x) {
@@ -317,9 +425,14 @@
     stop("Interactive report data are malformed.", call. = FALSE)
   }
   runtime_dir <- .montage_volume_runtime_path()
-  runtime <- .montage_read_inline_asset(file.path(
-    runtime_dir, paste0("neuroimjs-", .montage_neuroimjs_version, ".umd.js")
-  ))
+  runtime_ref <- x$runtime_ref
+  runtime <- if (is.null(runtime_ref)) {
+    .montage_read_inline_asset(file.path(
+      runtime_dir, paste0("neuroimjs-", .montage_neuroimjs_version, ".umd.js")
+    ))
+  } else {
+    ""
+  }
   geometry <- .montage_read_inline_asset(file.path(runtime_dir, "geometry.js"))
   display <- .montage_read_inline_asset(file.path(runtime_dir, "display.js"))
   adapter <- .montage_read_inline_asset(file.path(runtime_dir, "adapter.js"))
@@ -335,9 +448,22 @@
       .montage_html_escape(payload$id), '">', payload$base64, "</script>\n"
     )
   }, character(1))
+  runtime_html <- if (is.null(runtime_ref)) {
+    paste0("<script data-nm-volume-runtime>\n", runtime, "\n</script>\n")
+  } else {
+    # The adapter injects this script on the first "Slices" open.
+    paste0(
+      '<script type="application/json" data-nm-volume-runtime-src>',
+      .montage_json_script_escape(as.character(jsonlite::toJSON(
+        list(src = runtime_ref, version = .montage_neuroimjs_version),
+        auto_unbox = TRUE
+      ))),
+      "</script>\n"
+    )
+  }
   paste0(
     "<style data-nm-volume-runtime>\n", css, "\n</style>\n",
-    "<script data-nm-volume-runtime>\n", runtime, "\n</script>\n",
+    runtime_html,
     "<script data-nm-volume-geometry>\n", geometry, "\n</script>\n",
     "<script data-nm-volume-display>\n", display, "\n</script>\n",
     "<script data-nm-volume-adapter>\n", adapter, "\n</script>\n",
@@ -363,6 +489,23 @@
   primary_map_label <- primary_map$label
   if (is.null(primary_map_label) || !nzchar(primary_map_label)) {
     primary_map_label <- primary_map$selector_label
+  }
+  # One map needs no chooser: name it as text and keep a hidden select for the
+  # adapter's state.
+  map_field <- if (length(analysis$maps) > 1L) {
+    paste0(
+      '<label class="nm-volume-map-field" for="', safe_id, '-map">Map</label>\n',
+      '<select class="nm-volume-map-select" id="', safe_id, '-map" ',
+      'data-nm-volume-map></select>\n'
+    )
+  } else {
+    paste0(
+      '<p class="nm-volume-map-field nm-volume-map-field--single">',
+      '<span class="nm-volume-map-key">Map</span> <span class="nm-volume-map-name">',
+      .montage_html_escape(primary_map_label), '</span></p>\n',
+      '<select class="nm-volume-map-select" data-nm-volume-map hidden ',
+      'aria-hidden="true" tabindex="-1"></select>\n'
+    )
   }
   summary <- x$summary
   payload_size <- if (identical(summary$packaging, "embed")) {
@@ -401,12 +544,12 @@
     '" data-nm-volume-shell hidden>\n',
     '<div class="nm-volume-viewer" data-nm-volume-viewer ',
     'aria-label="Orthogonal volume viewer"></div>\n',
-    '<aside class="nm-volume-sidebar" aria-label="Interactive map controls">\n',
-    '<label class="nm-volume-map-field">Map</label>\n',
-    '<select class="nm-volume-map-select" data-nm-volume-map ',
-    'aria-label="Interactive map"></select>\n',
-    '<p class="nm-volume-readout" data-nm-volume-readout ',
-    'aria-live="polite"></p>\n',
+    '<aside class="nm-volume-sidebar" aria-label="Slice view controls: ',
+    .montage_html_escape(primary_map_label), '">\n',
+    map_field,
+    # Not a live region: the readout changes on every pointer move. Peak
+    # jumps are announced once, by the report page.
+    '<p class="nm-volume-readout" data-nm-volume-readout></p>\n',
     '<button type="button" class="nm-volume-reset-position" ',
     'data-nm-volume-reset-position>Reset to report position</button>\n',
     '<div class="nm-volume-controls" data-nm-volume-controls></div>\n',

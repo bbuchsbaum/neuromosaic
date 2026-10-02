@@ -117,7 +117,9 @@ test_that("montage_surface validates its portable display contract", {
   expect_identical(config$preset, "report")
   expect_null(config$height)
   expect_identical(config$layout, "anatomical")
-  expect_identical(config$view, "oblique")
+  # The 3D view opens on the static strip's first panel (lateral left).
+  expect_identical(config$view, "left")
+  expect_identical(montage_surface(view = "oblique")$view, "oblique")
   expect_identical(config$anatomy, "sulcal_depth")
   expect_identical(config$oblique, "auto")
   expect_equal(montage_surface(oblique = c(-120, 20))$oblique, c(-120, 20))

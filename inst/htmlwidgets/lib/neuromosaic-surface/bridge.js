@@ -6,6 +6,164 @@
   // the browser map selection in step with the static report selectors.
   var display = window.NeuroMosaicSurfaceDisplay;
 
+  // <nm-gl-budget> -- identical in neuromosaic-volume/adapter.js and
+  // neuromosaic-surface/bridge.js; whichever script runs first installs it.
+  // Browsers kill the oldest WebGL context past a page-wide pool (16 in
+  // Chrome). Keep at most BUDGET live by releasing least recently used
+  // viewers that are not visible; a released chosen view is "parked" (keeps
+  // its height) and is rebuilt only on screen and within the budget.
+  var GL = (function (scope) {
+    var VERSION = 2;
+    var existing = scope.NeuroMosaicGL;
+    if (existing && existing.version >= VERSION) return existing;
+    var BUDGET = 8;
+    var HARD = 14;
+    var MARGIN = 120;
+    var live = [];
+    var parked = [];
+    var observer = null;
+    var proto = typeof HTMLCanvasElement !== "undefined" && HTMLCanvasElement.prototype;
+    // Remember each canvas's WebGL context so releasing it never has to ask
+    // getContext() (which would create a context on a bare canvas).
+    if (proto && !proto.getContext.__nmTracked) {
+      var getContext = proto.getContext;
+      var tracked = function (type) {
+        var context = getContext.apply(this, arguments);
+        if (context && /webgl/.test(String(type)) && !this.__nmGL) this.__nmGL = context;
+        return context;
+      };
+      tracked.__nmTracked = true;
+      proto.getContext = tracked;
+    }
+    // On screen: displayed and within MARGIN px of the viewport.
+    function onScreen(element) {
+      if (!element || element.hidden || !element.getClientRects().length) return false;
+      var box = element.getBoundingClientRect();
+      var height = scope.innerHeight || (document.documentElement && document.documentElement.clientHeight) || 0;
+      return box.width > 0 && box.height > 0 && box.bottom > -MARGIN && box.top < height + MARGIN;
+    }
+    // Visible: the chosen view and (when the entry names its element) on
+    // screen.
+    function visible(entry) {
+      try {
+        return Boolean(entry.shown()) && (!entry.element || onScreen(entry.element));
+      } catch (error) {
+        return false;
+      }
+    }
+    function total(exceptKey) {
+      return live.reduce(function (sum, entry) {
+        return entry.key === exceptKey ? sum : sum + entry.cost;
+      }, 0);
+    }
+    function find(list, key) {
+      for (var i = 0; i < list.length; i += 1) if (list[i].key === key) return list[i];
+      return null;
+    }
+    function drop(key) {
+      live = live.filter(function (entry) { return entry.key !== key; });
+    }
+    function unpark(key) {
+      parked = parked.filter(function (entry) { return entry.key !== key; });
+    }
+    // Release least recently used viewers that are not visible until `need`
+    // more contexts fit under BUDGET. `keep` is never released; its own live
+    // contexts count unless it is about to be rebuilt (`replacing`).
+    function trim(need, keep, replacing) {
+      var sum = total(replacing ? keep : null);
+      for (var i = 0; sum + need > BUDGET && i < live.length;) {
+        var entry = live[i];
+        if (entry.key === keep || visible(entry)) { i += 1; continue; }
+        live.splice(i, 1);
+        sum -= entry.cost;
+        try { entry.release(); } catch (error) { /* already gone */ }
+      }
+      return sum;
+    }
+    function watch(element) {
+      if (!element || typeof IntersectionObserver === "undefined") return;
+      if (!observer) {
+        observer = new IntersectionObserver(function (records) {
+          records.forEach(function (record) {
+            if (record.isIntersecting) {
+              var waiting = parked.filter(function (entry) { return entry.element === record.target; });
+              waiting.forEach(function (entry) {
+                // Let a fast scroll pass by before rebuilding anything.
+                setTimeout(function () {
+                  if (find(parked, entry.key) === entry && onScreen(entry.element)) {
+                    try { entry.resume(); } catch (error) { /* reported by the viewer */ }
+                  }
+                }, 150);
+              });
+            } else if (total() > BUDGET) {
+              trim(0, null);
+            }
+          });
+        }, { rootMargin: MARGIN + "px 0px" });
+      }
+      if (!element.__nmGLWatched) {
+        element.__nmGLWatched = true;
+        observer.observe(element);
+      }
+    }
+    var api = scope.NeuroMosaicGL = {
+      version: VERSION,
+      budget: BUDGET,
+      hard: HARD,
+      onScreen: onScreen,
+      // Register (or refresh) a live viewer as most recently used:
+      // { key, cost, element, shown(), release() }.
+      touch: function (entry) {
+        drop(entry.key);
+        unpark(entry.key);
+        live.push(entry);
+        watch(entry.element);
+        trim(0, entry.key);
+      },
+      drop: drop,
+      // Make room for `cost` new contexts for `key`. True when they fit
+      // without passing HARD (visible viewers are never released for it).
+      reserve: function (key, cost) {
+        return trim(cost, key, true) + cost <= HARD;
+      },
+      // A released viewer that is still the chosen view waits here until it
+      // is back on screen: { key, element, resume() }.
+      park: function (entry) {
+        unpark(entry.key);
+        parked.push(entry);
+        watch(entry.element);
+      },
+      unpark: unpark,
+      isParked: function (key) { return Boolean(find(parked, key)); },
+      live: function () { return total(null); },
+      keys: function () { return live.map(function (entry) { return entry.key; }); },
+      isLost: function (canvases) {
+        if (!canvases) return false;
+        if (typeof canvases.querySelectorAll === "function") canvases = canvases.querySelectorAll("canvas");
+        return Array.prototype.some.call(canvases, function (canvas) {
+          return Boolean(canvas.__nmGL && canvas.__nmGL.isContextLost());
+        });
+      },
+      // Hand each context back to the browser now rather than at garbage
+      // collection, so the pool is free for the next viewer.
+      loseContexts: function (canvases) {
+        if (!canvases) return;
+        if (typeof canvases.querySelectorAll === "function") canvases = canvases.querySelectorAll("canvas");
+        Array.prototype.forEach.call(canvases, function (canvas) {
+          var context = canvas.__nmGL;
+          if (!context || context.isContextLost()) return;
+          canvas.__nmReleased = true;
+          var ext = context.getExtension("WEBGL_lose_context");
+          if (ext) ext.loseContext();
+        });
+      }
+    };
+    return api;
+  }(typeof globalThis !== "undefined" ? globalThis : window));
+  // </nm-gl-budget>
+
+  var FILE_MESSAGE = "Interactive views need the report served over HTTP \u2014 open the shared link, or ask the author for the single-file version.";
+
   var BRAIN_VIEWS = [
     { id: "oblique", label: "Overview", title: "Overview: the angle that shows the most of this map" },
     { sep: true },
@@ -54,7 +212,10 @@
 
   // A short unit such as "z" or "t" doubles as the variable name.
   function symbolFor(legend) {
-    return legend.units && legend.units.length <= 3 ? legend.units : "value";
+    if (legend.units && legend.units.length <= 3) return legend.units;
+    // "Z-statistic", "z", "t-statistic": name the statistic, not "value".
+    var m = /^\s*([zZtTfF])(?:[- ]?stat(?:istic)?)?\s*$/.exec(legend.title || "");
+    return m ? m[1].toLowerCase() : "value";
   }
 
   function reportGroup(analysisId) {
@@ -86,17 +247,25 @@
     host.__nmSurfaceStatusTimer = window.setTimeout(function () { setStatus(host, null); }, 3500);
   }
 
+  // A failed surface hands the map back to its static figures; the router
+  // says why in one line. Without a router the in-viewer note explains.
   function showFallback(host, error) {
-    var fallback = part(host, "author-fallback");
     var widget = host.querySelector(".nm-surface-widget");
     if (widget) widget.setAttribute("data-nm-surface-failed", "true");
+    setStatus(host, null);
+    var analysisId = host.getAttribute("data-nm-surface-analysis");
+    var router = document.querySelector('[data-nm-view-router="' + CSS.escape(analysisId) + '"]');
+    if (router && typeof router.__nmFallBack === "function") {
+      router.__nmFallBack("surface", surfaceMessage(error));
+      return;
+    }
+    var fallback = part(host, "author-fallback");
     if (fallback) {
+      if (!fallback.__nmBase) fallback.__nmBase = fallback.textContent;
+      fallback.textContent = fallback.__nmBase + " " + surfaceMessage(error);
       fallback.hidden = false;
-      if (error) fallback.textContent = fallback.textContent + " " + error.message;
-      setStatus(host, null);
     } else {
-      setStatus(host, "error", "Interactive surface unavailable; use the static montage above." +
-        (error ? " " + error.message : ""));
+      setStatus(host, "error", surfaceMessage(error));
     }
   }
 
@@ -258,6 +427,11 @@
 
   // Colour bar --------------------------------------------------------------
   function colorStops(colorMapId) {
+    // Report palettes are drawn from the report's own colours, so the key
+    // matches the static figure's key exactly.
+    if (reportPalettes[colorMapId]) {
+      return reportPalettes[colorMapId].map(function (hex) { return display.hexRgb(hex) || [0, 0, 0]; });
+    }
     var api = window.surfview && window.surfview.ColorMap;
     if (!api || typeof api.generatePreset !== "function") return null;
     try {
@@ -300,10 +474,11 @@
       for (var y = 0; y < height; y += 1) {
         var o = (y * width + x) * 4;
         if (hidden) {
-          // Hatched band: "not shown", distinct from any data colour.
+          // Hatched band: "not shown", in the static key's #EFEFEB / #C4C8C5.
           var stripe = ((x + y * 3) % 12) < 3;
-          var g = stripe ? 196 : 232;
-          image.data[o] = g; image.data[o + 1] = g; image.data[o + 2] = g;
+          image.data[o] = stripe ? 196 : 239;
+          image.data[o + 1] = stripe ? 200 : 239;
+          image.data[o + 2] = stripe ? 197 : 235;
         } else {
           image.data[o] = channel(color[0]);
           image.data[o + 1] = channel(color[1]);
@@ -313,6 +488,7 @@
       }
     }
     ctx.putImageData(image, 0, 0);
+    drawCaps(host, box, stops, range);
 
     var legend = legendFor(host);
     var title = legend.title || layer.label || "";
@@ -325,13 +501,13 @@
     // End labels hang inward from the bar ends, so keep about 48 CSS px
     // between tick positions at any legend width.
     var gap = Math.min(0.45, 48 / Math.max(1, ticks.clientWidth || 160));
-    ticks.replaceChildren.apply(ticks, display.legendTicks(range, mask, gap).map(function (tick) {
+    ticks.replaceChildren.apply(ticks, display.legendLabels(range, mask, gap).map(function (tick) {
       var node = document.createElement("span");
-      var position = (tick - range[0]) / (range[1] - range[0]);
+      var position = (tick.value - range[0]) / (range[1] - range[0]);
       node.style.left = (position * 100) + "%";
       if (position < 0.02) node.style.transform = "none";
       if (position > 0.98) node.style.transform = "translateX(-100%)";
-      node.textContent = fmt(tick);
+      node.textContent = tick.label;
       return node;
     }));
     var note = box.querySelector("[data-nm-legend-note]");
@@ -350,6 +526,28 @@
     }
   }
 
+  // Triangles at the bar ends mark data beyond the colour range, painted in
+  // the end colour, as on the static key.
+  function drawCaps(host, box, stops, range) {
+    var data = dataRange(host, currentLayerId(host));
+    var wrap = box.querySelector(".nm-sv-barwrap");
+    [["low", 0], ["high", stops.length - 1]].forEach(function (end) {
+      var cap = wrap.querySelector(".nm-sv-cap-" + end[0]);
+      if (!cap) {
+        cap = document.createElement("span");
+        cap.className = "nm-sv-cap nm-sv-cap-" + end[0];
+        cap.setAttribute("aria-hidden", "true");
+        wrap.appendChild(cap);
+      }
+      var beyond = data && (end[0] === "low" ? data[0] < range[0] : data[1] > range[1]);
+      cap.hidden = !beyond;
+      var c = stops[end[1]];
+      cap.style.background = "rgb(" + channel(c[0]) + "," + channel(c[1]) + "," + channel(c[2]) + ")";
+    });
+    box.setAttribute("data-caps",
+      (data && data[0] < range[0] ? "low " : "") + (data && data[1] > range[1] ? "high" : ""));
+  }
+
   function markLegend(host, value) {
     var marker = host.querySelector(".nm-sv-marker");
     var range = host.__nmSurfaceLegendRange;
@@ -361,6 +559,66 @@
     var position = Math.max(0, Math.min(1, (value - range[0]) / (range[1] - range[0])));
     marker.style.left = (position * 100) + "%";
     marker.hidden = false;
+  }
+
+  // Colour maps ---------------------------------------------------------------
+  var REPORT_PALETTE_PREFIX = "nm-signed-";
+  // Report palettes by colour-map id, as hex colours low -> high.
+  var reportPalettes = {};
+
+  function manifestLayers(host) {
+    if (!host.__nmSurfaceLayers) {
+      var node = document.getElementById(host.getAttribute("data-nm-surface-manifest"));
+      var layers = {};
+      try { layers = JSON.parse((node && node.textContent) || "{}").layers || {}; } catch (error) { layers = {}; }
+      var list = Array.isArray(layers) ? layers : Object.keys(layers).map(function (key) {
+        return layers[key];
+      });
+      host.__nmSurfaceLayers = {};
+      list.forEach(function (layer) { if (layer && layer.id) host.__nmSurfaceLayers[layer.id] = layer; });
+    }
+    return host.__nmSurfaceLayers;
+  }
+
+  function layerMetadata(host, layerId) {
+    var layer = manifestLayers(host)[layerId];
+    return (layer && layer.metadata) || {};
+  }
+
+  // The finite data range of a layer, when the report recorded it.
+  function dataRange(host, layerId) {
+    return display.pair(layerMetadata(host, layerId).data_range);
+  }
+
+  // Register each layer's report palette (threshold-saturated, so specific
+  // to its threshold and cap) before any viewer reads the preset list.
+  // surfview hands colour-map values to WebGL as linear light and the
+  // renderer encodes its output as sRGB, so the report's sRGB colours are
+  // decoded to linear here; otherwise every overlay renders lighter (dark
+  // red #B40426 would show as pink).
+  function hexToLinearRgb(hex) {
+    var h = String(hex).replace("#", "");
+    return [0, 2, 4].map(function (i) {
+      var c = parseInt(h.substr(i, 2), 16) / 255;
+      return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    });
+  }
+
+  function registerReportPalettes() {
+    var api = window.surfview && window.surfview.ColorMap;
+    var presets = api && typeof api.getPresetMaps === "function" ? api.getPresetMaps() : null;
+    document.querySelectorAll("[data-nm-surface-host]").forEach(function (host) {
+      var layers = manifestLayers(host);
+      Object.keys(layers).forEach(function (id) {
+        var layer = layers[id];
+        var colors = layer.metadata && layer.metadata.palette_colors;
+        if (!Array.isArray(colors) || colors.length < 2 ||
+            typeof layer.colorMap !== "string" ||
+            layer.colorMap.indexOf(REPORT_PALETTE_PREFIX) !== 0) return;
+        reportPalettes[layer.colorMap] = colors;
+        if (presets) presets[layer.colorMap] = display.bleedGap(colors).map(hexToLinearRgb);
+      });
+    });
   }
 
   // Display popover ---------------------------------------------------------
@@ -384,9 +642,9 @@
     var scalar = layer.scalarMapping;
     var palette = part(host, "palette");
     if (palette && scalar) {
-      var options = (scalar.availableColorMaps || []).filter(function (option) {
-        return option.availability && option.availability.enabled;
-      });
+      var range0 = defaults.displayRange;
+      var signed = Boolean(range0 && range0[0] < 0 && range0[1] > 0);
+      var options = display.curateColorMaps(scalar.availableColorMaps || [], scalar.colorMap.id, signed);
       var signature = options.map(function (option) { return option.id; }).join("\u0001");
       if (palette.getAttribute("data-options") !== signature) {
         palette.setAttribute("data-options", signature);
@@ -406,6 +664,9 @@
       setNumber(host, "threshold-low", mask[0]);
       setNumber(host, "threshold-high", mask[1]);
       setNumber(host, "threshold-abs", Math.max(Math.abs(mask[0]), Math.abs(mask[1])));
+      var data = dataRange(host, layerId);
+      var absInput = part(host, "threshold-abs");
+      if (absInput && data) absInput.max = display.formatNumber(Math.max(Math.abs(data[0]), Math.abs(data[1])));
       var fieldset = host.querySelector(".nm-sv-threshold");
       if (fieldset && !fieldset.hasAttribute("data-user-mode")) {
         setThresholdMode(host, isSymmetric(mask) ? "symmetric" : "asymmetric");
@@ -434,7 +695,7 @@
     var suffix = symbol === "value" ? unit : "";
     if (mask && mask[1] > mask[0]) {
       meta.textContent = isSymmetric(mask)
-        ? "Shown where |" + symbol + "| > " + fmt(mask[1]) + suffix
+        ? "Shown where |" + symbol + "| \u2265 " + fmt(mask[1]) + suffix
         : "Hidden from " + fmt(mask[0]) + " to " + fmt(mask[1]) + unit;
     } else {
       meta.textContent = "All values shown";
@@ -543,19 +804,33 @@
       input.addEventListener("input", debounced(host, "range", function () { applyRange(false); }));
       input.addEventListener("change", function () { applyRange(true); });
     });
-    var applyAbs = function () {
-      var value = Math.abs(Number(part(host, "threshold-abs").value));
-      if (Number.isFinite(value)) applyScalar(host, { maskInterval: [-value, value] });
+    // Thresholds are clamped into the data range: a threshold above the
+    // largest |value| would claim a cut no vertex can pass.
+    var applyAbs = function (commit) {
+      var input = part(host, "threshold-abs");
+      var value = display.clampMagnitude(input.value, dataRange(host, currentLayerId(host)));
+      if (value === null) return;
+      if (commit === true && Number(input.value) !== value) input.value = display.formatNumber(value);
+      applyScalar(host, { maskInterval: [-value, value] });
     };
     var abs = part(host, "threshold-abs");
     if (abs) {
       abs.addEventListener("input", debounced(host, "abs", applyAbs));
-      abs.addEventListener("change", applyAbs);
+      abs.addEventListener("change", function () { applyAbs(true); });
     }
     var applyMask = function (commit) {
-      var value = readPair(host, "threshold-low", "threshold-high");
-      if (value) applyScalar(host, { maskInterval: value });
-      else if (commit) reportResult(host, { ok: false, message: "enter two finite values, low first" });
+      var low = part(host, "threshold-low");
+      var high = part(host, "threshold-high");
+      var value = display.clampInterval(low.value, high.value, dataRange(host, currentLayerId(host)));
+      if (value) {
+        if (commit) {
+          if (Number(low.value) !== value[0]) low.value = display.formatNumber(value[0]);
+          if (Number(high.value) !== value[1]) high.value = display.formatNumber(value[1]);
+        }
+        applyScalar(host, { maskInterval: value });
+      } else if (commit) {
+        reportResult(host, { ok: false, message: "enter two finite values, low first" });
+      }
     };
     ["threshold-low", "threshold-high"].forEach(function (name) {
       var input = part(host, name);
@@ -716,28 +991,139 @@
     markView(host, host.__nmSurfaceView);
   }
 
+  // Save PNG: the current 3D view on the light report ground whatever the
+  // page theme, with a title line and the report's own colour key (not the
+  // engine's generic bar), so it matches the static figures on a slide.
+  function composeSurfacePNG(host, shot, width, height) {
+    var layer = host.__nmSurfaceLayer;
+    var scalar = layer && layer.scalarMapping;
+    var stops = scalar && colorStops(scalar.colorMap.id);
+    var range = scalar && display.pair(scalar.displayRange.value);
+    var mask = scalar && display.pair(scalar.maskInterval.value);
+    var legend = legendFor(host);
+    var S = 2, PAD = 24, KEY = stops && range ? 84 : 0;
+    var cssW = Math.round(width / S), cssH = Math.round(height / S);
+    var out = document.createElement("canvas");
+    out.width = (cssW + 2 * PAD) * S;
+    out.height = (PAD + 26 + cssH + KEY + PAD) * S;
+    var ctx = out.getContext("2d");
+    ctx.scale(S, S);
+    var font = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif";
+    ctx.fillStyle = "#fbfbf8";
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.fillStyle = "#16191b";
+    ctx.font = "600 15px " + font;
+    var labels = parse(host, "data-nm-surface-labels");
+    var spec = viewSpecs(host).filter(function (item) { return item.id === host.__nmSurfaceView; })[0];
+    ctx.fillText((labels[host.getAttribute("data-nm-surface-map")] || "") +
+      (spec ? "  \u00b7  " + spec.title : ""), PAD, PAD + 14);
+    ctx.drawImage(shot, PAD, PAD + 26, cssW, cssH);
+    if (KEY) {
+      var CAP = 9, top = PAD + 26 + cssH + 24, keyW = Math.min(360, cssW - 2 * CAP), keyH = 12;
+      var KX = PAD + CAP;
+      ctx.font = "600 12px " + font;
+      ctx.fillText(legend.title || "Value", PAD, top - 6);
+      for (var k = 0; k < keyW; k += 1) {
+        var value = range[0] + ((k + 0.5) / keyW) * (range[1] - range[0]);
+        var hidden = mask && mask[1] > mask[0] && value >= mask[0] && value <= mask[1];
+        var c = stops[Math.min(stops.length - 1, Math.floor((k / keyW) * stops.length))];
+        ctx.fillStyle = hidden ? (((k % 6) < 2) ? "#c4c8c5" : "#efefeb") :
+          "rgb(" + channel(c[0]) + "," + channel(c[1]) + "," + channel(c[2]) + ")";
+        ctx.fillRect(KX + k, top, 1, keyH);
+      }
+      ctx.strokeStyle = "#8a9296";
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(KX, top, keyW, keyH);
+      // Cap triangles, as on the page key: drawn values beyond the colour
+      // scale take its end colour.
+      var data = dataRange(host, currentLayerId(host));
+      var caps = [Boolean(data && data[0] < range[0]), Boolean(data && data[1] > range[1])];
+      caps.forEach(function (on, end) {
+        if (!on) return;
+        var c = stops[end ? stops.length - 1 : 0];
+        var edge = end ? KX + keyW : KX;
+        ctx.beginPath();
+        ctx.moveTo(edge, top);
+        ctx.lineTo(end ? edge + CAP : edge - CAP, top + keyH / 2);
+        ctx.lineTo(edge, top + keyH);
+        ctx.closePath();
+        ctx.fillStyle = "rgb(" + channel(c[0]) + "," + channel(c[1]) + "," + channel(c[2]) + ")";
+        ctx.fill();
+        ctx.stroke();
+      });
+      host.__nmLastExportCaps = caps;
+      ctx.fillStyle = "#4a5256";
+      ctx.font = "11px " + font;
+      display.legendLabels(range, mask, 0.12).forEach(function (tick) {
+        var x = KX + ((tick.value - range[0]) / (range[1] - range[0])) * keyW;
+        var w = ctx.measureText(tick.label).width;
+        ctx.fillText(tick.label, Math.max(PAD, Math.min(KX + keyW - w, x - w / 2)), top + keyH + 14);
+      });
+      var shown = mask && mask[1] > mask[0] ?
+        (Math.abs(mask[0] + mask[1]) < 1e-9 ?
+          "shown where |" + symbolFor(legend) + "| \u2265 " + display.formatNumber(mask[1]) :
+          "hidden between " + display.formatNumber(mask[0]) + " and " + display.formatNumber(mask[1])) + " after averaging" :
+        "no threshold";
+      var note = host.getAttribute("data-nm-surface-modified") === "true" ?
+        "Display modified in the browser (exploratory): " + shown + ". The Static view is the figure of record." :
+        "Values averaged across cortical depth; " + shown + "; report display settings.";
+      host.__nmLastExportNote = note;
+      ctx.fillText(note, PAD, top + keyH + 34);
+    }
+    return out;
+  }
+
+  // "story-gt-math_surface-left-lateral.png": the report's file stem for the
+  // map (the same slug as its figure downloads) plus the view shown.
+  var VIEW_SLUGS = {
+    left: "left-lateral", right: "right-lateral",
+    "left-medial": "left-medial", "right-medial": "right-medial", oblique: "overview"
+  };
+  function exportName(host) {
+    var view = host.__nmSurfaceView || "custom";
+    var article = host.closest && host.closest("[data-nm-file-stem]");
+    var stem = article && article.getAttribute("data-nm-file-stem");
+    var mapId = host.getAttribute("data-nm-surface-map");
+    var primary = host.getAttribute("data-nm-surface-primary-map");
+    if (!stem || (primary && mapId && mapId !== primary)) {
+      stem = [host.getAttribute("data-nm-surface-analysis"), mapId].filter(Boolean).join("_");
+    }
+    return (stem + "_surface-" + (VIEW_SLUGS[view] || view)).replace(/[^A-Za-z0-9_.-]+/g, "-") + ".png";
+  }
+
   function exportPNG(host) {
     var handle = host.__nmSurfaceHandle;
+    var viewer = handle && handle.viewer;
     var target = handle && handle.controlTarget;
-    if (!target || typeof target.exportFigure !== "function") return;
-    target.exportFigure().then(function (result) {
-      if (!reportResult(host, result)) return;
-      var name = [
-        host.getAttribute("data-nm-surface-analysis"),
-        host.getAttribute("data-nm-surface-map"),
-        host.__nmSurfaceView || "custom"
-      ].filter(Boolean).join("_").replace(/[^A-Za-z0-9_.-]+/g, "-");
+    if (!viewer || typeof viewer.exportPNG !== "function") return;
+    var name = exportName(host);
+    var light = cssColorInt(host.getAttribute("data-nm-surface-ground")) || 0xfbfbf8;
+    var stage = host.querySelector(".nm-sv-stage").getBoundingClientRect();
+    var width = 1600;
+    var height = Math.max(400, Math.round(width * stage.height / Math.max(1, stage.width)));
+    new Promise(function (resolve, reject) {
+      var shot = new Image();
+      shot.onload = function () { resolve(shot); };
+      shot.onerror = function () { reject(new Error("PNG export failed.")); };
+      shot.src = viewer.exportPNG({
+        width: width, height: height, backgroundColor: light, transparent: false,
+        colorbar: false, scaleBar: false
+      });
+    }).then(function (shot) {
+      var canvas = composeSurfacePNG(host, shot, width, height);
+      var url = canvas.toDataURL("image/png");
+      host.__nmLastExport = { name: name, width: canvas.width, height: canvas.height };
       var anchor = document.createElement("a");
-      anchor.href = result.value.dataUrl;
-      anchor.download = name + ".png";
+      anchor.href = url;
+      anchor.download = name;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      announce(host, "Saved " + name + ".png");
+      announce(host, "Saved " + name);
       var button = part(host, "export");
       if (button) {
         button.setAttribute("data-done", "true");
-        button.title = "Saved " + name + ".png";
+        button.title = "Saved " + name;
         window.setTimeout(function () {
           button.removeAttribute("data-done");
           button.title = "Save PNG";
@@ -746,6 +1132,7 @@
     }).catch(function (error) {
       reportResult(host, { ok: false, message: error.message });
     });
+    return target;
   }
 
   // Camera nudges for the keyboard: orbit about the target and dolly.
@@ -827,12 +1214,68 @@
     markLegend(host, null);
   }
 
+  // surfview's CPU pick ray-casts every surface, including a hemisphere the
+  // current view hides: in a medial view the other hemisphere sits between
+  // the camera and the one on screen, so the readout named its parcels.
+  // Pick only surfaces that are drawn.
+  function drawn(object) {
+    for (var node = object; node; node = node.parent) {
+      if (node.visible === false) return false;
+    }
+    return true;
+  }
+
+  function pickVisible(viewer, clientX, clientY) {
+    var surfaces = viewer.surfaces;
+    var picker = typeof viewer.ensurePickingController === "function" ?
+      viewer.ensurePickingController() : null;
+    if (!surfaces || typeof surfaces.forEach !== "function" || !picker ||
+        !picker.raycaster || !picker.mouse || typeof picker.updateScreenPosition !== "function" ||
+        !viewer.camera) {
+      return viewer.pick({ x: clientX, y: clientY, useGPU: false });
+    }
+    picker.updateScreenPosition(clientX, clientY);
+    picker.raycaster.setFromCamera(picker.mouse, viewer.camera);
+    var best = null;
+    surfaces.forEach(function (surface, id) {
+      var mesh = surface && surface.mesh;
+      if (!mesh || !drawn(mesh)) return;
+      var material = mesh.material;
+      var faint = Array.isArray(material) ?
+        material.every(function (m) { return m.opacity < 0.1; }) : material && material.opacity < 0.1;
+      if (faint) return;
+      var hits = picker.raycaster.intersectObject(mesh, false);
+      if (hits.length && (!best || hits[0].distance < best.hit.distance)) best = { hit: hits[0], id: id };
+    });
+    if (!best) return { surfaceId: null, vertexIndex: null, point: null };
+    var face = best.hit.face;
+    var mesh = best.hit.object;
+    var position = mesh.geometry && mesh.geometry.getAttribute("position");
+    if (!face || !position) return { surfaceId: best.id, vertexIndex: null, point: best.hit.point };
+    var point = best.hit.point;
+    var probe = point.clone();
+    var vertex = face.a;
+    var nearest = Infinity;
+    [face.a, face.b, face.c].forEach(function (index) {
+      probe.set(position.getX(index), position.getY(index), position.getZ(index)).applyMatrix4(mesh.matrixWorld);
+      var d = probe.distanceToSquared(point);
+      if (d < nearest) { nearest = d; vertex = index; }
+    });
+    return { surfaceId: best.id, vertexIndex: vertex, point: point };
+  }
+
+  // Hover values carry two decimals, as in the peak tables and the volume
+  // readout ("z = -10.04", never "-10" next to "0.359").
+  function fixed2(value) {
+    return display.formatFixed(value);
+  }
+
   function showReadout(host, clientX, clientY) {
     var handle = host.__nmSurfaceHandle;
     var viewer = handle && handle.viewer;
     var readout = part(host, "readout");
     if (!viewer || !readout || typeof viewer.pick !== "function") return;
-    var hit = viewer.pick({ x: clientX, y: clientY, useGPU: false });
+    var hit = pickVisible(viewer, clientX, clientY);
     if (!hit || hit.surfaceId === null || hit.vertexIndex === null) {
       hideReadout(host);
       return;
@@ -853,7 +1296,7 @@
     var line = document.createElement("b");
     line.textContent = value === null
       ? "No data"
-      : (symbol === "value" ? "" : symbol + " = ") + fmt(value) + (symbol === "value" && legend.units ? " " + legend.units : "");
+      : (symbol === "value" ? "" : symbol + " = ") + fixed2(value) + (symbol === "value" && legend.units ? " " + legend.units : "");
     if (value !== null && !shown) {
       var below = document.createElement("em");
       below.textContent = " below threshold";
@@ -862,7 +1305,10 @@
     var region = regionAt(host, hit.surfaceId, hit.vertexIndex);
     var sub = document.createElement("span");
     sub.className = "nm-sv-readout-region";
-    sub.textContent = hemisphere + (region ? " \u00b7 " + region.name : "");
+    // Parcel names carry their own side ("Control · PFCl 4 (L)").
+    sub.textContent = region && /\((L|R)\)$/.test(region.name)
+      ? region.name
+      : hemisphere + (region ? " \u00b7 " + region.name : "");
     readout.append(line, sub);
     if (region && region.detail) {
       var detail = document.createElement("span");
@@ -952,16 +1398,204 @@
     lock(true);
   }
 
+  // Runtime -----------------------------------------------------------------
+  // The 1.4 MB surfview runtime is not part of the first page load. The report
+  // carries its URL as an htmltools attachment link (a data URI in a
+  // self-contained page), and the first mount injects it once.
+  var runtimeLoad = null;
+
+  function runtimeReady() {
+    return Boolean(window.surfview && typeof window.surfview.mountSurfView === "function");
+  }
+
+  function loadRuntime() {
+    if (runtimeLoad) return runtimeLoad;
+    if (runtimeReady()) {
+      registerReportPalettes();
+      runtimeLoad = Promise.resolve(window.surfview);
+      return runtimeLoad;
+    }
+    var link = document.getElementById("surfview-runtime-attachment");
+    var url = link && link.getAttribute("href");
+    if (!url) return Promise.reject(new Error("The surfview runtime is not part of this report."));
+    runtimeLoad = new Promise(function (resolve, reject) {
+      var script = document.createElement("script");
+      script.src = url;
+      script.async = true;
+      script.setAttribute("data-nm-surface-runtime", "");
+      script.onload = function () {
+        if (!runtimeReady()) {
+          reject(new Error("The surfview runtime did not load."));
+          return;
+        }
+        // Report palettes must exist before any viewer reads the preset list.
+        registerReportPalettes();
+        resolve(window.surfview);
+      };
+      script.onerror = function () {
+        // A later attempt may succeed (e.g. a transient network failure).
+        runtimeLoad = null;
+        script.remove();
+        reject(new Error("The surfview runtime could not be loaded."));
+      };
+      document.head.appendChild(script);
+    });
+    return runtimeLoad;
+  }
+
+  // Report lighting: the overlay keeps its key colours. With the palette in
+  // linear light (above), an overlay that is 90% emissive renders within a
+  // few CIE76 units of the key while the remaining 10% and the curvature
+  // underlay keep the stock key, ambient and fill lights for shape.
+  var REPORT_LIGHTING = {
+    overlayEmission: 0.9,
+    silhouetteDarkening: 0.15
+  };
+  // A near-black specular: white highlights desaturate the overlay.
+  var REPORT_SPECULAR = 0x0a0a0a;
+
+  // surfview anti-aliases the threshold edge symmetrically, so a vertex just
+  // under threshold (signed edge distance within half a pixel's change) gets
+  // a faint partial fill: dotted "ghost" rings around sub-threshold patches
+  // that the static figure does not have. A fade wholly inside the region
+  // (r4) removed the ghosts but under-drew real suprathreshold vertices near
+  // threshold (8-32% coloured at their pixel within 0.1 of it). With per-
+  // vertex sign edges (vertexEdges below) the edge is one-sided at zero with
+  // a floor: no colour below 0, at least half colour from 0 up, full colour
+  // one pixel inside.
+  var SYMMETRIC_EDGE = "float surfviewInside = smoothstep( -0.5 * surfviewWidth, 0.5 * surfviewWidth, vSurfviewEdge );";
+  var ONE_SIDED_EDGE = "float surfviewInside = vSurfviewEdge >= 0.0 ? max( 0.5, smoothstep( 0.0, surfviewWidth, vSurfviewEdge ) ) : 0.0;";
+  function crispThreshold(material) {
+    if (!material || material.userData.nmCrispThreshold || typeof material.onBeforeCompile !== "function") return;
+    material.userData.nmCrispThreshold = true;
+    var compile = material.onBeforeCompile;
+    material.onBeforeCompile = function (shader, renderer) {
+      compile.call(material, shader, renderer);
+      shader.fragmentShader = shader.fragmentShader.replace(SYMMETRIC_EDGE, ONE_SIDED_EDGE);
+    };
+    var key = material.customProgramCacheKey;
+    material.customProgramCacheKey = function () {
+      return (typeof key === "function" ? key.call(material) : "") + "|nm-one-sided-edge";
+    };
+    material.needsUpdate = true;
+  }
+
+  // surfview interpolates each vertex's signed distance to the threshold
+  // (|v| - T) across triangles and colours fragments where it is >= 0. Where
+  // neighbouring vertices differ by much more than a vertex's own margin, the
+  // zero crossing lands next to that vertex, so whether a vertex just above
+  // or below threshold is coloured at its own pixel depends on its neighbours.
+  // Keep only the sign per vertex (+1 shown, -1 not): the contour then runs
+  // midway between a shown and a hidden vertex, every suprathreshold vertex
+  // is coloured around its own position and no sub-threshold vertex is.
+  function vertexEdges(surface) {
+    if (!surface || typeof surface.applyThresholdEdges !== "function") return;
+    var signs = function (target) {
+      var mesh = target.mesh;
+      var attr = mesh && mesh.geometry && mesh.geometry.getAttribute("surfviewEdge");
+      if (!attr || !attr.array) return;
+      var a = attr.array;
+      for (var i = 0; i < a.length; i += 1) a[i] = a[i] >= 0 ? 1 : -1;
+      attr.needsUpdate = true;
+    };
+    if (!surface.__nmVertexEdges) {
+      var apply = surface.applyThresholdEdges;
+      surface.applyThresholdEdges = function () {
+        var out = apply.apply(this, arguments);
+        signs(this);
+        return out;
+      };
+      surface.__nmVertexEdges = true;
+    }
+    signs(surface);
+  }
+
+  function surfacesOf(viewer) {
+    var list = viewer && viewer.surfaces;
+    if (!list) return [];
+    if (typeof list.values === "function" && !Array.isArray(list)) return Array.from(list.values());
+    return Array.prototype.slice.call(list);
+  }
+
+  function tuneMaterials(host) {
+    var viewer = host.__nmSurfaceHandle && host.__nmSurfaceHandle.viewer;
+    if (!viewer || !viewer.surfaces || host.getAttribute("data-nm-surface-preset") !== "report") return;
+    surfacesOf(viewer).forEach(function (surface) {
+      var material = surface && surface.mesh && surface.mesh.material;
+      if (material && material.specular && typeof material.specular.setHex === "function") {
+        material.specular.setHex(REPORT_SPECULAR);
+      }
+      vertexEdges(surface);
+      crispThreshold(material);
+    });
+    if (typeof viewer.requestRender === "function") viewer.requestRender();
+  }
+
+  // Sulcal shading as in the static strip, whose cortex runs from grey 0.72
+  // (sulci) to 0.90 (gyri) in sRGB. surfview treats curvature greys as linear
+  // light, so the same greys are 0.48-0.79 here (brightness 0.635 +/- 0.155);
+  // the stock preset (0.57-0.89 linear) renders nearly flat once encoded.
+  var REPORT_CURVATURE = { brightness: 0.635, contrast: 0.31, smoothness: 0.2 };
+
+  function reportStyle(name) {
+    if (name !== "report" || typeof window.surfview.resolveStylePreset !== "function") return null;
+    try {
+      var style = window.surfview.resolveStylePreset("report");
+      Object.keys(REPORT_LIGHTING).forEach(function (key) { style.lighting[key] = REPORT_LIGHTING[key]; });
+      if (style.curvature) {
+        Object.keys(REPORT_CURVATURE).forEach(function (key) { style.curvature[key] = REPORT_CURVATURE[key]; });
+      }
+      return style;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  // The canvas ground follows the stage's CSS ground, so the viewer sits on
+  // the page in both light and dark themes.
+  function cssColorInt(text) {
+    var m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(text || "");
+    if (m) return (Number(m[1]) << 16) + (Number(m[2]) << 8) + Number(m[3]);
+    var hex = display.hexRgb(text);
+    return hex ? (hex[0] << 16) + (hex[1] << 8) + hex[2] : null;
+  }
+
+  function applyGround(host) {
+    var handle = host.__nmSurfaceHandle;
+    var viewer = handle && handle.viewer;
+    if (!viewer || typeof viewer.setFigureBackground !== "function") return;
+    var stage = host.querySelector(".nm-sv-stage");
+    var ground = stage ? cssColorInt(window.getComputedStyle(stage).backgroundColor) : null;
+    if (ground === null) ground = cssColorInt(host.getAttribute("data-nm-surface-ground"));
+    if (ground === null || ground === host.__nmSurfaceGround) return;
+    host.__nmSurfaceGround = ground;
+    viewer.setFigureBackground(ground);
+    if (typeof viewer.requestRender === "function") viewer.requestRender();
+  }
+
+  function watchTheme(hosts) {
+    var update = function () {
+      hosts.forEach(function (host) { if (host.__nmSurfaceHandle) applyGround(host); });
+    };
+    if (window.matchMedia) {
+      var query = window.matchMedia("(prefers-color-scheme: dark)");
+      if (typeof query.addEventListener === "function") query.addEventListener("change", update);
+    }
+    if (typeof MutationObserver === "function") {
+      new MutationObserver(update).observe(document.documentElement, {
+        attributes: true, attributeFilter: ["data-theme", "class"]
+      });
+    }
+  }
+
   // Mounting ----------------------------------------------------------------
   function connectHandle(host, handle) {
     host.__nmSurfaceHandle = handle;
     var widget = host.querySelector(".surfwidget");
     if (widget) widget.__surfviewHandle = handle;
     return Promise.resolve(handle.ready).then(function () {
-      var ground = host.getAttribute("data-nm-surface-ground");
-      if (ground && handle.viewer && typeof handle.viewer.setFigureBackground === "function") {
-        handle.viewer.setFigureBackground(parseInt(ground.replace("#", ""), 16));
-      }
+      applyGround(host);
+      tuneMaterials(host);
       selectMap(host, host.getAttribute("data-nm-surface-map"));
       loadParcels().then(function (lookup) { host.__nmSurfaceParcels = lookup; });
       buildViews(host);
@@ -985,17 +1619,146 @@
       var stage = host.querySelector(".nm-sv-stage");
       if (stage && typeof ResizeObserver === "function" && typeof handle.setFitInsets === "function") {
         var width = 0;
-        new ResizeObserver(function (entries) {
+        host.__nmSurfaceResize = new ResizeObserver(function (entries) {
           var next = Math.round(entries[0].contentRect.width);
           if (!next || next === width) return;
           width = next;
           window.requestAnimationFrame(function () { handle.setFitInsets(fitInsets(host)); });
-        }).observe(stage);
+        });
+        host.__nmSurfaceResize.observe(stage);
       }
+      restoreSurfaceMemo(host);
       setStatus(host, null);
       host.setAttribute("data-nm-surface-ready", "true");
+      touchSurfaceBudget(host);
     });
   }
+
+  // WebGL budget ---------------------------------------------------------------
+  function surfaceKey(host) {
+    return "surface:" + host.getAttribute("data-nm-surface-analysis");
+  }
+
+  function touchSurfaceBudget(host) {
+    GL.touch({
+      key: surfaceKey(host),
+      cost: 1,
+      element: host,
+      shown: function () { return isShown(host); },
+      release: function () {
+        // Still the chosen view (scrolled away): wait, parked, until the
+        // reader is back. The stage keeps its fixed height.
+        var keep = isShown(host);
+        releaseSurface(host);
+        if (keep) parkSurface(host, false);
+      }
+    });
+  }
+
+  function parkSurface(host, blocked) {
+    host.setAttribute("data-nm-surface-paused", "true");
+    // blocked: false (off screen), true (too many live views) or "lost" (the
+    // browser took the context repeatedly).
+    setStatus(host, "paused", blocked === "lost" ?
+      "Paused: the browser reclaimed this view's graphics memory several times. Return to Static, then choose 3D surface again." :
+      blocked ?
+      "Paused: too many interactive views are open on this page. Return another map to Static, then choose 3D surface again." :
+      "Paused to free graphics memory; it resumes when it is back on screen.");
+    if (blocked) GL.unpark(surfaceKey(host));
+    else GL.park({ key: surfaceKey(host), element: host, resume: function () { resumeSurface(host); } });
+  }
+
+  function unparkSurface(host) {
+    GL.unpark(surfaceKey(host));
+    if (host.getAttribute("data-nm-surface-paused") !== "true") return;
+    host.removeAttribute("data-nm-surface-paused");
+    setStatus(host, null);
+  }
+
+  // Rebuild a parked surface only on screen and within the budget.
+  function resumeSurface(host) {
+    if (host.getAttribute("data-nm-surface-paused") !== "true") return;
+    if (!isShown(host)) { unparkSurface(host); return; }
+    if (!GL.onScreen(host)) return;
+    if (!GL.reserve(surfaceKey(host), 1)) { parkSurface(host, true); return; }
+    unparkSurface(host);
+    mount(host).catch(function () {});
+  }
+
+  // Free the surface viewer's context, remembering the view and any display
+  // change so the next mount looks the same.
+  function releaseSurface(host) {
+    var handle = host.__nmSurfaceHandle;
+    GL.drop(surfaceKey(host));
+    if (handle) {
+      var memo = { view: host.__nmSurfaceView || null };
+      try {
+        var target = handle.controlTarget;
+        var layer = target && layerFor(target.getSnapshot(), currentLayerId(host));
+        if (layer && layer.scalarMapping && display.isModified(layer, host.__nmSurfaceDisplayStore.capture(layer))) {
+          memo.scalar = {
+            colorMapId: layer.scalarMapping.colorMap.id,
+            displayRange: display.pair(layer.scalarMapping.displayRange.value),
+            maskInterval: display.pair(layer.scalarMapping.maskInterval.value)
+          };
+          memo.opacity = Number(layer.opacity);
+        }
+      } catch (error) { /* keep the view only */ }
+      host.__nmSurfaceMemo = memo;
+      var subscription = host.__nmSurfaceSubscription;
+      if (subscription && typeof subscription.unsubscribe === "function") subscription.unsubscribe();
+      host.__nmSurfaceSubscription = null;
+      if (host.__nmSurfaceResize) host.__nmSurfaceResize.disconnect();
+      host.__nmSurfaceResize = null;
+      var widget = host.querySelector(".surfwidget");
+      var canvases = widget ? Array.prototype.slice.call(widget.querySelectorAll("canvas")) : [];
+      try { if (typeof handle.dispose === "function") handle.dispose(); } catch (error) { /* lost */ }
+      GL.loseContexts(canvases);
+      if (widget) {
+        widget.replaceChildren();
+        widget.__surfviewHandle = null;
+      }
+    }
+    host.__nmSurfaceHandle = null;
+    host.__nmSurfaceMount = null;
+    host.__nmSurfaceGround = null;
+    host.removeAttribute("data-nm-surface-ready");
+  }
+
+  function restoreSurfaceMemo(host) {
+    var memo = host.__nmSurfaceMemo;
+    host.__nmSurfaceMemo = null;
+    if (!memo) return;
+    if (memo.scalar) applyScalar(host, memo.scalar);
+    if (Number.isFinite(memo.opacity)) applyOpacity(host, memo.opacity);
+    if (memo.view && memo.view !== host.__nmSurfaceView) setView(host, memo.view);
+  }
+
+  function surfaceLost(host) {
+    var widget = host.querySelector(".surfwidget");
+    return Boolean(host.__nmSurfaceHandle) && GL.isLost(widget);
+  }
+
+  document.addEventListener("webglcontextlost", function (event) {
+    var canvas = event.target;
+    if (!canvas || canvas.__nmReleased || !canvas.closest) return;
+    var host = canvas.closest("[data-nm-surface-host]");
+    if (!host || !host.__nmSurfaceHandle || host.__nmSurfaceRemount) return;
+    // The browser took this context (never one we released). Rebuild only
+    // a surface the reader can see, within the budget, at most twice in 15 s.
+    host.__nmSurfaceRemount = window.setTimeout(function () {
+      host.__nmSurfaceRemount = null;
+      var shown = isShown(host);
+      releaseSurface(host);
+      if (!shown) return;
+      var now = Date.now();
+      host.__nmSurfaceLosses = (host.__nmSurfaceLosses || []).filter(function (t) { return now - t < 15000; });
+      host.__nmSurfaceLosses.push(now);
+      if (host.__nmSurfaceLosses.length > 2) { parkSurface(host, "lost"); return; }
+      parkSurface(host, false);
+      resumeSurface(host);
+    }, 0);
+  }, true);
 
   // "auto" (data-driven) or "azimuth,elevation" in degrees.
   function parseOblique(value) {
@@ -1034,10 +1797,7 @@
   function mount(host) {
     if (host.__nmSurfaceMount) return host.__nmSurfaceMount;
     setStatus(host, "loading", "Loading surface");
-    host.__nmSurfaceMount = Promise.resolve().then(function () {
-      if (!window.surfview || typeof window.surfview.mountSurfView !== "function") {
-        throw new Error("The surfview runtime did not load.");
-      }
+    host.__nmSurfaceMount = loadRuntime().then(function () {
       var manifestNode = document.getElementById(host.getAttribute("data-nm-surface-manifest"));
       if (!manifestNode) throw new Error("The surface scene manifest is missing.");
       var manifest = JSON.parse(manifestNode.textContent || "{}");
@@ -1055,15 +1815,20 @@
         fitInsets: fitInsets(host),
         onError: function (error) { showFallback(host, error); }
       };
+      var style = reportStyle(options.preset);
+      if (style) options.preset = style;
       var bilateral = parse(host, "data-nm-surface-bilateral");
       if (bilateral && bilateral.id) options.bilateralGroup = bilateral;
       if (layout === "anatomical") {
-        options.initialBrainView = host.getAttribute("data-nm-surface-view") || "oblique";
+        var memo = host.__nmSurfaceMemo;
+        options.initialBrainView = (memo && memo.view) || host.getAttribute("data-nm-surface-view") || "oblique";
         options.oblique = parseOblique(host.getAttribute("data-nm-surface-oblique"));
         options.fov = 22;
       }
       return connectHandle(host, window.surfview.mountSurfView(widget, manifest, options));
     }).catch(function (error) {
+      // Let a later choice retry (e.g. after a transient network failure).
+      host.__nmSurfaceMount = null;
       showFallback(host, error);
       throw error;
     });
@@ -1074,15 +1839,44 @@
     return !host.hidden && host.getClientRects().length > 0;
   }
 
+  function volumeNeedsServer(volume) {
+    if (window.location.protocol !== "file:") return false;
+    if (document.querySelector("script[data-nm-volume-runtime-src]")) return true;
+    var node = document.getElementById(volume.getAttribute("data-nm-volume-scene"));
+    try {
+      var scene = JSON.parse((node && node.textContent) || "{}");
+      return (scene.assets || []).some(function (asset) {
+        return asset.location && asset.location.kind !== "embedded";
+      });
+    } catch (error) {
+      return false;
+    }
+  }
+
+  // Bundle-mode surface data are companion files; embedded data use the
+  // "nm-surface-asset:" scheme (or data: URIs) and work from disk.
+  function surfaceNeedsServer(host) {
+    var node = document.getElementById(host.getAttribute("data-nm-surface-manifest"));
+    return display.manifestNeedsServer(window.location.protocol, (node && node.textContent) || "");
+  }
+
+  function surfaceMessage(error) {
+    if (window.location.protocol === "file:") return FILE_MESSAGE;
+    return "The 3D surface could not load (" + ((error && error.message) || "unknown error") +
+      "). The static figures are unaffected.";
+  }
+
   function installRouter(host) {
     var analysisId = host.getAttribute("data-nm-surface-analysis");
     if (document.querySelector('[data-nm-view-router="' + CSS.escape(analysisId) + '"]')) return;
     var volume = document.querySelector('[data-nm-volume-analysis="' + CSS.escape(analysisId) + '"]');
+    var slot = document.querySelector('[data-nm-view-slot="' + CSS.escape(analysisId) + '"]');
     var router = document.createElement("fieldset");
     router.className = "nm-view-router";
     router.setAttribute("data-nm-view-router", analysisId);
     var legend = document.createElement("legend");
-    legend.textContent = "View";
+    var viewLabel = slot && slot.getAttribute("data-nm-view-label");
+    legend.textContent = viewLabel ? "View for " + viewLabel : "View";
     router.appendChild(legend);
     var name = "nm-view-" + analysisId.replace(/[^A-Za-z0-9_-]/g, "-");
     function add(value, label) {
@@ -1099,31 +1893,113 @@
     var choices = [add("static", "Static")];
     if (volume) choices.push(add("slices", "Slices"));
     choices.push(add("surface", "3D surface"));
+    // A short reader-facing note under the router: why an interactive view
+    // is unavailable, or why it closed. The static figures stay on screen.
+    function note(text) {
+      var node = router.__nmNote;
+      if (!text) {
+        if (node) node.hidden = true;
+        return;
+      }
+      if (!node) {
+        node = document.createElement("p");
+        node.className = "nm-view-note";
+        node.setAttribute("role", "status");
+        node.setAttribute("data-nm-view-note", analysisId);
+        router.__nmNote = node;
+      }
+      if (node.previousElementSibling !== router) router.after(node);
+      node.textContent = text;
+      node.hidden = false;
+    }
+    function disable(value, reason) {
+      choices.forEach(function (choice) {
+        if (choice.value !== value) return;
+        choice.disabled = true;
+        choice.setAttribute("aria-disabled", "true");
+        choice.parentNode.setAttribute("data-disabled", "true");
+        choice.parentNode.title = reason;
+      });
+    }
+    // Opened from disk, a bundled report cannot fetch its companion data.
+    var offline = [];
+    if (volume && volumeNeedsServer(volume)) offline.push("slices");
+    if (surfaceNeedsServer(host)) offline.push("surface");
+    offline.forEach(function (value) { disable(value, FILE_MESSAGE); });
+    if (offline.length) router.setAttribute("data-nm-view-offline", offline.join(" "));
+    // One event per view change, from any source, for the report page.
+    function announceView(view) {
+      if (router.getAttribute("data-nm-view-current") === view) return;
+      router.setAttribute("data-nm-view-current", view);
+      router.dispatchEvent(new CustomEvent("nm-view-change", {
+        bubbles: true,
+        detail: { analysisId: analysisId, view: view }
+      }));
+    }
+    // Any viewer failure returns the map to its static figures, with a note.
+    function fallBack(view, message) {
+      if (router.getAttribute("data-nm-view-current") !== view) return;
+      choices[0].checked = true;
+      choose("static");
+      note(message);
+    }
     function choose(view) {
+      if (offline.indexOf(view) >= 0) view = "static";
       host.hidden = view !== "surface";
       if (volume) volume.hidden = view !== "slices";
+      if (!offline.length) note(null);
+      if (view !== "surface") unparkSurface(host);
       if (view === "surface") {
+        unparkSurface(host);
+        if (surfaceLost(host)) releaseSurface(host);
+        if (!host.__nmSurfaceHandle) GL.reserve(surfaceKey(host), 1);
         mount(host).then(function () {
+          touchSurfaceBudget(host);
           if (host.__nmSurfaceHandle) {
-            window.requestAnimationFrame(function () { host.__nmSurfaceHandle.resize(); });
+            window.requestAnimationFrame(function () {
+              if (host.__nmSurfaceHandle) host.__nmSurfaceHandle.resize();
+            });
           }
-        }).catch(function () {});
+        }).catch(function (error) {
+          fallBack("surface", surfaceMessage(error));
+        });
       }
       if (view === "slices" && volume) {
         var toggle = volume.querySelector("[data-nm-volume-toggle]");
         if (toggle && toggle.getAttribute("aria-expanded") !== "true") toggle.click();
       }
+      announceView(view);
+    }
+    router.__nmFallBack = fallBack;
+    if (volume) {
+      volume.addEventListener("nm-viewer-failed", function (event) {
+        fallBack("slices", (event.detail && event.detail.message) || FILE_MESSAGE);
+      });
     }
     choices.forEach(function (choice) {
       choice.addEventListener("change", function () {
         if (choice.checked) choose(choice.value);
       });
     });
-    var anchor = volume && volume.compareDocumentPosition(host) & Node.DOCUMENT_POSITION_FOLLOWING
-      ? volume
-      : host;
-    anchor.parentNode.insertBefore(router, anchor);
+    // "Hide interactive view" inside the volume panel returns the router to
+    // Static, so the radios never claim a view that is no longer shown.
+    if (volume) {
+      volume.addEventListener("nm-volume-hidden", function () {
+        choices[0].checked = true;
+        choose("static");
+      });
+    }
+    if (slot) {
+      // The report places a slot under each map's heading for the router.
+      slot.appendChild(router);
+    } else {
+      var anchor = volume && volume.compareDocumentPosition(host) & Node.DOCUMENT_POSITION_FOLLOWING
+        ? volume
+        : host;
+      anchor.parentNode.insertBefore(router, anchor);
+    }
     choose("static");
+    if (offline.length) note(FILE_MESSAGE);
   }
 
   function bind(host) {
@@ -1164,8 +2040,10 @@
   }
 
   function initialize() {
+    registerReportPalettes();
     var hosts = document.querySelectorAll("[data-nm-surface-host]");
     hosts.forEach(bind);
+    watchTheme(hosts);
     document.addEventListener("pointerdown", closePopoversOutside);
     document.addEventListener("nm-map-change", function (event) {
       var detail = event.detail || {};
@@ -1184,6 +2062,17 @@
       });
     }, { once: true });
   }
+
+  // Hooks for the report's browser tests.
+  window.NeuroMosaicSurfaceBridge = {
+    pick: function (host, x, y) {
+      var viewer = host.__nmSurfaceHandle && host.__nmSurfaceHandle.viewer;
+      return viewer ? pickVisible(viewer, x, y) : null;
+    },
+    release: releaseSurface,
+    exportPNG: exportPNG,
+    vertexEdges: vertexEdges
+  };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", initialize, { once: true });

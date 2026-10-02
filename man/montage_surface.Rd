@@ -22,7 +22,7 @@ montage_surface(
   controls = .montage_surface_control_names,
   preset = "report",
   layout = c("anatomical", "split"),
-  view = c("oblique", "left", "right", "dorsal", "ventral", "anterior", "posterior",
+  view = c("left", "oblique", "right", "dorsal", "ventral", "anterior", "posterior",
     "left-medial", "right-medial"),
   anatomy = c("sulcal_depth", "curvature"),
   oblique = "auto",
@@ -87,7 +87,8 @@ coherent brain in RAS position that rotates as a whole; `"split"` rotates
 each hemisphere into the chosen view and places them side by side.}
 
 \item{view}{Initial whole-brain view for the anatomical layout. The default
-`"oblique"` is the Overview pose set by `oblique`.}
+`"left"` (lateral left hemisphere) matches the first panel of the static
+surface strip; `"oblique"` is the Overview pose set by `oblique`.}
 
 \item{anatomy}{Computed underlay used when no `curvature` is supplied:
 `"sulcal_depth"` (a white-to-inflated sulcal-depth proxy with broad
@@ -100,7 +101,9 @@ suprathreshold cortex; a numeric `c(azimuth, elevation)` in degrees fixes
 it (azimuth 0 = anterior, 90 = right, 180 = posterior, -90 = left).}
 
 \item{height}{Canvas height as a positive number of pixels or a CSS size
-string. `NULL` (default) uses a responsive 16:10 stage (square on phones).}
+string. `NULL` (default) uses a responsive stage `min(560px, 70vh)` tall
+(about square on phones), so the router, canvas and view bar fit on one
+screen.}
 
 \item{fallback}{Optional plain-text failure message. Static surface figures
 remain present separately in the report.}

@@ -48,7 +48,8 @@
 #' @param compression Volume-asset compression. `"gzip"` is the portable,
 #'   lossless default; `"none"` is intended for diagnostics.
 #' @param initial_position Initial coordinate strategy when `world_coord` is
-#'   `NULL`: the tail-aware primary-map peak or the field-of-view centre.
+#'   `NULL`: the tail-aware primary-map peak (for two-sided signed maps, the
+#'   strongest positive peak when one exists) or the field-of-view centre.
 #' @param world_coord Optional finite numeric `(x, y, z)` world coordinate. When
 #'   supplied it overrides `initial_position` with an explicit starting point.
 #' @param controls Character vector selecting reader display controls. Supported
@@ -136,7 +137,7 @@ montage_volume_scene_schema <- function() {
     object = c(
       rep("scene", 9), rep("engine", 3), rep("view", 4),
       rep("packaging", 3), rep("background", 1), rep("analysis", 5),
-      rep("map", 9), rep("status", 2), rep("display", 11),
+      rep("map", 10), rep("status", 2), rep("display", 11),
       rep("asset", 13), rep("location", 2), rep("geometry", 6)
     ),
     field = c(
@@ -149,7 +150,7 @@ montage_volume_scene_schema <- function() {
       "analysis_id", "primary_map_id", "initial_world_coord",
       "zlevel_bookmarks", "maps",
       "map_id", "quantity", "label", "units", "asset_id", "display",
-      "status", "selector_label", "legend_title",
+      "status", "selector_label", "legend_title", "clusters",
       "state", "n_display_voxels",
       "mode", "scale", "center", "limits", "threshold", "tail",
       "palette", "alpha", "alpha_mode", "support", "units",
@@ -164,7 +165,7 @@ montage_volume_scene_schema <- function() {
     required = c(
       rep(TRUE, 9), rep(TRUE, 3), rep(TRUE, 4), rep(TRUE, 3), TRUE,
       rep(TRUE, 5),
-      c(TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE),
+      c(TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE),
       rep(TRUE, 2),
       c(TRUE, TRUE, FALSE, TRUE, FALSE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE),
       rep(TRUE, 13),
@@ -180,7 +181,7 @@ montage_volume_scene_schema <- function() {
       "character",
       "character", "character", "numeric[3]", "numeric[]", "array",
       "character", "character", "character", "character|null", "character",
-      "object", "object", "character|null", "character|null",
+      "object", "object", "character|null", "character|null", "array",
       "character", "integer",
       "character", "character", "numeric|null", "numeric[2]",
       "numeric|null", "character", "character", "numeric", "character",
@@ -206,6 +207,7 @@ montage_volume_scene_schema <- function() {
       "stable map key", "generic or namespaced quantity", "reader label",
       "value units", "volume asset reference", "resolved report defaults",
       "empty/readiness state", "short selector label", "color-scale quantity label",
+      "report clusters: id, sign, peak voxel, region",
       "ready or empty", "displayable voxel count",
       "thresholded or continuous", "diverging or sequential", "scale centre",
       "finite display limits", "display threshold", "tail semantics",
@@ -694,7 +696,30 @@ print.montage_volume_scene <- function(x, ...) {
   }
   .montage_scene_validate_display(x$display, paste0(label, "$display"))
   .montage_scene_validate_status(x$status, paste0(label, "$status"))
+  if (!is.null(x$clusters)) {
+    .montage_scene_validate_clusters(x$clusters, paste0(label, "$clusters"))
+  }
   x
+}
+
+.montage_scene_validate_clusters <- function(x, label) {
+  if (!is.list(x) || !is.null(names(x))) {
+    stop("'", label, "' must be an array of cluster records.", call. = FALSE)
+  }
+  for (i in seq_along(x)) {
+    item <- paste0(label, "[[", i, "]]")
+    .montage_scene_require_fields(x[[i]], c("id", "sign", "voxel"), item)
+    .montage_scene_scalar_character(x[[i]]$id, paste0(item, "$id"))
+    .montage_scene_choice(x[[i]]$sign, c("positive", "negative"),
+                          paste0(item, "$sign"))
+    voxel <- x[[i]]$voxel
+    if (!is.numeric(voxel) || length(voxel) != 3L || anyNA(voxel) ||
+        any(voxel < 0) || any(voxel != floor(voxel))) {
+      stop("'", item, "$voxel' must be three zero-based voxel indices.",
+           call. = FALSE)
+    }
+  }
+  invisible(x)
 }
 
 .montage_scene_validate_status <- function(x, label) {
