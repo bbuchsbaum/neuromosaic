@@ -484,8 +484,9 @@ test_that("tables align numbers, keep decimals consistent, and report empties", 
   class(parcel) <- c("montage_parcel_table", class(parcel))
   html <- paste(capture.output(fmt$emit_table(parcel)), collapse = "\n")
   expect_match(html, "<th scope=\"col\">Parcel</th>", fixed = TRUE)
-  expect_match(html, "<td class=\"num\">−3.20</td>", fixed = TRUE)
-  expect_match(html, "<td class=\"num\">3.08</td>", fixed = TRUE)
+  # Cells also carry a column class and data-label for narrow-screen layouts.
+  expect_match(html, "<td class=\"num[^\"]*\"[^>]*>−3.20</td>")
+  expect_match(html, "<td class=\"num[^\"]*\"[^>]*>3.08</td>")
   expect_match(html, "Strongest 2 of 5 surviving parcels.", fixed = TRUE)
 
   empty <- parcel[0, ]

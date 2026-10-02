@@ -113,6 +113,20 @@
 #'   policy/robust default. Overriding analytical controls (`threshold`, `tail`,
 #'   `signed`) here changes only the rendered panel, not the manifest-driven
 #'   peak tables, so the two can diverge.
+#'
+#'   What the static report figure honours: the report draws
+#'   `stat_montage(figure = "report")`, whose overlay is opaque above the
+#'   threshold and encodes magnitude by colour alone. There, `ov_alpha` acts
+#'   only as a floor-raised opacity (values below 0.92 are drawn at 0.92), and
+#'   `ov_alpha_mode`, `alpha_gamma`, `bg_cmap`, `style`, `title`, `subtitle`
+#'   and `caption` have no effect on the figure (they shape only
+#'   `figure = "classic"`). `ov_alpha` and `ov_alpha_mode` are still recorded
+#'   in the map's display metadata, which the interactive volume viewer
+#'   reads. Slice selection (`zlevels`, `along`), `ncol`, the colour controls
+#'   (`cap`, `limits`, `ov_cmap`), `threshold`/`tail`/`signed`, cluster extent
+#'   and `legend_title`/`units` all apply to the figure. Without a `zlevels`
+#'   override, maps of one layout section share a slice set
+#'   ([montage_policy()] `slice_scope`).
 #' @param surface_args Optional named list of styling arguments forwarded to
 #'   [surf_montage()] for every surface panel (e.g.
 #'   `list(overlay_alpha = 0.9, fun = "mode")`). Caller values win over the
@@ -158,6 +172,16 @@
 #'   `map_id`. Static surface panels are required and remain authoritative.
 #'   Surface typed arrays can be compressed into the HTML for direct `file://`
 #'   viewing or written once as relative content-addressed bundle assets.
+#' @param cerebellum_reference Cerebellar reference used to label peaks
+#'   that fall in the cerebellum when `atlas` has no cerebellar regions (for
+#'   example Schaefer + ASEG): `NULL` or `FALSE` (none; the default, and
+#'   nothing is fetched), `TRUE` or `"hcp"` (the HCP grayordinate subcortical
+#'   segmentation from TemplateFlow, `tpl-MNI152NLin6Asym` `atlas-HCP` `dseg`,
+#'   2 mm, fetched once per session), a `NeuroVol`, or a path to a label
+#'   volume with FreeSurfer cerebellum labels 8 (left) and 47 (right). Falls
+#'   back to `getOption("neuromosaic.cerebellum_reference")` when not given.
+#'   Whatever is used is stated in the report header, the Methods paragraph
+#'   and Provenance; see [montage_peak_table()].
 #'
 #' @details
 #' Quantity legends:
@@ -214,7 +238,10 @@ render_montage_report <- function(manifest,
                                   provenance = NULL,
                                   surface_scene = NULL,
                                   interactive = NULL,
-                                  surface = NULL) {
+                                  surface = NULL,
+                                  cerebellum_reference = getOption(
+                                    "neuromosaic.cerebellum_reference", NULL
+                                  )) {
   volume_args <- .validate_montage_passthrough(
     volume_args, stat_montage, c("bg", "stat", "draw"), "volume_args"
   )
@@ -342,7 +369,8 @@ render_montage_report <- function(manifest,
     load_maps = load_maps,
     provenance = provenance,
     surface_scene = surface_scene,
-    surface = if (ext %in% c("html", "qmd")) surface else NULL
+    surface = if (ext %in% c("html", "qmd")) surface else NULL,
+    cerebellum_reference = cerebellum_reference
   )
   report_data$params$surface_requested <- !is.null(surface)
   report_data$params$interactive_requested <- !is.null(interactive)
@@ -456,6 +484,19 @@ render_montage_report <- function(manifest,
     latex_engine,
     self_contained = !(has_interactive_bundle || has_surface_bundle)
   )
+  # A bundle report already travels with its companion directory, so its panel
+  # figures go there as files. Inlining them as data URIs would hand rmarkdown's
+  # non-self-contained image pass multi-megabyte `src` strings, which
+  # utils::URLdecode() processes in quadratic time (tens of minutes per report).
+  if (identical(ext, "html") && (has_interactive_bundle || has_surface_bundle)) {
+    companion <- paste0(
+      tools::file_path_sans_ext(basename(output_file)), "_files"
+    )
+    report_data$figure_assets <- list(
+      dir = file.path(output_dir, companion, "figures"),
+      href = paste0(companion, "/figures")
+    )
+  }
   withr::with_dir(output_dir, {
     rmarkdown::render(
       input = template,
@@ -486,7 +527,10 @@ render_montage_report <- function(manifest,
       theme = NULL,
       highlight = NULL,
       self_contained = isTRUE(self_contained),
-      mathjax = NULL
+      mathjax = NULL,
+      # One h1 (the report title in the page header): the template's
+      # top-level sections (# Maps, # Methods, ...) become h2.
+      pandoc_args = "--shift-heading-level-by=1"
     ))
   }
 
@@ -537,7 +581,11 @@ render_montage_report <- function(manifest,
                                          load_maps,
                                          provenance,
                                          surface_scene = NULL,
-                                         surface = NULL) {
+                                         surface = NULL,
+                                         cerebellum_reference = getOption(
+                                           "neuromosaic.cerebellum_reference",
+                                           NULL
+                                         )) {
   if (!is.null(surface_scene) && !methods::is(surface_scene, "SurfaceScene")) {
     stop("'surface_scene' must be NULL or a neurosurf::SurfaceScene.",
          call. = FALSE)
@@ -660,13 +708,23 @@ render_montage_report <- function(manifest,
   panels <- .normalize_montage_panels(panels, map_ids)
   qc <- .montage_qc_summary(manifest)
   panels <- .attach_montage_qc(panels, qc)
+  labelling <- NULL
   if (isTRUE(render_peaks)) {
+    # Resolve the cerebellar reference once (explicit argument, else the
+    # global option), and only when the atlas itself has no cerebellum.
+    cerebellum_vol <- if (!is.null(atlas) &&
+                          !.montage_atlas_has_cerebellum(atlas)) {
+      .montage_cerebellum_reference(cerebellum_reference)
+    }
     panels <- .render_montage_peak_panels(
       manifest = manifest,
       atlas = atlas,
       panels = panels,
-      max_clusters = max_clusters
+      max_clusters = max_clusters,
+      cerebellum_reference = cerebellum_vol %||% FALSE
     )
+    labelling <- .montage_labelling_summary(atlas, panels,
+                                            reference = cerebellum_vol)
   }
   if (isTRUE(render_volume)) {
     panels <- .render_montage_volume_panels(
@@ -725,7 +783,15 @@ render_montage_report <- function(manifest,
       map_selector = map_selector,
       report_mode = "montage"
     ),
-    provenance = provenance %||% .montage_report_provenance()
+    labelling = labelling,
+    underlay = tryCatch(.montage_underlay_summary(bg), error = function(e) NULL),
+    surface_method = if (isTRUE(render_surface)) {
+      tryCatch(.montage_surface_method(surfatlas, surface_args %||% list()),
+               error = function(e) NULL)
+    },
+    provenance = .montage_report_label_provenance(
+      provenance %||% .montage_report_provenance(), labelling, manifest
+    )
   )
 }
 
@@ -1079,8 +1145,12 @@ render_montage_report <- function(manifest,
     manifest,
     stat_maps,
     support_masks,
-    along = volume_args$along %||% 3L
+    along = volume_args$along %||% 3L,
+    layout = policy$layout %||% character(),
+    scope = policy$slice_scope %||% "section"
   )
+  summary_scale <- .montage_summary_scale(manifest, caps)
+  summary_specs <- list()
 
   for (i in seq_len(nrow(manifest))) {
     map_id <- as.character(manifest$map_id[[i]])
@@ -1092,6 +1162,7 @@ render_montage_report <- function(manifest,
     limits <- c(
       manifest$effective_lower[[i]], manifest$effective_upper[[i]]
     )
+    extent <- .montage_row_extent(manifest, i)
     base_args <- list(
       bg = bg,
       stat = stat_maps[[i]],
@@ -1108,7 +1179,7 @@ render_montage_report <- function(manifest,
       },
       limits = if (continuous) limits else NULL,
       support_mask = support_masks[[i]],
-      zlevels = group_zlevels[[as.character(manifest$analysis_id[[i]])]],
+      zlevels = group_zlevels[[i]]$zlevels,
       ov_cmap = .montage_volume_palette(
         manifest$effective_palette_family[[i]],
         manifest$effective_scale[[i]]
@@ -1116,25 +1187,37 @@ render_montage_report <- function(manifest,
       ov_alpha_mode = manifest$effective_alpha_mode[[i]],
       legend_title = .montage_row_legend_title(manifest[i, , drop = FALSE]),
       units = .montage_row_legend(manifest[i, , drop = FALSE])$units,
+      min_cluster_size = extent$min_cluster_size,
+      connectivity = extent$connectivity,
       # The report's heading and variant tab already name the map, so the
       # panel carries no title of its own (volume_args can still add one).
-      draw = TRUE,
+      draw = FALSE,
       empty = empty
     )
     call_args <- utils::modifyList(base_args, volume_args)
     if ("units" %in% names(volume_args)) {
       call_args["units"] <- volume_args["units"]
     }
-    grDevices::png(
-      filename = image_path,
-      width = width,
-      height = height,
-      res = res
-    )
-    result <- tryCatch(
-      do.call(stat_montage, call_args),
-      finally = grDevices::dev.off()
-    )
+    call_args$draw <- FALSE
+    result <- do.call(stat_montage, call_args)
+    if (inherits(result$plot, "nm_volume_figure_spec")) {
+      .nm_write_figure(result$plot, image_path)
+      variants <- .montage_write_volume_variants(result$plot, image_path)
+      for (field in names(variants)) {
+        panels[[map_id]][[field]] <- variants[[field]]
+      }
+      panels[[map_id]]$volume_alt <- .montage_volume_alt(
+        manifest[i, , drop = FALSE], result
+      )
+    } else {
+      grDevices::png(
+        filename = image_path,
+        width = width,
+        height = height,
+        res = res
+      )
+      tryCatch(print(result$plot), finally = grDevices::dev.off())
+    }
 
     panels[[map_id]]$volume_image <- normalizePath(image_path, mustWork = FALSE)
     panels[[map_id]]$volume <- .montage_volume_display_metadata(
@@ -1143,6 +1226,58 @@ render_montage_report <- function(manifest,
       support = support_masks[[i]]
     )
     panels[[map_id]]$volume$style <- result$style
+    panels[[map_id]]$volume$slice_labels <- result$slice_labels
+    # Which maps share this figure's slice set (for the page caption): scope
+    # "section"/"analysis" with the sharing map_ids, or "map" when the map
+    # chose its own (single-map section, per-map or caller override).
+    zinfo <- group_zlevels[[i]]
+    panels[[map_id]]$slice_scope <- list(
+      scope = if (!is.null(volume_args$zlevels)) {
+        "report"
+      } else {
+        zinfo$scope %||% "map"
+      },
+      section = zinfo$section %||% NA_character_,
+      map_ids = if (!is.null(volume_args$zlevels)) {
+        as.character(manifest$map_id)
+      } else {
+        zinfo$map_ids %||% map_id
+      }
+    )
+    summary_specs[[map_id]] <- result$display_spec
+  }
+
+  for (map_id in names(summary_specs)) {
+    summary_path <- file.path(
+      image_dir, paste0(.safe_file_stem(map_id), "_summary.png")
+    )
+    summary_dark <- sub("\\.png$", "-dark.png", summary_path)
+    ok <- tryCatch({
+      .montage_write_summary_image(
+        summary_specs[[map_id]], summary_scale, summary_path
+      )
+      .montage_write_summary_image(
+        summary_specs[[map_id]], summary_scale, summary_dark, theme = "dark"
+      )
+      TRUE
+    }, error = function(e) {
+      warning("Summary thumbnail for map_id '", map_id, "' failed: ",
+              conditionMessage(e), call. = FALSE)
+      FALSE
+    })
+    if (isTRUE(ok)) {
+      panels[[map_id]]$summary_image <- normalizePath(
+        summary_path, mustWork = FALSE
+      )
+      panels[[map_id]]$summary_image_dark <- normalizePath(
+        summary_dark, mustWork = FALSE
+      )
+      row <- manifest[match(map_id, manifest$map_id), , drop = FALSE]
+      panels[[map_id]]$summary_alt <- .montage_summary_alt(
+        row, summary_specs[[map_id]], summary_scale
+      )
+      panels[[map_id]]$summary_semantics <- .nm_glass_brain_semantics
+    }
   }
 
   .montage_share_group_volume_views(manifest, panels)
@@ -1214,7 +1349,10 @@ render_montage_report <- function(manifest,
           res = res,
           legend_title = .montage_row_legend_title(manifest[i, , drop = FALSE]),
           units = .montage_row_legend(manifest[i, , drop = FALSE])$units
-        )
+        ),
+        if (is.null(source_args$vals)) {
+          .montage_row_extent(manifest, i)
+        }
       ),
       surface_args
     )
@@ -1244,13 +1382,14 @@ render_montage_report <- function(manifest,
     eff_empty <- base_args$empty %||% empty
 
     if (isTRUE(cache_surface) && file.exists(image_path)) {
-      n_supra <- sum(.montage_display_mask(
+      cached_mask <- .montage_display_mask(
         as.numeric(stat_values[[i]]),
         display_mode = manifest$effective_display_mode[[i]],
         threshold = eff_threshold,
         tail = eff_tail,
         support_mask = base_args$support_mask
-      ), na.rm = TRUE)
+      )
+      n_supra <- sum(cached_mask, na.rm = TRUE)
       if (n_supra == 0L) {
         # A panel cached under empty = "warning" must still abort under a later
         # empty = "error" request (the PNG carries no policy of its own).
@@ -1274,6 +1413,14 @@ render_montage_report <- function(manifest,
         warning(msg, call. = FALSE)
       }
       panels[[map_id]]$surface_image <- normalizePath(image_path, mustWork = TRUE)
+      variants <- .montage_cached_surface_variants(image_path)
+      for (field in names(variants)) {
+        panels[[map_id]][[field]] <- variants[[field]]
+      }
+      panels[[map_id]]$surface_alt <- .montage_surface_alt(
+        manifest[i, , drop = FALSE], eff_threshold, eff_tail,
+        eff_cap %||% NA_real_
+      )
       panels[[map_id]]$surface <- list(
         threshold = eff_threshold,
         display_mode = manifest$effective_display_mode[[i]],
@@ -1311,6 +1458,14 @@ render_montage_report <- function(manifest,
     base_args$empty <- eff_empty
     result <- do.call(surf_montage, base_args)
     panels[[map_id]]$surface_image <- result$image
+    variants <- .montage_write_surface_variants(result$strip, result$image)
+    for (field in names(variants)) {
+      panels[[map_id]][[field]] <- variants[[field]]
+    }
+    panels[[map_id]]$surface_alt <- .montage_surface_alt(
+      manifest[i, , drop = FALSE], result$threshold, result$tail,
+      result$cap %||% NA_real_
+    )
     panels[[map_id]]$surface <- list(
       threshold = result$threshold,
       display_mode = result$display_mode,
@@ -1527,38 +1682,326 @@ render_montage_report <- function(manifest,
   mask
 }
 
-.montage_group_zlevels <- function(manifest, stat_maps, support_masks,
-                                   along = 3L) {
-  groups <- .montage_analysis_groups(manifest)
-  stats::setNames(lapply(groups, function(group) {
-    row <- match(group$primary_map_id, manifest$map_id)
-    stat <- stat_maps[[row]]
-    if (!methods::is(stat, "NeuroVol")) return(NULL)
-    mask <- .montage_display_mask(
-      as.numeric(stat),
-      display_mode = manifest$effective_display_mode[[row]],
-      threshold = manifest$effective_threshold[[row]],
-      tail = manifest$effective_tail[[row]],
-      support_mask = support_masks[[row]]
+# Kept display voxels (threshold, support and cluster extent) of one row.
+.montage_row_kept_mask <- function(manifest, row, stat, support_mask) {
+  values <- as.numeric(stat)
+  mask <- .montage_display_mask(
+    values,
+    display_mode = manifest$effective_display_mode[[row]],
+    threshold = manifest$effective_threshold[[row]],
+    tail = manifest$effective_tail[[row]],
+    support_mask = support_mask
+  )
+  if (identical(manifest$effective_display_mode[[row]], "thresholded")) {
+    extent <- .montage_row_extent(manifest, row)
+    mask <- mask & !.montage_extent_excluded(
+      values, dim(stat), mask,
+      min_cluster_size = extent$min_cluster_size,
+      connectivity = extent$connectivity
     )
-    .stat_montage_zlevels(array(mask, dim = dim(stat)), along = along)
-  }), names(groups))
+  }
+  mask
+}
+
+# Slice sets for the report's volume figures, one entry per manifest row
+# (named by map_id), each `list(zlevels, scope, section, map_ids)`.
+#
+# `scope = "section"` (default): every map of one layout section (all layout
+# columns equal; the analysis when there is no layout) is drawn on one slice
+# set, chosen from the union of their kept voxels, so related maps (e.g. faces
+# vs places) compare tile for tile. `"analysis"`: one set per analysis, from
+# its primary map. `"map"`: each map chooses its own slices. A manifest
+# `zlevels` list-column entry (slice indices along `along`) overrides the set
+# for that map; `volume_args$zlevels` overrides every map.
+.montage_group_zlevels <- function(manifest, stat_maps, support_masks,
+                                   along = 3L, layout = character(),
+                                   scope = c("section", "analysis", "map")) {
+  scope <- match.arg(scope)
+  n <- nrow(manifest)
+  map_ids <- as.character(manifest$map_id)
+  layout <- intersect(as.character(layout %||% character()), names(manifest))
+  key <- if (identical(scope, "map")) {
+    map_ids
+  } else if (identical(scope, "section") && length(layout)) {
+    do.call(paste, c(lapply(layout, function(col) {
+      as.character(manifest[[col]])
+    }), sep = "\r"))
+  } else {
+    as.character(manifest$analysis_id)
+  }
+  label_of <- function(rows) {
+    if (identical(scope, "section") && length(layout)) {
+      as.character(manifest[[layout[[length(layout)]]]][[rows[[1L]]]])
+    } else {
+      as.character(manifest$analysis_id[[rows[[1L]]]])
+    }
+  }
+  out <- stats::setNames(vector("list", n), map_ids)
+  groups <- if (identical(scope, "analysis")) {
+    .montage_analysis_groups(manifest)
+  }
+  for (k in unique(key)) {
+    rows <- which(key == k)
+    ok <- vapply(rows, function(r) methods::is(stat_maps[[r]], "NeuroVol"),
+                 logical(1))
+    if (!any(ok)) next
+    dims <- dim(stat_maps[[rows[ok][[1L]]]])
+    rows_used <- rows[ok][vapply(rows[ok], function(r) {
+      identical(dim(stat_maps[[r]]), dims)
+    }, logical(1))]
+    if (identical(scope, "analysis")) {
+      primary <- match(
+        groups[[as.character(manifest$analysis_id[[rows[[1L]]]])]]$primary_map_id,
+        map_ids
+      )
+      if (!is.na(primary) && primary %in% rows_used) rows_used <- primary
+    }
+    union <- NULL
+    for (r in rows_used) {
+      m <- .montage_row_kept_mask(manifest, r, stat_maps[[r]],
+                                  support_masks[[r]])
+      union <- if (is.null(union)) m else union | m
+    }
+    z <- .stat_montage_zlevels(array(union, dim = dims), along = along)
+    shared <- rows[ok][vapply(rows[ok], function(r) {
+      identical(dim(stat_maps[[r]]), dims)
+    }, logical(1))]
+    for (r in shared) {
+      out[[r]] <- list(
+        zlevels = z,
+        scope = if (length(shared) > 1L) scope else "map",
+        section = label_of(rows),
+        map_ids = map_ids[shared]
+      )
+    }
+  }
+  if ("zlevels" %in% names(manifest)) {
+    for (r in seq_len(n)) {
+      z <- manifest$zlevels[[r]]
+      if (is.null(z) || !length(z) || all(is.na(z))) next
+      out[[r]] <- list(zlevels = as.integer(z), scope = "map",
+                       section = out[[r]]$section %||% NA_character_,
+                       map_ids = map_ids[[r]])
+    }
+  }
+  out
 }
 
 .montage_volume_palette <- function(palette_family, scale) {
-  if (identical(palette_family, "diverging")) return("blue-red")
+  if (identical(palette_family, "diverging")) return("nm-signed")
   if (identical(palette_family, "sequential")) return("inferno")
   palette_family %||% if (identical(scale, "diverging")) {
-    "blue-red"
+    "nm-signed"
   } else {
     "inferno"
   }
 }
 
+# Manifest cluster-extent settings for a row (NULL extent when absent).
+.montage_row_extent <- function(manifest, row) {
+  k <- if ("effective_min_cluster_size" %in% names(manifest)) {
+    suppressWarnings(as.integer(manifest$effective_min_cluster_size[[row]]))
+  } else {
+    NA_integer_
+  }
+  connectivity <- if ("effective_connectivity" %in% names(manifest)) {
+    as.character(manifest$effective_connectivity[[row]])
+  } else {
+    NA_character_
+  }
+  if (is.na(connectivity) ||
+      !connectivity %in% c("18-connect", "26-connect", "6-connect")) {
+    connectivity <- "18-connect"
+  }
+  list(
+    min_cluster_size = if (is.na(k) || k <= 1L) NULL else k,
+    connectivity = connectivity
+  )
+}
+
+# One colour scale for every summary thumbnail: the largest thresholded cap.
+.montage_summary_scale <- function(manifest, caps) {
+  values <- unlist(lapply(seq_len(nrow(manifest)), function(i) {
+    if (!identical(manifest$effective_display_mode[[i]], "thresholded")) {
+      return(NULL)
+    }
+    caps[[manifest$cap_key[[i]]]]
+  }), use.names = FALSE)
+  values <- values[is.finite(values) & values > 0]
+  list(cap = if (length(values)) max(values) else NA_real_)
+}
+
+.montage_write_summary_image <- function(spec, scale, path,
+                                         theme = "light") {
+  continuous <- identical(spec$display_mode, "continuous")
+  values <- as.numeric(as.array(spec$source))
+  values[!spec$display_mask | !is.finite(values)] <- if (continuous) {
+    NA_real_
+  } else {
+    0
+  }
+  limits <- if (!continuous && is.finite(scale$cap)) {
+    if (isTRUE(spec$signed)) c(-scale$cap, scale$cap) else c(0, scale$cap)
+  } else {
+    spec$limits
+  }
+  .nm_glass_brain(
+    background = spec$background,
+    stat_values = values,
+    threshold = spec$threshold,
+    limits = limits,
+    palette = spec$palette_value,
+    tail = spec$tail,
+    continuous = continuous,
+    path = path,
+    theme = theme
+  )
+}
+
+# Dark (page dark token) and narrow (phone, 4 columns) variants of a report
+# volume figure, written next to `path`; returns the panel fields.
+.montage_write_volume_variants <- function(spec, path) {
+  out <- list()
+  variants <- list(
+    volume_image_dark = list(theme = "dark", variant = "wide", suffix = "-dark"),
+    volume_image_narrow = list(theme = "light", variant = "narrow",
+                               suffix = "-narrow"),
+    volume_image_narrow_dark = list(theme = "dark", variant = "narrow",
+                                    suffix = "-narrow-dark")
+  )
+  for (field in names(variants)) {
+    v <- variants[[field]]
+    target <- sub("\\.png$", paste0(v$suffix, ".png"), path)
+    ok <- tryCatch({
+      .nm_write_figure(
+        .nm_volume_figure_variant(spec, theme = v$theme, variant = v$variant),
+        target
+      )
+      TRUE
+    }, error = function(e) {
+      warning("Figure variant ", field, " failed: ", conditionMessage(e),
+              call. = FALSE)
+      FALSE
+    })
+    if (isTRUE(ok)) out[[field]] <- normalizePath(target, mustWork = FALSE)
+  }
+  out
+}
+
+.montage_write_surface_variants <- function(strip, path) {
+  out <- list()
+  if (is.null(strip)) return(out)
+  variants <- list(
+    surface_image_dark = list(theme = "dark", variant = "wide", suffix = "-dark"),
+    surface_image_narrow = list(theme = "light", variant = "narrow",
+                                suffix = "-narrow"),
+    surface_image_narrow_dark = list(theme = "dark", variant = "narrow",
+                                     suffix = "-narrow-dark")
+  )
+  for (field in names(variants)) {
+    v <- variants[[field]]
+    target <- sub("\\.png$", paste0(v$suffix, ".png"), path)
+    ok <- tryCatch({
+      .nm_write_surface_strip(strip, target, theme = v$theme,
+                              variant = v$variant)
+      TRUE
+    }, error = function(e) {
+      warning("Surface variant ", field, " failed: ", conditionMessage(e),
+              call. = FALSE)
+      FALSE
+    })
+    if (isTRUE(ok)) out[[field]] <- normalizePath(target, mustWork = FALSE)
+  }
+  out
+}
+
+# Existing variant files beside a cached surface image.
+.montage_cached_surface_variants <- function(path) {
+  out <- list()
+  suffixes <- c(dark = "-dark", narrow = "-narrow",
+                narrow_dark = "-narrow-dark")
+  for (name in names(suffixes)) {
+    target <- sub("\\.png$", paste0(suffixes[[name]], ".png"), path)
+    if (file.exists(target)) {
+      out[[paste0("surface_image_", name)]] <- normalizePath(
+        target, mustWork = TRUE
+      )
+    }
+  }
+  out
+}
+
+.montage_alt_label <- function(row) {
+  label <- if ("label" %in% names(row)) as.character(row$label[[1L]]) else NA
+  if (is.na(label) || !nzchar(label)) label <- as.character(row$map_id[[1L]])
+  label
+}
+
+.montage_alt_display_rule <- function(threshold, tail, cap, k = NULL,
+                                      connectivity = NULL) {
+  if (!is.finite(threshold)) return("continuous colour scale")
+  thr <- .nm_format_tick(threshold)
+  rule <- switch(
+    tail,
+    positive = paste0("values \u2265 ", thr),
+    negative = paste0("values \u2264 ", .nm_minus, thr),
+    paste0("|values| \u2265 ", thr)
+  )
+  if (!is.null(k) && is.finite(k) && k > 1) {
+    rule <- paste0(rule, ", clusters of at least ", k, " voxels")
+  }
+  if (is.finite(cap)) {
+    rule <- paste0(rule, "; colour scale \u00b1", .nm_format_tick(cap))
+  }
+  rule
+}
+
+.montage_volume_alt <- function(row, result) {
+  labels <- result$slice_labels %||% character()
+  span <- if (length(labels) >= 2L) {
+    paste0(" from ", labels[[1L]], " to ",
+           sub("^[xyz] = ", "", labels[[length(labels)]]), " mm")
+  } else if (length(labels) == 1L) {
+    paste0(" at ", labels[[1L]], " mm")
+  } else {
+    ""
+  }
+  spec <- result$display_spec
+  paste0(
+    .montage_alt_label(row), ": ", length(labels), " axial slice",
+    if (length(labels) == 1L) "" else "s", span,
+    " (left hemisphere on the left), showing ",
+    .montage_alt_display_rule(
+      spec$threshold, spec$tail, spec$cap %||% max(abs(spec$limits)),
+      spec$min_cluster_size
+    ),
+    "."
+  )
+}
+
+.montage_surface_alt <- function(row, threshold, tail, cap) {
+  paste0(
+    .montage_alt_label(row), ": inflated cortical surface, left and right ",
+    "hemispheres in lateral and medial views, showing ",
+    .montage_alt_display_rule(threshold, tail, cap),
+    "; values averaged across cortical depth."
+  )
+}
+
+.montage_summary_alt <- function(row, spec, scale) {
+  paste0(
+    "Glass brain of ", .montage_alt_label(row),
+    ": strongest effect along each line of sight in sagittal, coronal and ",
+    "axial projections, colour strength scaled to the report-wide colour cap",
+    if (is.finite(scale$cap)) paste0(" (\u00b1", .nm_format_tick(scale$cap), ")"),
+    "."
+  )
+}
+
 .montage_surface_palette <- function(palette_family, scale) {
-  if (identical(palette_family, "diverging")) return("vik")
+  if (identical(palette_family, "diverging")) return("nm-signed")
   if (identical(palette_family, "sequential")) return("lajolla")
-  palette_family %||% if (identical(scale, "diverging")) "vik" else "lajolla"
+  palette_family %||% if (identical(scale, "diverging")) "nm-signed" else "lajolla"
 }
 
 .attach_montage_group_views <- function(groups, panels) {
@@ -1753,7 +2196,7 @@ render_montage_report <- function(manifest,
   # Bump when an implicit rendering/projection default changes. Explicit
   # surface_args are already in payload; this version prevents a new release
   # from reusing pixels produced under an older default contract.
-  payload$.surface_contract_version <- 2L
+  payload$.surface_contract_version <- 4L
   substr(rlang::hash(payload), 1, 16)
 }
 
@@ -1762,8 +2205,169 @@ render_montage_report <- function(manifest,
     generated_at = format(Sys.time(), tz = "UTC", usetz = TRUE),
     package = "neuromosaic",
     package_version = as.character(utils::packageVersion("neuromosaic")),
-    report_mode = "montage"
+    package_source = .montage_package_source(),
+    package_url = .montage_package_url(),
+    report_mode = "montage",
+    software = .montage_software_versions(),
+    r_version = paste(R.version$major, R.version$minor, sep = ".")
   )
+}
+
+# Where the neuromosaic code that drew the report came from: the commit of a
+# source checkout (flagged when it has uncommitted changes), else the remote
+# commit recorded at installation; NA when neither is known.
+.montage_package_source <- function(pkg = "neuromosaic") {
+  desc <- tryCatch(utils::packageDescription(pkg), error = function(e) NULL)
+  path <- tryCatch(find.package(pkg), error = function(e) "")
+  git <- Sys.which("git")
+  if (nzchar(path) && nzchar(git) && dir.exists(path)) {
+    sha <- tryCatch(suppressWarnings(system2(
+      git, c("-C", shQuote(path), "rev-parse", "--short=12", "HEAD"),
+      stdout = TRUE, stderr = FALSE
+    )), error = function(e) character())
+    top <- tryCatch(suppressWarnings(system2(
+      git, c("-C", shQuote(path), "rev-parse", "--show-toplevel"),
+      stdout = TRUE, stderr = FALSE
+    )), error = function(e) character())
+    same <- length(top) == 1L &&
+      identical(normalizePath(top, mustWork = FALSE), normalizePath(path, mustWork = FALSE))
+    if (length(sha) == 1L && grepl("^[0-9a-f]{7,40}$", sha) && same) {
+      dirty <- tryCatch(suppressWarnings(system2(
+        git, c("-C", shQuote(path), "status", "--porcelain", "--untracked-files=no"),
+        stdout = TRUE, stderr = FALSE
+      )), error = function(e) character())
+      return(paste0("git ", sha, if (length(dirty)) " (with uncommitted changes)" else ""))
+    }
+  }
+  if (is.list(desc)) {
+    sha <- desc$RemoteSha %||% desc$GithubSHA1
+    if (!is.null(sha) && nzchar(sha)) {
+      repo <- if (!is.null(desc$RemoteUsername) && !is.null(desc$RemoteRepo)) {
+        paste0(desc$RemoteUsername, "/", desc$RemoteRepo, "@")
+      } else {
+        ""
+      }
+      return(paste0(repo, substr(sha, 1L, 12L)))
+    }
+    if (!is.null(desc$Repository) && nzchar(desc$Repository)) {
+      return(desc$Repository)
+    }
+  }
+  NA_character_
+}
+
+# The package's code URL (DESCRIPTION URL field, preferring the repository).
+.montage_package_url <- function(pkg = "neuromosaic") {
+  url <- tryCatch(utils::packageDescription(pkg)$URL, error = function(e) NULL)
+  if (is.null(url) || is.na(url) || !nzchar(url)) return(NA_character_)
+  urls <- trimws(strsplit(url, "[,[:space:]]+")[[1L]])
+  urls <- urls[nzchar(urls)]
+  repo <- urls[grepl("github\\.com|gitlab|codeberg", urls)]
+  (if (length(repo)) repo else urls)[[1L]]
+}
+
+# The underlay the volume figures are drawn on: template name and voxel size,
+# read from the background image's file name (TemplateFlow / FSL naming) and
+# space. NULL without a background.
+.montage_underlay_summary <- function(bg) {
+  if (is.null(bg)) return(NULL)
+  vol <- tryCatch(if (is.character(bg)) neuroim2::read_vol(bg) else bg,
+                  error = function(e) NULL)
+  file <- if (is.character(bg)) bg else tryCatch(vol@header$file_name, error = function(e) NULL)
+  file <- basename(as.character(file %||% ""))
+  tpl <- regmatches(file, regexpr("(?<=tpl-)[A-Za-z0-9]+", file, perl = TRUE))
+  if (!length(tpl)) {
+    tpl <- regmatches(file, regexpr("MNI152[A-Za-z0-9_]*|MNI305|colin27", file,
+                                    ignore.case = TRUE))
+  }
+  spacing <- tryCatch(as.numeric(neuroim2::spacing(neuroim2::space(vol)))[1:3],
+                      error = function(e) NULL)
+  dims <- tryCatch(dim(vol)[1:3], error = function(e) NULL)
+  list(
+    template = if (length(tpl)) sub("_+$", "", tpl[[1L]]) else NA_character_,
+    file = if (nzchar(file)) file else NA_character_,
+    spacing = spacing,
+    dims = dims
+  )
+}
+
+# How the surface figures were made: the atlas mesh and the volume-to-surface
+# projection settings (surf_montage defaults unless surface_args overrides).
+.montage_surface_method <- function(surfatlas, surface_args = list()) {
+  if (is.null(surfatlas)) return(NULL)
+  defaults <- formals(surf_montage)
+  pick <- function(name) {
+    v <- surface_args[[name]]
+    if (!is.null(v)) return(v)
+    d <- defaults[[name]]
+    if (is.call(d)) d <- eval(d)
+    if (is.character(d) && length(d) > 1L) d[[1L]] else d
+  }
+  space <- as.character(surfatlas$surface_space %||% surfatlas$space %||% NA)[[1L]]
+  vertices <- tryCatch({
+    g <- surfatlas$lh_atlas
+    n <- length(neurosurf::nodes(g))
+    if (is.finite(n) && n > 0) n else NA_integer_
+  }, error = function(e) NA_integer_)
+  sampling <- pick("sampling")
+  interpolation <- pick("interpolation")
+  depth <- pick("depth")
+  if (is.null(depth) && identical(sampling, "thickness") && identical(interpolation, "linear")) {
+    depth <- seq(0.1, 0.9, length.out = 5L)
+  }
+  list(
+    space = space,
+    surface = as.character(surfatlas$surf_type %||% pick("surface") %||% NA)[[1L]],
+    vertices = vertices,
+    fun = pick("fun"),
+    sampling = sampling,
+    interpolation = interpolation,
+    aggregate = pick("aggregate"),
+    depth = depth,
+    smooth_fwhm = pick("surface_smooth_fwhm"),
+    medial_wall = !is.null(surfatlas$cortex_mask)
+  )
+}
+
+# "neuromosaic 0.3.0; neuroim2 0.8.1; ..." for the packages that drew the
+# report (only those installed).
+.montage_software_versions <- function(
+    pkgs = c("neuromosaic", "neuroim2", "neuroatlas", "neurosurf")) {
+  v <- vapply(pkgs, function(p) {
+    tryCatch(as.character(utils::packageVersion(p)), error = function(e) NA_character_)
+  }, character(1))
+  v <- v[!is.na(v)]
+  if (!length(v)) return(NA_character_)
+  paste(paste(names(v), v), collapse = "; ")
+}
+
+# Scientific inputs and label sources, recorded alongside the technical
+# provenance: input files, the atlas, and the cerebellar reference.
+.montage_report_label_provenance <- function(prov, labelling, manifest) {
+  if (!is.list(prov)) prov <- list()
+  if (is.data.frame(manifest) && "path" %in% names(manifest) && nrow(manifest)) {
+    label <- if ("label" %in% names(manifest)) as.character(manifest$label) else
+      as.character(manifest$map_id)
+    path <- as.character(manifest$path)
+    ok <- !is.na(path) & nzchar(path)
+    if (any(ok)) {
+      prov$input_files <- paste(paste0(label[ok], " = ", basename(path[ok])),
+                                collapse = "; ")
+    }
+  }
+  if (!is.null(labelling)) {
+    if (length(labelling$atlases)) {
+      prov$peak_label_atlas <- paste(labelling$atlases, collapse = " + ")
+    }
+    prov$peak_label_nearest_radius_mm <- labelling$radius
+    prov$peak_label_cerebellum <- if (!is.null(labelling$cerebellum)) {
+      paste0(labelling$cerebellum$source, " (", labelling$cerebellum$n,
+             if (identical(labelling$cerebellum$n, 1L)) " peak" else " peaks", ")")
+    } else {
+      "none"
+    }
+  }
+  prov
 }
 
 .write_montage_report_qmd <- function(report_data, output_file, template) {
@@ -1779,6 +2383,9 @@ render_montage_report <- function(manifest,
   )
   saveRDS(report_data, sidecar_path)
   lines <- gsub("__REPORT_DATA_FILE__", sidecar, lines, fixed = TRUE)
+  # The page title goes into a double-quoted YAML scalar.
+  page_title <- gsub("[\"\\\\]", "", report_data$params$title %||% "Montage report")
+  lines <- gsub("__REPORT_TITLE__", page_title, lines, fixed = TRUE)
   note_lines <- c(
     paste0(
       "<!-- NOTE: This .qmd expects the sidecar file '", sidecar,
@@ -1827,12 +2434,11 @@ render_montage_report <- function(manifest,
     report_data$manifest[source_fields] <- NULL
   }
 
-  image_fields <- c(
-    "volume_image", "volume_image_path",
-    "surface_image", "surface_image_path"
-  )
+  # Every static image the page shows: figures, glance thumbnails and their
+  # dark / narrow variants.
+  image_pattern <- "^(volume|surface|summary)_image(_path|_dark|_narrow|_narrow_dark)?$"
   report_data$panels <- lapply(report_data$panels, function(panel) {
-    for (field in intersect(image_fields, names(panel))) {
+    for (field in grep(image_pattern, names(panel), value = TRUE)) {
       value <- panel[[field]]
       if (is.character(value) && length(value) == 1L &&
           !is.na(value) && nzchar(value)) {

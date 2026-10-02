@@ -808,6 +808,39 @@ test_that("montage templates share formatter helpers and base64 image strategy",
   expect_match(text, "results='asis'", fixed = TRUE)
 })
 
+test_that("bundle figure assets are companion files with intrinsic sizes", {
+  image_path <- tempfile("montage-format-image-", fileext = ".png")
+  grDevices::png(image_path, width = 64, height = 40)
+  graphics::par(mar = rep(0, 4))
+  graphics::plot.new()
+  grDevices::dev.off()
+  out <- tempfile("montage-figures-")
+  fmt <- montage_report_formatters(
+    is_html = TRUE,
+    figure_assets = list(dir = out, href = "report_files/figures")
+  )
+  image_html <- paste(
+    capture.output(fmt$emit_panel_image(image_path, "panel")),
+    collapse = "\n"
+  )
+
+  expect_false(grepl("data:image", image_html, fixed = TRUE))
+  src <- sub('.*src="([^"]+)".*', "\\1", image_html)
+  expect_match(src, "^report_files/figures/[0-9a-f]{16}\\.png$")
+  expect_true(file.exists(file.path(out, basename(src))))
+  expect_match(image_html, 'width="64" height="40"', fixed = TRUE)
+
+  inline <- montage_report_formatters(is_html = TRUE)
+  inline_html <- paste(
+    capture.output(inline$emit_panel_image(image_path, "panel")),
+    collapse = "\n"
+  )
+  expect_match(inline_html, 'width="64" height="40"', fixed = TRUE)
+  expect_null(neuromosaic:::.montage_png_dimensions(
+    system.file("DESCRIPTION", package = "neuromosaic")
+  ))
+})
+
 test_that(".montage_shared_caps uses a robust quantile, not the raw maximum", {
   sp <- neuroim2::NeuroSpace(dim = c(4, 4, 4), spacing = c(2, 2, 2))
   arr <- array(0, dim = c(4, 4, 4))

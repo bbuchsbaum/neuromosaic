@@ -30,11 +30,17 @@ test_that("montage_peak_table matches single-map atlas peak labels", {
   expect_s3_class(montage, "data.frame")
   expect_equal(nrow(montage), nrow(single))
   expect_identical(montage$map_id, rep("faces_m1", nrow(montage)))
-  expect_equal(montage$cluster_id, single$cluster_id)
+  # Same clusters; montage tables number them within sign (first negative N1).
+  expect_equal(montage$cluster_id,
+               neuromosaic:::.montage_sign_cluster_ids(single)$cluster_id)
+  expect_equal(montage$max_stat, single$max_stat)
+  expect_equal(montage$n_voxels, single$n_voxels)
   expect_equal(montage$peak_mni_x, single$peak_mni_x)
   expect_equal(montage$peak_mni_y, single$peak_mni_y)
   expect_equal(montage$peak_mni_z, single$peak_mni_z)
-  expect_equal(montage$atlas_label, single$atlas_label)
+  exact <- montage$label_source %in% "atlas"
+  expect_equal(montage$atlas_label[exact], single$atlas_label[exact])
+  expect_true(all(is.na(single$atlas_label[!exact]) | !nzchar(single$atlas_label[!exact])))
 })
 
 test_that("montage_peak_table validates inputs and handles empty clusters", {

@@ -13,7 +13,8 @@ montage_report_formatters(
   interludes = NULL,
   groups = NULL,
   map_selector = "auto",
-  panels = NULL
+  panels = NULL,
+  figure_assets = NULL
 )
 }
 \arguments{
@@ -40,6 +41,15 @@ with columns `map_id`, `text`, and optional `position` (`"before"` or
 \item{groups}{Optional analysis-group metadata produced by the report engine.}
 
 \item{map_selector}{HTML selector style; see [render_montage_report()].}
+
+\item{panels}{Optional per-map panel data produced by the report engine.}
+
+\item{figure_assets}{Optional list with `dir` (filesystem directory) and
+`href` (relative URL prefix). When supplied, HTML panel images are copied
+into `dir` under content-addressed names and referenced by relative URL
+instead of being inlined as data URIs. [render_montage_report()] sets this
+for bundle-mode reports, whose HTML already travels with a companion
+directory.}
 }
 \value{
 A named list of formatter and emitter functions.

@@ -12,7 +12,10 @@ montage_peak_table(
   connectivity = c("18-connect", "26-connect", "6-connect"),
   min_cluster_size = 10L,
   max_clusters = 20L,
-  map_id = NULL
+  map_id = NULL,
+  label_radius = 4,
+  cerebellum = TRUE,
+  cerebellum_reference = getOption("neuromosaic.cerebellum_reference", NULL)
 )
 }
 \arguments{
@@ -31,6 +34,27 @@ montage_peak_table(
 \item{max_clusters}{Maximum number of clusters to retain.}
 
 \item{map_id}{Optional panel map id to add to the returned table.}
+
+\item{label_radius}{Search radius in millimetres for peaks that fall
+outside every atlas region: the nearest labelled voxel within this radius
+names the peak, and the table records the distance
+(`label_distance_mm`) and `label_source = "nearest"`. `0` disables the
+search.}
+
+\item{cerebellum}{Logical; when the atlas has no cerebellar regions, label
+cerebellar peaks from `cerebellum_reference` (FreeSurfer labels 8 and
+47). `FALSE` never consults a reference.}
+
+\item{cerebellum_reference}{Cerebellar reference segmentation used when
+`cerebellum = TRUE` and the atlas has no cerebellum: `NULL` or `FALSE`
+(none; nothing is fetched), `TRUE` or `"hcp"` (the HCP grayordinate
+subcortical segmentation, TemplateFlow `tpl-MNI152NLin6Asym` `atlas-HCP`
+`dseg`, 2 mm, fetched once per session), a `NeuroVol`, or a path to a
+label volume in the map's space. Defaults to the global option
+`neuromosaic.cerebellum_reference`, so an explicit argument always wins.
+Without a reference, or when it cannot be obtained, cerebellar peaks keep
+the nearest-region or "outside atlas" label. Peaks labelled from the
+reference have `label_source = "cerebellum"`.}
 }
 \value{
 A tibble/data frame of enriched cluster peaks.
@@ -39,4 +63,16 @@ A tibble/data frame of enriched cluster peaks.
 Builds the cluster peak table used by montage reports by reusing the
 single-map cluster-report annotation path: cluster extraction, atlas overlap,
 MNI coordinate conversion, and `neuroatlas::query_point()` peak labels.
+}
+\details{
+Clusters are numbered within sign by peak strength: `P1` is the
+  positive cluster with the largest peak value, `N1` the negative cluster
+  with the most negative peak, and so on (ties go to the larger cluster).
+  Numbering never changes a value, coordinate or cluster extent. The rows
+  returned are the `max_clusters` strongest by |peak|, except that each sign
+  with a surviving cluster keeps at least its strongest one; they are
+  ordered by |peak|. The complete (untruncated) labelled cluster list is
+  attached as `attr(x, "all_clusters")`. `hemisphere` follows the peak's
+  x coordinate (`"left"`, `"right"`, or `"midline"` when |x| < 2 mm), the
+  same rule for labelled and unlabelled peaks.
 }

@@ -44,7 +44,8 @@ render_montage_report(
   provenance = NULL,
   surface_scene = NULL,
   interactive = NULL,
-  surface = NULL
+  surface = NULL,
+  cerebellum_reference = getOption("neuromosaic.cerebellum_reference", NULL)
 )
 }
 \arguments{
@@ -114,15 +115,29 @@ montage PNGs are generated with [stat_montage()].}
 `volume_image`, `surface_image`, `table`, or other renderer-specific data.}
 
 \item{volume_args}{Optional named list of styling arguments forwarded to
-[stat_montage()] for every volume panel (e.g.
-`list(ov_alpha_mode = "ramp", cap = 8)`). Caller values win over the
-manifest/policy-derived defaults; `bg`, `stat`, and `draw` are managed by
-the renderer and cannot be overridden. Note that these are merged with
-[utils::modifyList()], so passing `cap = NULL` (or any `NULL`) *removes*
-the derived default rather than forcing it; omit the argument to keep the
-policy/robust default. Overriding analytical controls (`threshold`, `tail`,
-`signed`) here changes only the rendered panel, not the manifest-driven
-peak tables, so the two can diverge.}
+  [stat_montage()] for every volume panel (e.g.
+  `list(ov_alpha_mode = "ramp", cap = 8)`). Caller values win over the
+  manifest/policy-derived defaults; `bg`, `stat`, and `draw` are managed by
+  the renderer and cannot be overridden. Note that these are merged with
+  [utils::modifyList()], so passing `cap = NULL` (or any `NULL`) *removes*
+  the derived default rather than forcing it; omit the argument to keep the
+  policy/robust default. Overriding analytical controls (`threshold`, `tail`,
+  `signed`) here changes only the rendered panel, not the manifest-driven
+  peak tables, so the two can diverge.
+
+  What the static report figure honours: the report draws
+  `stat_montage(figure = "report")`, whose overlay is opaque above the
+  threshold and encodes magnitude by colour alone. There, `ov_alpha` acts
+  only as a floor-raised opacity (values below 0.92 are drawn at 0.92), and
+  `ov_alpha_mode`, `alpha_gamma`, `bg_cmap`, `style`, `title`, `subtitle`
+  and `caption` have no effect on the figure (they shape only
+  `figure = "classic"`). `ov_alpha` and `ov_alpha_mode` are still recorded
+  in the map's display metadata, which the interactive volume viewer
+  reads. Slice selection (`zlevels`, `along`), `ncol`, the colour controls
+  (`cap`, `limits`, `ov_cmap`), `threshold`/`tail`/`signed`, cluster extent
+  and `legend_title`/`units` all apply to the figure. Without a `zlevels`
+  override, maps of one layout section share a slice set
+  ([montage_policy()] `slice_scope`).}
 
 \item{surface_args}{Optional named list of styling arguments forwarded to
 [surf_montage()] for every surface panel (e.g.
@@ -195,6 +210,17 @@ analysis from the resolved manifest and associates every layer with its
 `map_id`. Static surface panels are required and remain authoritative.
 Surface typed arrays can be compressed into the HTML for direct `file://`
 viewing or written once as relative content-addressed bundle assets.}
+
+\item{cerebellum_reference}{Cerebellar reference used to label peaks
+that fall in the cerebellum when `atlas` has no cerebellar regions (for
+example Schaefer + ASEG): `NULL` or `FALSE` (none; the default, and
+nothing is fetched), `TRUE` or `"hcp"` (the HCP grayordinate subcortical
+segmentation from TemplateFlow, `tpl-MNI152NLin6Asym` `atlas-HCP` `dseg`,
+2 mm, fetched once per session), a `NeuroVol`, or a path to a label
+volume with FreeSurfer cerebellum labels 8 (left) and 47 (right). Falls
+back to `getOption("neuromosaic.cerebellum_reference")` when not given.
+Whatever is used is stated in the report header, the Methods paragraph
+and Provenance; see [montage_peak_table()].}
 }
 \value{
 The path to the rendered report (invisibly).
