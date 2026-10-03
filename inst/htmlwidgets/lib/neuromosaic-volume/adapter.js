@@ -1,9 +1,10 @@
 (function (root) {
   "use strict";
 
-  var ADAPTER_VERSION = "1.4.1";
-  var RUNTIME_VERSION = "0.4.0";
+  var ADAPTER_VERSION = "1.5.0";
+  var RUNTIME_VERSION = "0.5.0";
   var OVERLAY_LAYER_ID = "neuromosaic-overlay";
+  var BACKGROUND_LAYER_ID = "neuromosaic-background";
   var UNDERLAY_HEADROOM = 1.3;
   // Stage grounds: "light" matches the static figures, "dark" is the
   // instrument stage. Theme picks the default; a reader's choice is kept.
@@ -333,7 +334,6 @@
   }
 
   async function decodeAsset(state, assetId, isBackground) {
-    if (isBackground && state.backgroundVolume) return state.backgroundVolume;
     if (!isBackground && state.overlayCache.has(assetId)) {
       var cached = state.overlayCache.get(assetId);
       state.overlayCache.delete(assetId);
@@ -352,10 +352,8 @@
       asset.asset_id
     );
 
-    if (isBackground) {
-      state.backgroundVolume = volume;
-      return volume;
-    }
+    // The underlay is cached page-wide, prepared (underlayFor).
+    if (isBackground) return volume;
     state.overlayCache.set(assetId, volume);
     while (state.overlayCache.size > state.scene.view.cache_maps) {
       state.overlayCache.delete(state.overlayCache.keys().next().value);
@@ -619,30 +617,59 @@
     return withData(volume, result);
   }
 
-  function backgroundLayer(volume, ground) {
-    var api = root.neuroimjs;
-    var range = volume.getRange().map(Number);
-    if (range.length !== 2 || !range.every(Number.isFinite)) {
-      fail("Background volume has no finite display range.");
-    }
-    if (range[0] === range[1]) range = [range[0] - 0.5, range[1] + 0.5];
-    var floor = backgroundFloor(volume, range);
-    // Hold the brightest tissue below white so suprathreshold colour reads
-    // against the underlay instead of competing with it.
-    range = [floor, floor + (range[1] - floor) * UNDERLAY_HEADROOM];
-    var span = Math.abs(range[1] - floor) || 1;
-    volume = prepareUnderlay(volume, floor, floor - 0.25 * span, floor + 0.01 * span);
+  // The ground-dependent part of the underlay display: its grey ramp and, on
+  // the light ground, hiding voxels at or below the floor (outside the head)
+  // so the brain sits on the figure ground as in the static montage.
+  function underlayLook(api, underlay, ground) {
     var spec = GROUNDS[ground] || GROUNDS.dark;
-    // On the light ground, voxels at or below the floor (outside the head)
-    // are not drawn, so the brain sits on the figure ground as in the static
-    // montage.
-    var hide = spec.hideOutside ? [Math.min(range[0], floor) - Math.abs(range[1] - floor) - 1, floor] : [0, 0];
+    var range = underlay.range, floor = underlay.floor;
+    return {
+      colormap: underlayColorMap(api, range, ground),
+      threshold: spec.hideOutside ?
+        [Math.min(range[0], floor) - Math.abs(range[1] - floor) - 1, floor] : [0, 0]
+    };
+  }
+
+  // The underlay as drawn (floor, display range, smoothed head contour and
+  // head bounds), decoded and prepared once per page and shared by every
+  // viewer: a 1 mm template is 7 M voxels.
+  var underlays = new Map();
+
+  function underlayFor(state, assetId) {
+    if (underlays.has(assetId)) return underlays.get(assetId);
+    var pending = decodeAsset(state, assetId, true).then(function (volume) {
+      var range = volume.getRange().map(Number);
+      if (range.length !== 2 || !range.every(Number.isFinite)) {
+        fail("Background volume has no finite display range.");
+      }
+      if (range[0] === range[1]) range = [range[0] - 0.5, range[1] + 0.5];
+      var floor = backgroundFloor(volume, range);
+      var bounds = headBounds(volume);
+      // Hold the brightest tissue below white so suprathreshold colour reads
+      // against the underlay instead of competing with it.
+      range = [floor, floor + (range[1] - floor) * UNDERLAY_HEADROOM];
+      var span = Math.abs(range[1] - floor) || 1;
+      return {
+        volume: prepareUnderlay(volume, floor, floor - 0.25 * span, floor + 0.01 * span),
+        range: range,
+        floor: floor,
+        bounds: bounds
+      };
+    });
+    pending.catch(function () { underlays.delete(assetId); });
+    underlays.set(assetId, pending);
+    return pending;
+  }
+
+  function backgroundLayer(underlay, ground) {
+    var api = root.neuroimjs;
+    var look = underlayLook(api, underlay, ground);
     var layer = new api.VolLayer(
-      "neuromosaic-background",
-      volume,
-      underlayColorMap(api, range, ground),
-      range,
-      hide,
+      BACKGROUND_LAYER_ID,
+      underlay.volume,
+      look.colormap,
+      underlay.range,
+      look.threshold,
       1
     );
     // Templates often end inside tissue (neck, lower cerebellum); fade the
@@ -867,8 +894,10 @@
     return Number(data[(k * dim[1] + j) * dim[0] + i]);
   }
 
+  // The map voxel (overlay grid) at a world coordinate. The underlay may be
+  // on a finer grid, so never use layer 0 here.
   function voxelOf(state, coord) {
-    var layer = state.stack && state.stack.getLayer(0);
+    var layer = overlayVolLayer(state);
     if (!layer || !layer.space || typeof layer.space.coordToGrid !== "function") return null;
     var g = layer.space.coordToGrid(coord);
     if (!g || g.some(function (v) { return !Number.isFinite(v); })) return null;
@@ -1093,7 +1122,8 @@
     var step = function (cell, steps) {
       var axis = VIEW_AXIS[cell.dataset.nijView];
       if (axis === undefined) return false;
-      var layer = state.stack && state.stack.getLayer(0);
+      // One map voxel per step, whatever the underlay's resolution.
+      var layer = overlayVolLayer(state);
       var spacing = layer && layer.space && layer.space.spacing ?
         Math.abs(Number(layer.space.spacing[axis])) || 1 : 1;
       var coord = state.viewer.getWorldCoord().slice();
@@ -1135,40 +1165,6 @@
     };
     state.viewerElement.addEventListener("wheel", state.onSliceWheel, { capture: true, passive: false });
     state.viewerElement.addEventListener("keydown", state.onSliceKey, true);
-    guardRuntimeKeys(state);
-  }
-
-  // The runtime's document-level Left/Right handler steps the hovered pane
-  // and cancels the key even in a focused slider; run it only from the page
-  // or a slice pane.
-  function keyOrigin(origin, viewerElement) {
-    if (!origin || origin === document.body || origin === document.documentElement) {
-      return { isPage: true };
-    }
-    return {
-      tag: origin.tagName,
-      editable: !!origin.isContentEditable,
-      inPane: !!(viewerElement && viewerElement.contains(origin) &&
-        origin.closest && origin.closest("[data-nij-view]"))
-    };
-  }
-
-  function guardRuntimeKeys(state) {
-    // SimpleOrthogonalViewer wraps the orthogonal viewer that listens.
-    var viewer = state.viewer && typeof state.viewer.handleKeydownBound === "function" ?
-      state.viewer : (state.viewer && state.viewer.viewer);
-    if (!viewer || typeof viewer.handleKeydownBound !== "function" || viewer.__nmKeysGuarded) return;
-    var inner = viewer.handleKeydownBound;
-    document.removeEventListener("keydown", inner);
-    viewer.handleKeydownBound = function (event) {
-      var path = typeof event.composedPath === "function" ? event.composedPath() : [];
-      var origin = path.length ? path[0] : event.target;
-      if (origin && origin.nodeType !== 1) origin = origin.parentElement || null;
-      if (!root.NeuroMosaicVolumeDisplay.runtimeKeyAllowed(keyOrigin(origin, state.viewerElement))) return;
-      inner(event);
-    };
-    viewer.__nmKeysGuarded = true;
-    document.addEventListener("keydown", viewer.handleKeydownBound);
   }
 
   // The two-thumb slider's inputs are 0 px tall: give them the hit height and
@@ -1782,7 +1778,9 @@
     setStatus(state, "Loading " + map.label + "...", "loading");
     try {
       var raw = await decodeAsset(state, map.asset_id, false);
-      root.neuroimjs.assertSameVolumeGeometry(state.backgroundVolume, raw);
+      // Maps of one analysis share a grid (the overlay layer swaps volumes in
+      // place); the underlay may be on its own grid ('world' alignment).
+      root.neuroimjs.assertSameVolumeGeometry(state.overlayGrid, raw);
       var display = mapDisplay(map, raw);
       var volume = extentVolume(raw, map, display.threshold);
       state.rawOverlay = raw;
@@ -1861,18 +1859,22 @@
       return map.map_id === host.dataset.nmVolumeMap;
     }) || primary;
     var volumes = await Promise.all([
-      decodeAsset(state, backgroundAsset.asset_id, true),
+      underlayFor(state, backgroundAsset.asset_id),
       decodeAsset(state, initialMap.asset_id, false)
     ]);
-    root.neuroimjs.assertSameVolumeGeometry(volumes[0], volumes[1]);
+    // The underlay may sit on a finer grid than the maps: neuroimjs 0.5 slices
+    // each layer on its own grid and draws it at its world position.
+    state.overlayGrid = volumes[1];
 
     state.menuMap = initialMap;
     var ground = groundOf(host);
-    var look = GROUNDS[ground];
+    var theme = groundTheme(ground);
     state.ground = ground;
     host.dataset.nmVolumeGround = ground;
+    state.underlay = volumes[0];
+    var underlayLayer = backgroundLayer(volumes[0], ground);
     var stack = new root.neuroimjs.VolStack(
-      backgroundLayer(volumes[0], ground),
+      underlayLayer,
       overlayLayer(state, volumes[1], initialMap)
     );
     var restoreConsole = quietPixiDeprecations();
@@ -1889,36 +1891,29 @@
         stackBelowPx: 520,
         stackedLegendHeightPx: 292,
         stackMode: "single",
-        backgroundColor: look.stage,
+        backgroundColor: theme.backgroundColor,
         focusOutline: null,
-        crosshairOptions: {
-          crossColor: look.cross,
-          crossAlpha: look.crossAlpha,
+        crosshairOptions: Object.assign({
           crossThickness: 1,
-          crosshairGap: 22,
-          haloColor: look.halo,
-          haloAlpha: look.haloAlpha
-        },
-        orientationLabelOptions: {
+          crosshairGap: 22
+        }, theme.crosshair),
+        orientationLabelOptions: Object.assign({
           fontSize: 11,
           fontWeight: "600",
           fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
           letterSpacing: 0.6,
-          color: look.label,
-          alpha: look.labelAlpha,
           strokeWidth: 0,
-          shadowAlpha: look.labelShadow,
           shadowBlur: 3,
           margin: 5,
           anchor: "image"
-        }
+        }, theme.orientationLabels)
       }
     );
     state.stack = stack;
     // Orientation labels are built on the first frames; release the console
     // filter once those have rendered.
     requestAnimationFrame(function () { requestAnimationFrame(restoreConsole); });
-    var bounds = headBounds(volumes[0]);
+    var bounds = volumes[0].bounds;
     if (bounds && typeof state.viewer.setFitBounds === "function") state.viewer.setFitBounds(bounds);
     Array.prototype.forEach.call(state.viewerElement.children, function (element, index) {
       if (element.dataset.nijLegend !== undefined) return;
@@ -2254,9 +2249,14 @@
   function bindSliceDrag(state) {
     var drag = null, frame = 0;
     state.onDragDown = function (event) {
-      if (event.__nmReplay || event.button !== 0) return;
+      if (event.button !== 0) return;
       var canvas = event.target;
       if (!canvas || canvas.tagName !== "CANVAS" || !canvas.closest("[data-nij-view]")) return;
+      // After the runtime has moved the cursor to the pointer, centre it on
+      // the map voxel under the pointer.
+      var through = VIEW_AXIS[canvas.closest("[data-nij-view]").dataset.nijView];
+      setTimeout(function () { snapToMapVoxel(state, through); }, 0);
+      if (event.__nmReplay) return;
       drag = { canvas: canvas, pointerId: event.pointerId, pointerType: event.pointerType };
     };
     state.onDragMove = function (event) {
@@ -2284,6 +2284,30 @@
     document.addEventListener("pointermove", state.onDragMove, true);
     document.addEventListener("pointerup", state.onDragEnd, true);
     document.addEventListener("pointercancel", state.onDragEnd, true);
+  }
+
+  // A click or drag selects the map voxel under the pointer: the cursor moves
+  // to that voxel's centre in the pane's plane (the through-plane coordinate
+  // is left alone). With an underlay on a finer grid the runtime would
+  // otherwise leave it at the underlay texel centre, which can lie on the
+  // boundary between two map voxels; the crosshair, coordinates and value then
+  // all name one map voxel.
+  function snapToMapVoxel(state, through) {
+    var layer = overlayVolLayer(state);
+    var space = layer && layer.space;
+    if (!state.viewer || !space || typeof space.coordToGrid !== "function" ||
+        typeof space.gridToCoord !== "function") return;
+    var coord = state.viewer.getWorldCoord().slice();
+    var grid = space.coordToGrid(coord);
+    var dim = space.dim || [];
+    var voxel = grid.map(function (v) { return Math.round(v); });
+    if (voxel.some(function (v, axis) { return !Number.isFinite(v) || v < 0 || v >= dim[axis]; })) return;
+    var centre = space.gridToCoord(voxel);
+    var target = coord.map(function (v, axis) { return axis === through ? v : Number(centre[axis]); });
+    var moved = target.some(function (v, axis) { return Math.abs(v - coord[axis]) > 1e-6; });
+    if (!moved) return;
+    state.viewer.setWorldCoord(target);
+    updateReadout(state);
   }
 
   // Displayed: the reader chose Slices for this map (it may be off screen).
@@ -2326,27 +2350,44 @@
     if (keepPlace) park(host, height, false);
   }
 
-  // Rebuild the viewer on the other ground, keeping the cursor and any
-  // display change (the same path as a budget release and resume).
-  async function switchGround(host, ground) {
+  // The viewer's stage, crosshair and orientation labels on a ground.
+  function groundTheme(ground) {
+    var look = GROUNDS[ground] || GROUNDS.dark;
+    return {
+      backgroundColor: look.stage,
+      crosshair: {
+        crossColor: look.cross, crossAlpha: look.crossAlpha,
+        haloColor: look.halo, haloAlpha: look.haloAlpha
+      },
+      orientationLabels: {
+        color: look.label, alpha: look.labelAlpha, shadowAlpha: look.labelShadow
+      }
+    };
+  }
+
+  // Restyle the viewer for the other ground in place (neuroimjs setTheme()),
+  // keeping the cursor, the map and any display change.
+  function switchGround(host, ground) {
     host.dataset.nmVolumeGroundChoice = ground;
     try { if (root.localStorage) root.localStorage.setItem(GROUND_KEY, ground); } catch (error) { /* per-view only */ }
     var state = states.get(host);
     if (!state || !state.viewer) return;
-    var height = state.shell.getBoundingClientRect().height;
-    saveMemo(state);
-    dispose(host, { keepMemo: true });
-    park(host, height, false);
-    GL.unpark(glKey(host));
-    try {
-      await activate(host);
-      var button = host.querySelector('.nm-volume-ground[data-ground="' + ground + '"]');
-      if (button) button.focus();
-      var live = host.querySelector("[data-nm-volume-live]");
-      if (live) live.textContent = "Slices shown on a " + ground + " ground.";
-    } catch (error) {
-      unpark(host);
+    var api = root.neuroimjs;
+    state.viewer.setTheme(groundTheme(ground));
+    if (state.underlay) {
+      var look = underlayLook(api, state.underlay, ground);
+      state.viewer.updateLayer(BACKGROUND_LAYER_ID, {
+        colormap: look.colormap,
+        threshold: look.threshold
+      });
     }
+    state.ground = ground;
+    host.dataset.nmVolumeGround = ground;
+    var sidebar = host.querySelector(".nm-volume-sidebar");
+    if (sidebar) buildGroundSwitch(state, sidebar);
+    drawHistogram(state);
+    var live = host.querySelector("[data-nm-volume-live]");
+    if (live) live.textContent = "Slices shown on a " + ground + " ground.";
   }
 
   var PAUSED_TEXT = "Paused to free graphics memory; it resumes when it is back on screen.";
@@ -2648,20 +2689,10 @@
       if (state.viewer) {
         var canvases = state.viewerElement ?
           Array.prototype.slice.call(state.viewerElement.querySelectorAll("canvas")) : [];
-        // neuroimjs 0.4.0 schedules onResize two frames after a resize and
-        // does not check for disposal; a viewer released right after its
-        // panel was hidden would then draw into destroyed graphics.
-        ["axial", "coronal", "sagittal"].forEach(function (view) {
-          try {
-            var pane = state.viewer.viewer.getSliceViewer(view).view;
-            if (pane) pane.onResize = function () {};
-          } catch (error) { /* no such pane */ }
-        });
         try { state.viewer.dispose(); } catch (error) { /* lost context */ }
         GL.loseContexts(canvases);
       }
       if (state.overlayCache) state.overlayCache.clear();
-      state.backgroundVolume = null;
       state.rawOverlay = null;
       state.displayVolume = null;
       states.delete(host);

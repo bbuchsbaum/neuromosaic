@@ -30,3 +30,4 @@
 ^playwright-report$
 ^Rplots\.pdf$
 ^tests/testthat/Rplots\.pdf$
+^\.ruff_cache$

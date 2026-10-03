@@ -461,8 +461,14 @@ group while making dense 1 mm groups choose `assets = "bundle"` or an explicitly
 reviewed higher budget. The plateau from four to eight maps verifies the default
 two-overlay cache bound; the background and selected map still decode first.
 
-The browser path is fail-closed: background and overlays must agree in dimensions,
-voxel spacing, orientation, origin, and full affine. It never restamps, resamples,
+The browser path is fail-closed: the maps of an analysis must agree in
+dimensions, voxel spacing, orientation, origin, and full affine. The underlay may
+be on its own grid, because the viewer slices each layer on its own grid and
+draws it at its world position: `montage_interactive(underlay = ...)` can supply
+the same template at 1 mm under 2 mm maps, fetched only when a reader first
+opens the slices and stated in the provenance and Methods. It must be in the
+maps' template space and axis orientation (no relative rotation or obliquity)
+and overlap them. The path never restamps, resamples,
 or silently aligns data, and `volume_args = list(on_mismatch = "restamp")` is
 therefore rejected when interactivity is requested. If JavaScript, WebGL, data
 loading, or geometry validation fails, the report leaves the static montage in

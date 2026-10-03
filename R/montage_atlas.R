@@ -193,7 +193,7 @@ montage_peak_table <- function(stat,
     hemi <- if (length(atlas$hemi) == length(ids)) as.character(atlas$hemi) else
       rep(NA_character_, length(ids))
     near <- if (radius > 0 && !is.null(atlas$atlas)) {
-      .montage_nearest_labels(atlas$atlas, coords, radius)
+      .montage_atlas_nearest_labels(atlas, coords, radius)
     } else {
       NULL
     }
@@ -255,8 +255,42 @@ montage_peak_table <- function(stat,
   out
 }
 
-# Nearest non-zero label of `vol` within `radius` mm of each world coordinate
-# (exact voxel first: distance 0). Returns list(id, distance); NA when none.
+# Nearest labelled region of `atlas` within `radius` mm of each world
+# coordinate. neuroatlas::query_point(nearest = TRUE) when the installed
+# neuroatlas has it (neuroatlas#38), else neuromosaic's own search over the
+# atlas volume; both use the same rule (containing voxel first, then the
+# closest labelled voxel centre, ties to the smallest id), so the result does
+# not depend on the neuroatlas version. Returns list(id, distance); NA when none.
+.montage_atlas_nearest_labels <- function(atlas, coords, radius) {
+  if (.montage_query_point_has_nearest()) {
+    hits <- tryCatch(
+      neuroatlas::query_point(coords, atlas, radius = radius, nearest = TRUE),
+      error = function(e) NULL
+    )
+    if (is.data.frame(hits) && nrow(hits) == nrow(coords) &&
+        all(c("id", "distance") %in% names(hits))) {
+      ids <- suppressWarnings(as.integer(hits$id))
+      dist <- suppressWarnings(as.numeric(hits$distance))
+      ids[!is.finite(dist)] <- NA_integer_
+      dist[is.na(ids)] <- NA_real_
+      return(list(id = ids, distance = round(dist, 1)))
+    }
+  }
+  .montage_nearest_labels(atlas$atlas, coords, radius)
+}
+
+.montage_query_point_has_nearest <- function() {
+  fn <- tryCatch(
+    getExportedValue("neuroatlas", "query_point"),
+    error = function(e) NULL
+  )
+  is.function(fn) && "nearest" %in% names(formals(fn))
+}
+
+# Nearest non-zero label of `vol` within `radius` mm of each world coordinate:
+# the containing voxel first (distance 0), otherwise the closest labelled
+# voxel centre, equidistant voxels (within 1e-6 mm) going to the smallest id.
+# Returns list(id, distance); NA when none.
 .montage_nearest_labels <- function(vol, coords, radius, keep = NULL) {
   n <- nrow(coords)
   ids <- rep(NA_integer_, n)
@@ -272,8 +306,22 @@ montage_peak_table <- function(stat,
   ))
   centre <- round(neuroim2::coord_to_grid(sp, coords))
   if (is.null(dim(centre))) centre <- matrix(centre, nrow = 1L)
+  in_grid <- function(g) {
+    g[, 1] >= 1 & g[, 1] <= dims[1] & g[, 2] >= 1 & g[, 2] <= dims[2] &
+      g[, 3] >= 1 & g[, 3] <= dims[3]
+  }
   for (i in seq_len(n)) {
     if (any(!is.finite(coords[i, ]))) next
+    here <- matrix(centre[i, ], nrow = 1L)
+    if (in_grid(here)) {
+      here_val <- as.integer(vol[here])
+      if (!is.na(here_val) && here_val != 0L &&
+          (is.null(keep) || here_val %in% keep)) {
+        ids[[i]] <- here_val
+        dist[[i]] <- 0
+        next
+      }
+    }
     cand <- sweep(offsets, 2L, centre[i, ], "+")
     inside <- cand[, 1] >= 1 & cand[, 1] <= dims[1] & cand[, 2] >= 1 &
       cand[, 2] <= dims[2] & cand[, 3] >= 1 & cand[, 3] <= dims[3]
@@ -286,13 +334,11 @@ montage_peak_table <- function(stat,
     world <- neuroim2::grid_to_coord(sp, cand[hit, , drop = FALSE])
     if (is.null(dim(world))) world <- matrix(world, nrow = 1L)
     d <- sqrt(rowSums((world - matrix(coords[i, ], nrow(world), 3L, byrow = TRUE))^2))
-    best <- which(d <= radius + 1e-6 | d < 1e-6)
-    if (!length(best)) next
-    j <- best[which.min(d[best])]
-    ids[[i]] <- vals[hit][[j]]
-    # A peak inside a labelled voxel is distance 0 whatever the voxel centre.
-    centre_val <- as.integer(vol[matrix(centre[i, ], nrow = 1L)])
-    dist[[i]] <- if (!is.na(centre_val) && identical(centre_val, ids[[i]])) 0 else round(d[[j]], 1)
+    within <- d <= radius + 1e-6
+    if (!any(within)) next
+    d_min <- min(d[within])
+    ids[[i]] <- min(vals[hit][within & d <= d_min + 1e-6])
+    dist[[i]] <- round(d_min, 1)
   }
   list(id = ids, distance = dist)
 }
@@ -430,6 +476,13 @@ montage_peak_table <- function(stat,
     rep(NA_character_, nrow(out))
   missing <- is.na(network) | !nzchar(network)
   if (!any(missing)) return(out)
+  # An atlas that carries its own network metadata (Schaefer, and merged
+  # atlases since neuroatlas#37) already gave query_point() its networks;
+  # rows still missing one are outside every networked region.
+  if (.montage_atlas_has_networks(atlas)) {
+    out$network <- network
+    return(out)
+  }
   hits <- tryCatch(
     neuroatlas::query_point(
       cbind(out$peak_mni_x, out$peak_mni_y, out$peak_mni_z), atlas
@@ -457,6 +510,13 @@ montage_peak_table <- function(stat,
   network[missing] <- fill[missing]
   out$network <- network
   out
+}
+
+.montage_atlas_has_networks <- function(atlas) {
+  n <- length(atlas$ids)
+  net <- atlas$network
+  n > 0L && length(net) == n &&
+    any(!is.na(net) & nzchar(as.character(net)))
 }
 
 # "RH_Default_Temp_3" -> "Default"; NA for names without a network field.

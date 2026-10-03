@@ -262,18 +262,68 @@ test_that("VolumeScene rejects misleading display defaults", {
   expect_error(validate_montage_volume_scene(bad_empty), "must have")
 })
 
+regeometry <- function(geometry, ...) {
+  geometry <- utils::modifyList(geometry, list(...))
+  geometry$fingerprint <- neuromosaic:::.montage_geometry_fingerprint(geometry)
+  geometry
+}
+
+test_that("VolumeScene accepts an underlay on its own grid in the same space", {
+  scene <- unclass(.valid_volume_scene())
+  # A finer underlay over a wider field of view ('world' alignment).
+  scene$assets[[1]]$geometry <- regeometry(
+    scene$assets[[1]]$geometry,
+    dimensions = c(14L, 16L, 18L), spacing = c(1, 1, 1),
+    origin = c(-2, -2, -2),
+    affine = as.numeric(rbind(cbind(diag(3), c(-2, -2, -2)), c(0, 0, 0, 1)))
+  )
+  expect_s3_class(validate_montage_volume_scene(scene), "montage_volume_scene")
+  # Bookmarks index the maps' z slices, not the underlay's.
+  scene$analyses[[1]]$zlevel_bookmarks <- 7
+  expect_s3_class(validate_montage_volume_scene(scene), "montage_volume_scene")
+  scene$analyses[[1]]$zlevel_bookmarks <- 8
+  expect_error(validate_montage_volume_scene(scene), "index map z slices")
+})
+
+test_that("VolumeScene rejects an underlay the viewer cannot register", {
+  scene <- unclass(.valid_volume_scene())
+  theta <- pi / 12
+  rot <- rbind(c(cos(theta), -sin(theta), 0), c(sin(theta), cos(theta), 0), c(0, 0, 1))
+  oblique <- scene
+  oblique$assets[[1]]$geometry <- regeometry(
+    scene$assets[[1]]$geometry,
+    affine = as.numeric(rbind(cbind(rot, 0), c(0, 0, 0, 1)))
+  )
+  expect_error(validate_montage_volume_scene(oblique), "rotated or oblique")
+  flipped <- scene
+  flipped$assets[[1]]$geometry <- regeometry(
+    scene$assets[[1]]$geometry, orientation = "LAS",
+    affine = as.numeric(diag(c(-1, 1, 1, 1)))
+  )
+  expect_error(validate_montage_volume_scene(flipped), "axis orientation LAS|orientation RAS")
+  apart <- scene
+  apart$assets[[1]]$geometry <- regeometry(
+    scene$assets[[1]]$geometry, origin = c(500, 0, 0),
+    affine = as.numeric(rbind(cbind(diag(3), c(500, 0, 0)), c(0, 0, 0, 1)))
+  )
+  expect_error(validate_montage_volume_scene(apart), "does not overlap")
+})
+
 test_that("VolumeScene rejects geometry drift and invalid group coordinates", {
   scene <- .valid_volume_scene()
 
-  bad_geometry <- unclass(scene)
-  bad_geometry$assets[[2]]$geometry$origin[[1]] <- 0.25
-  bad_geometry$assets[[2]]$geometry$fingerprint <-
+  # Maps of a scene share one grid.
+  bad_geometry <- unclass(.valid_volume_scene(
+    maps = list(.scene_map("zstat"), .scene_map("tstat"))
+  ))
+  bad_geometry$assets[[3]]$geometry$origin[[1]] <- 0.25
+  bad_geometry$assets[[3]]$geometry$fingerprint <-
     neuromosaic:::.montage_geometry_fingerprint(
-      bad_geometry$assets[[2]]$geometry
+      bad_geometry$assets[[3]]$geometry
     )
   expect_error(
     validate_montage_volume_scene(bad_geometry),
-    "does not match background geometry"
+    "does not match the map geometry"
   )
 
   bad_fingerprint <- unclass(scene)

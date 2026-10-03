@@ -76,8 +76,9 @@ test_that("viewer scripts carry the readout, palette, keyboard, wheel and resume
   expect_false(grepl("function hiddenValue", adapter, fixed = TRUE))
   # The report palette is rebuilt for the layer's range.
   expect_match(adapter, "colors, display.limits, display.threshold, threshold, range", fixed = TRUE)
-  # The runtime's document-level arrow handler is guarded.
-  expect_match(adapter, "document.removeEventListener(\"keydown\", inner)", fixed = TRUE)
+  # neuroimjs >= 0.5 keeps its document-level arrow keys out of form controls
+  # itself; the adapter no longer rewires that listener.
+  expect_false(grepl("handleKeydownBound", adapter, fixed = TRUE))
   expect_match(adapter, "style[data-nm-slider]", fixed = TRUE)
   # The wheel scrolls the page unless the pane is focused or a modifier held.
   expect_match(adapter, "addEventListener(\"wheel\", state.onSliceWheel", fixed = TRUE)
@@ -87,7 +88,8 @@ test_that("viewer scripts carry the readout, palette, keyboard, wheel and resume
   expect_match(adapter, "focusFirstPane(host)", fixed = TRUE)
   bridge <- r4b_lib("neuromosaic-surface", "bridge.js")
   expect_match(bridge, "parkSurface(host, \"lost\")", fixed = TRUE)
-  expect_match(bridge, "vertexEdges(surface);", fixed = TRUE)
+  # surfview draws the one-sided threshold edge itself.
+  expect_false(grepl("vertexEdges", bridge, fixed = TRUE))
 })
 
 test_that("the page prints through the report and hides file:// image-only links", {

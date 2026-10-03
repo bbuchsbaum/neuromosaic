@@ -47,10 +47,19 @@
     }
     # R NeuroVol values are doubles. Store them as FLOAT64 so compression is
     # lossless under the declared source precision and never silently quantizes
-    # or clips display data.
-    data_type <- "DOUBLE"
-    datatype <- "float64"
-    transformations <- c(transformations, "storage_float64_lossless")
+    # or clips display data. An underlay of whole numbers within the int16
+    # range (T1 templates are stored as int16) is stored as INT16, also
+    # lossless, at a quarter of the decoded size: a 1 mm template is 14 MB
+    # decoded instead of 58 MB.
+    if (identical(kind, "background") && .montage_int16_lossless(values)) {
+      data_type <- "SHORT"
+      datatype <- "int16"
+      transformations <- c(transformations, "storage_int16_lossless")
+    } else {
+      data_type <- "DOUBLE"
+      datatype <- "float64"
+      transformations <- c(transformations, "storage_float64_lossless")
+    }
   }
 
   canonical <- neuroim2::NeuroVol(
@@ -130,6 +139,12 @@
   )
 }
 
+.montage_int16_lossless <- function(values) {
+  length(values) > 0L && !anyNA(values) && all(is.finite(values)) &&
+    all(values == round(values)) &&
+    min(values) >= -32768 && max(values) <= 32767
+}
+
 .montage_materialize_volume_assets <- function(manifest,
                                                 background,
                                                 output_dir,
@@ -140,7 +155,11 @@
   stat_maps <- lapply(seq_len(nrow(manifest)), function(i) {
     .montage_manifest_stat_source(manifest, i)
   })
-  .montage_validate_report_volume_geometry(manifest, background, stat_maps)
+  # The underlay may be on its own grid (finer, or a different field of
+  # view); maps of an analysis still share their primary map's grid.
+  .montage_validate_report_volume_geometry(
+    manifest, background, stat_maps, background_grid = "world"
+  )
   if (is.null(support_masks)) {
     support_masks <- .montage_render_support_masks(manifest, stat_maps)
   }

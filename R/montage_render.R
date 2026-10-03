@@ -419,6 +419,8 @@ render_montage_report <- function(manifest,
     report_data$provenance$interactive_packaging <- paste0(
       interactive_summary$packaging, " / ", interactive_summary$compression
     )
+    report_data$provenance$interactive_underlay <-
+      interactive_summary$underlay$text
     report_data$provenance$interactive_asset_count <-
       interactive_summary$asset_count
     report_data$provenance$interactive_scene_version <-

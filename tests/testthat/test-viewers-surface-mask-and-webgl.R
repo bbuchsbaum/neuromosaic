@@ -108,7 +108,7 @@ test_that("the viewers share one WebGL budget and release contexts explicitly", 
   expect_match(adapter, "nm-viewer-failed", fixed = TRUE)
   expect_match(bridge, "nm-viewer-failed", fixed = TRUE)
   # Hover picks only drawn surfaces; exports use the light report ground.
-  expect_match(bridge, "pickVisible", fixed = TRUE)
+  expect_match(bridge, "viewer.pick({ x: clientX, y: clientY, useGPU: false })", fixed = TRUE)
   expect_match(bridge, "transparent: false", fixed = TRUE)
   expect_match(adapter, "Save view as PNG", fixed = TRUE)
 })

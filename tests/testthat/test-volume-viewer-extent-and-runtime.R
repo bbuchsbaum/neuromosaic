@@ -175,7 +175,7 @@ test_that("bundle pages load the neuroimjs runtime lazily; embed pages inline it
   x <- bundled$rd$interactive
   html <- neuromosaic:::.montage_interactive_document_html(x, is_html = TRUE)
   runtime_bytes <- file.info(neuromosaic:::.montage_volume_runtime_path(
-    "neuroimjs-0.4.0.umd.js"
+    "neuroimjs-0.5.0.umd.js"
   ))$size
   expect_lt(nchar(html, type = "bytes"), runtime_bytes / 4)
   expect_false(grepl("<script data-nm-volume-runtime>", html, fixed = TRUE))
@@ -184,7 +184,7 @@ test_that("bundle pages load the neuroimjs runtime lazily; embed pages inline it
     "(?<=data-nm-volume-runtime-src>)[^<]+", html, perl = TRUE
   ))
   ref <- jsonlite::fromJSON(spec)$src
-  expect_identical(ref, "report_files/interactive/runtime/neuroimjs-0.4.0.umd.js")
+  expect_identical(ref, "report_files/interactive/runtime/neuroimjs-0.5.0.umd.js")
   expect_true(file.exists(file.path(bundled$dir, ref)))
   expect_match(html, "data-nm-volume-adapter", fixed = TRUE)
 

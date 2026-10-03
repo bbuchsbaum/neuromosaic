@@ -12,7 +12,8 @@ montage_interactive(
   world_coord = NULL,
   controls = c("threshold", "palette", "opacity"),
   max_embed_mb = 25,
-  cache_maps = 2L
+  cache_maps = 2L,
+  underlay = NULL
 )
 }
 \arguments{
@@ -42,6 +43,12 @@ mode.}
 
 \item{cache_maps}{Positive integer maximum number of decoded overlay maps
 retained by the browser runtime per active viewer.}
+
+\item{underlay}{Optional `NeuroVol` or NIfTI path drawn under the maps in
+the interactive slices, for example the same template at 1 mm under 2 mm
+maps. `NULL` (default) uses the report's `bg`. It is fetched only when a
+reader first opens the slices (bundle mode) and is stated in the report
+provenance. Static figures always use `bg`.}
 }
 \value{
 A `montage_interactive` value object.
@@ -77,9 +84,14 @@ opacity because neuroimjs exposes one layer opacity. The static montage is
 therefore the authoritative rendering; semantic parity, not pixel identity,
 is the version 1 contract.
 
-Interactive volume geometry is fail-closed. Backgrounds, maps, and affected
+Interactive volume geometry is fail-closed. Maps of an analysis and their
 masks are compared on dimensions, voxel spacing, world origin, axis
 orientation, and the complete affine using a combined absolute/relative
-tolerance of `1e-6`. The interactive path never restamps, interpolates, or
-resamples data; callers must align inputs before report construction.
+tolerance of `1e-6`. The underlay (`underlay`, else the report's `bg`) may
+be on its own grid -- for example a 1 mm template under 2 mm maps -- because
+the viewer slices each layer on its own grid and draws it at its world
+position; it must share the maps' template space and axis orientation (no
+relative rotation or obliquity) and overlap them. The interactive path never
+restamps, interpolates, or resamples data; callers must align inputs before
+report construction.
 }

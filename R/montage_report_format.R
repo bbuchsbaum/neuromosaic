@@ -2711,6 +2711,16 @@ montage_report_formatters <- function(manifest = NULL,
       "; coordinates are MNI millimetres and the left hemisphere is on the left."
     ))
   }
+  iu <- rd$interactive$summary$underlay
+  if (is.list(iu) && identical(iu$source, "underlay") && length(iu$voxel_mm)) {
+    sentences <- c(sentences, paste0(
+      "The interactive slice viewer draws the maps over ",
+      if (!is.null(iu$template) && !is.na(iu$template)) paste0("the ", iu$template, " template") else
+        "a separate underlay",
+      " at ", .montage_voxel_size_text(iu$voxel_mm),
+      ", each map at its own voxel positions without resampling."
+    ))
+  }
   if (any(vapply(panels, function(pn) is.list(pn) && !is.null(pn$surface_image), logical(1)))) {
     sm <- rd$surface_method
     thr_s <- same("effective_threshold")

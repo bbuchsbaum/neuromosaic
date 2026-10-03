@@ -255,15 +255,6 @@
     return delta > 0 ? 1 : -1;
   }
 
-  // May the runtime's document-level arrow keys act? Only from the page or a
-  // slice pane, never a control. origin: { tag, editable, isPage, inPane }
-  function runtimeKeyAllowed(origin) {
-    if (!origin || origin.isPage) return true;
-    if (origin.editable) return false;
-    if (/^(INPUT|SELECT|TEXTAREA|BUTTON|A|SUMMARY)$/.test(String(origin.tag || "").toUpperCase())) return false;
-    return !!origin.inPane;
-  }
-
   // A peak in the table's precision: 2 dp, or `digits` (3-4) for ties.
   function peakText(value, digits, fallback) {
     var d = Number(digits);
@@ -374,7 +365,6 @@
     reportNumber: reportNumber,
     readoutState: readoutState,
     wheelAction: wheelAction,
-    runtimeKeyAllowed: runtimeKeyAllowed,
     peakText: peakText,
     exportNote: exportNote,
     rejectCrossedRange: rejectCrossedRange,

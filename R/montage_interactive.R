@@ -35,11 +35,16 @@
 #' therefore the authoritative rendering; semantic parity, not pixel identity,
 #' is the version 1 contract.
 #'
-#' Interactive volume geometry is fail-closed. Backgrounds, maps, and affected
+#' Interactive volume geometry is fail-closed. Maps of an analysis and their
 #' masks are compared on dimensions, voxel spacing, world origin, axis
 #' orientation, and the complete affine using a combined absolute/relative
-#' tolerance of `1e-6`. The interactive path never restamps, interpolates, or
-#' resamples data; callers must align inputs before report construction.
+#' tolerance of `1e-6`. The underlay (`underlay`, else the report's `bg`) may
+#' be on its own grid -- for example a 1 mm template under 2 mm maps -- because
+#' the viewer slices each layer on its own grid and draws it at its world
+#' position; it must share the maps' template space and axis orientation (no
+#' relative rotation or obliquity) and overlap them. The interactive path never
+#' restamps, interpolates, or resamples data; callers must align inputs before
+#' report construction.
 #'
 #' @param view Interactive view type. Version 1 supports only `"orthogonal"`.
 #' @param assets Asset packaging mode. `"bundle"` writes relative companion
@@ -60,6 +65,11 @@
 #'   mode.
 #' @param cache_maps Positive integer maximum number of decoded overlay maps
 #'   retained by the browser runtime per active viewer.
+#' @param underlay Optional `NeuroVol` or NIfTI path drawn under the maps in
+#'   the interactive slices, for example the same template at 1 mm under 2 mm
+#'   maps. `NULL` (default) uses the report's `bg`. It is fetched only when a
+#'   reader first opens the slices (bundle mode) and is stated in the report
+#'   provenance. Static figures always use `bg`.
 #'
 #' @return A `montage_interactive` value object.
 #' @export
@@ -70,7 +80,8 @@ montage_interactive <- function(view = "orthogonal",
                                 world_coord = NULL,
                                 controls = c("threshold", "palette", "opacity"),
                                 max_embed_mb = 25,
-                                cache_maps = 2L) {
+                                cache_maps = 2L,
+                                underlay = NULL) {
   view <- match.arg(view, "orthogonal")
   assets <- match.arg(assets)
   compression <- match.arg(compression)
@@ -81,6 +92,12 @@ montage_interactive <- function(view = "orthogonal",
     max_embed_mb, "max_embed_mb"
   )
   cache_maps <- .montage_interactive_positive_integer(cache_maps, "cache_maps")
+  if (!is.null(underlay) && !methods::is(underlay, "NeuroVol") &&
+      !(is.character(underlay) && length(underlay) == 1L &&
+        !is.na(underlay) && nzchar(underlay))) {
+    stop("'underlay' must be NULL, a NeuroVol, or a NIfTI file path.",
+         call. = FALSE)
+  }
 
   structure(
     list(
@@ -96,6 +113,7 @@ montage_interactive <- function(view = "orthogonal",
       controls = controls,
       max_embed_mb = max_embed_mb,
       cache_maps = cache_maps,
+      underlay = underlay,
       static_fallback = TRUE,
       engine = "neuroimjs"
     ),
@@ -112,6 +130,8 @@ print.montage_interactive <- function(x, ...) {
     "\n  initial position: ", x$initial_position,
     "\n  controls: ",
     if (length(x$controls)) paste(x$controls, collapse = ", ") else "none",
+    "\n  underlay: ", if (is.null(x$underlay)) "bg" else if (is.character(x$underlay))
+      basename(x$underlay) else "NeuroVol",
     "\n  static fallback: yes\n",
     sep = ""
   )
@@ -283,7 +303,7 @@ validate_montage_volume_scene <- function(scene) {
   if (!identical(assets[[background_id]]$kind, "background")) {
     stop("Background asset must have kind 'background'.", call. = FALSE)
   }
-  .montage_scene_validate_shared_geometry(assets, background_id)
+  map_geometry <- .montage_scene_validate_shared_geometry(assets, background_id)
 
   if (!is.list(scene$analyses) || length(scene$analyses) == 0L) {
     stop("'scene$analyses' must contain at least one analysis.", call. = FALSE)
@@ -291,7 +311,8 @@ validate_montage_volume_scene <- function(scene) {
   analyses <- lapply(seq_along(scene$analyses), function(i) {
     .montage_scene_validate_analysis(
       scene$analyses[[i]], i, asset_ids,
-      geometry = assets[[background_id]]$geometry
+      geometry = assets[[background_id]]$geometry,
+      map_geometry = map_geometry
     )
   })
   analysis_ids <- vapply(analyses, `[[`, character(1), "analysis_id")
@@ -465,14 +486,18 @@ print.montage_volume_scene <- function(x, ...) {
     stop("'", label, "$encoding' must be 'nifti'.", call. = FALSE)
   }
   datatype <- .montage_scene_choice(
-    x$datatype, c("float64", "uint8"), paste0(label, "$datatype")
+    x$datatype, c("float64", "int16", "uint8"), paste0(label, "$datatype")
   )
   if (identical(x$kind, "mask") && !identical(datatype, "uint8")) {
     stop("Mask VolumeScene assets require datatype = 'uint8'.",
          call. = FALSE)
   }
-  if (!identical(x$kind, "mask") && !identical(datatype, "float64")) {
-    stop("Background and overlay VolumeScene assets require datatype = 'float64'.",
+  if (identical(x$kind, "overlay") && !identical(datatype, "float64")) {
+    stop("Overlay VolumeScene assets require datatype = 'float64'.",
+         call. = FALSE)
+  }
+  if (identical(x$kind, "background") && !datatype %in% c("float64", "int16")) {
+    stop("Background VolumeScene assets require datatype 'float64' or 'int16'.",
          call. = FALSE)
   }
   .montage_scene_choice(
@@ -601,25 +626,34 @@ print.montage_volume_scene <- function(x, ...) {
   invisible(x)
 }
 
+# Map (and mask) assets share one voxel grid; the background may be on its
+# own grid in the same template space and orientation ('world' alignment).
+# Returns the map grid (the background's when there are no map assets).
 .montage_scene_validate_shared_geometry <- function(assets, background_id) {
-  reference <- assets[[background_id]]$geometry
-  for (asset_id in names(assets)) {
+  background <- assets[[background_id]]$geometry
+  others <- setdiff(names(assets), background_id)
+  reference <- if (length(others)) assets[[others[[1L]]]]$geometry else background
+  for (asset_id in others) {
     candidate <- assets[[asset_id]]$geometry
     mismatch <- .montage_geometry_mismatches(reference, candidate)
     if (length(mismatch) ||
         !identical(reference$fingerprint, candidate$fingerprint)) {
       stop(
         "Volume asset '", asset_id,
-        "' does not match background geometry: ",
+        "' does not match the map geometry: ",
         paste(unique(c(mismatch, "fingerprint")), collapse = ", "), ".",
         call. = FALSE
       )
     }
   }
-  invisible(TRUE)
+  .montage_assert_world_compatible(
+    background, reference, label = "the map assets"
+  )
+  reference
 }
 
-.montage_scene_validate_analysis <- function(x, i, asset_ids, geometry) {
+.montage_scene_validate_analysis <- function(x, i, asset_ids, geometry,
+                                              map_geometry = geometry) {
   label <- paste0("analyses[[", i, "]]")
   .montage_scene_require_fields(
     x,
@@ -647,8 +681,8 @@ print.montage_volume_scene <- function(x, ...) {
   }
   if (length(x$zlevel_bookmarks) &&
       any(x$zlevel_bookmarks < 1 |
-          x$zlevel_bookmarks > geometry$dimensions[[3L]])) {
-    stop("'", label, "$zlevel_bookmarks' must index background z slices.",
+          x$zlevel_bookmarks > map_geometry$dimensions[[3L]])) {
+    stop("'", label, "$zlevel_bookmarks' must index map z slices.",
          call. = FALSE)
   }
   if (!is.list(x$maps) || length(x$maps) == 0L) {

@@ -158,18 +158,6 @@ test("slider steps land on round values", () => {
   }
 });
 
-test("the 3D threshold edge is one-sided at zero (no ghost fill, no eroded rim)", () => {
-  // The bridge rewrites surfview's symmetric anti-aliasing of the threshold
-  // edge; both shader lines must be present verbatim for the rewrite to work.
-  assert.ok(bridgeSource.includes(
-    'var SYMMETRIC_EDGE = "float surfviewInside = smoothstep( -0.5 * surfviewWidth, 0.5 * surfviewWidth, vSurfviewEdge );";'
-  ));
-  assert.ok(bridgeSource.includes(
-    'var ONE_SIDED_EDGE = "float surfviewInside = vSurfviewEdge >= 0.0 ? max( 0.5, smoothstep( 0.0, surfviewWidth, vSurfviewEdge ) ) : 0.0;";'
-  ));
-  assert.match(bridgeSource, /crispThreshold\(material\);/);
-});
-
 test("viewer exports use the report's file stem", () => {
   assert.match(adapterSource, /closest\("\[data-nm-file-stem\]"\)/);
   assert.match(adapterSource, /stem \+ "_slices"/);

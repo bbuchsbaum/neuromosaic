@@ -78,7 +78,13 @@ test_that("montage_peak_table: P1 is the strongest positive and N1 the strongest
   p1 <- all[all$cluster_id == "P1", ]
   expect_equal(coord, c(p1$peak_mni_x, p1$peak_mni_y, p1$peak_mni_z), tolerance = 1e-6)
   # The documented rule matches the behaviour.
-  rd <- readLines(test_path("../../man/montage_peak_table.Rd"), warn = FALSE)
+  # Source tree under devtools::test(); the installed Rd database under R CMD check.
+  rd_path <- test_path("../../man/montage_peak_table.Rd")
+  rd <- if (file.exists(rd_path)) {
+    readLines(rd_path, warn = FALSE)
+  } else {
+    utils::capture.output(print(tools::Rd_db("neuromosaic")[["montage_peak_table.Rd"]]))
+  }
   expect_false(any(grepl("strongest-first order of the", rd, fixed = TRUE)))
   expect_true(any(grepl("by peak strength", rd, fixed = TRUE)))
 })

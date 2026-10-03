@@ -97,7 +97,7 @@ test_that("bundle reports carry a primary-first VolumeScene beside static panels
   expect_setequal(
     basename(rd$interactive$bundle_files),
     c(
-      "scene.json", "neuroimjs-0.4.0.umd.js", "adapter.js",
+      "scene.json", "neuroimjs-0.5.0.umd.js", "adapter.js",
       "adapter.css", "display.js", "geometry.js", "runtime.json",
       "LICENSE-neuroimjs"
     )
@@ -122,7 +122,7 @@ test_that("bundle reports carry a primary-first VolumeScene beside static panels
   expect_gt(rd$interactive$summary$compressed_bytes, 0)
   expect_gt(rd$interactive$summary$uncompressed_bytes, 0)
   expect_identical(rd$interactive$summary$embedded_bytes, 0)
-  expect_match(rd$provenance$interactive_engine, "neuroimjs 0.4.0",
+  expect_match(rd$provenance$interactive_engine, "neuroimjs 0.5.0",
                fixed = TRUE)
   expect_identical(rd$provenance$interactive_asset_count,
                    length(scene$assets))
@@ -345,4 +345,61 @@ test_that("inlined runtime assets are ASCII-escaped for any output locale", {
     paste0("neuroimjs-", neuromosaic:::.montage_neuroimjs_version, ".umd.js")
   ))
   expect_false(any(utf8ToInt(runtime) > 127L))
+})
+
+finer_underlay <- function(vol, rotate = FALSE) {
+  sp <- neuroim2::space(vol)
+  dims <- dim(vol)[1:3] * 2L
+  arr <- array(0, dim = dims)
+  src <- as.array(vol)
+  idx <- as.matrix(expand.grid(seq_len(dims[1]), seq_len(dims[2]), seq_len(dims[3])))
+  arr[idx] <- src[ceiling(idx / 2)]
+  tr <- neuroim2::trans(sp)
+  fine <- tr
+  fine[1:3, 1:3] <- tr[1:3, 1:3] / 2
+  if (rotate) {
+    theta <- pi / 18
+    rot <- rbind(c(cos(theta), -sin(theta), 0), c(sin(theta), cos(theta), 0), c(0, 0, 1))
+    fine[1:3, 1:3] <- rot %*% fine[1:3, 1:3]
+  }
+  neuroim2::NeuroVol(arr, neuroim2::NeuroSpace(dims, trans = fine))
+}
+
+test_that("a finer underlay is shipped on its own grid and stated in provenance", {
+  config <- montage_interactive(assets = "bundle")
+  base <- render_interactive_qmd(config)
+  inputs <- make_interactive_montage_inputs()
+  fine <- finer_underlay(inputs$background)
+  rendered <- render_interactive_qmd(montage_interactive(assets = "bundle", underlay = fine))
+  rd <- readRDS(rendered$sidecar)
+  rd0 <- readRDS(base$sidecar)
+  scene <- rd$interactive$scene
+  background <- Filter(function(a) identical(a$kind, "background"), scene$assets)[[1L]]
+  maps <- Filter(function(a) identical(a$kind, "overlay"), scene$assets)
+  map_spacing <- as.numeric(neuroim2::spacing(neuroim2::space(inputs$background)))[1:3]
+  expect_equal(background$geometry$spacing, map_spacing / 2)
+  expect_identical(background$geometry$dimensions, as.integer(dim(inputs$background)[1:3] * 2L))
+  expect_true(all(vapply(maps, function(a) isTRUE(all.equal(a$geometry$spacing, map_spacing)),
+                         logical(1))))
+  # The viewer opens on the same map voxel (cluster voxels index the maps).
+  expect_equal(scene$analyses[[1L]]$initial_world_coord,
+               rd0$interactive$scene$analyses[[1L]]$initial_world_coord)
+  expect_identical(rd$interactive$summary$underlay$source, "underlay")
+  expect_identical(rd0$interactive$summary$underlay$source, "bg")
+  expect_match(rd$provenance$interactive_underlay, "finer than the maps", fixed = TRUE)
+  expect_match(rd0$provenance$interactive_underlay, "the report background", fixed = TRUE)
+  expect_gt(rd$interactive$summary$underlay$compressed_bytes, 0)
+})
+
+test_that("an underlay rotated against the maps is rejected with a remedy", {
+  inputs <- make_interactive_montage_inputs()
+  expect_error(
+    render_interactive_qmd(montage_interactive(
+      assets = "bundle", underlay = finer_underlay(inputs$background, rotate = TRUE)
+    )),
+    "rotated or oblique.*omit `underlay`"
+  )
+  expect_error(montage_interactive(underlay = 3), "'underlay' must be")
+  expect_match(paste(capture.output(print(montage_interactive())), collapse = "\n"),
+               "underlay: bg", fixed = TRUE)
 })

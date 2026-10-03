@@ -225,3 +225,32 @@ test_that("validation failure writes no scene and preserves unrelated files", {
   expect_identical(readLines(unrelated), "untouched")
   expect_identical(list.files(output_dir), "keep-me.txt")
 })
+
+test_that("whole-number underlays are stored as lossless int16; others stay float64", {
+  inputs <- make_toy_cluster_report_inputs()
+  sp <- neuroim2::space(inputs$stat_map)
+  whole <- array(round(seq(-300, 8000, length.out = prod(dim(sp)))), dim = dim(sp))
+  out <- neuromosaic:::.montage_materialize_volume_asset(
+    neuroim2::NeuroVol(whole, sp), kind = "background",
+    output_dir = tempfile("volume-assets-"), compression = "gzip"
+  )
+  expect_identical(out$asset$datatype, "int16")
+  expect_true("storage_int16_lossless" %in% out$asset$transformations)
+  expect_identical(neuroim2:::.source_nifti_header(neuroim2::read_vol(out$path))$data_storage, "SHORT")
+  expect_identical(as.numeric(neuroim2::read_vol(out$path)), as.numeric(whole))
+  # Fractions, NA or out-of-range values keep float64; overlays always do.
+  fractional <- whole + 0.5
+  big <- whole; big[1] <- 40000
+  for (values in list(fractional, big)) {
+    kept <- neuromosaic:::.montage_materialize_volume_asset(
+      neuroim2::NeuroVol(values, sp), kind = "background",
+      output_dir = tempfile("volume-assets-"), compression = "gzip"
+    )
+    expect_identical(kept$asset$datatype, "float64")
+  }
+  overlay <- neuromosaic:::.montage_materialize_volume_asset(
+    neuroim2::NeuroVol(whole, sp), kind = "overlay",
+    output_dir = tempfile("volume-assets-"), compression = "gzip"
+  )
+  expect_identical(overlay$asset$datatype, "float64")
+})

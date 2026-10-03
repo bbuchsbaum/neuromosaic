@@ -82,14 +82,22 @@ test_that("the WebGL lifecycle parks off-screen viewers instead of rebuilding th
   expect_no_match(adapter, "live.textContent = \"Slices at \"", fixed = TRUE)
 })
 
-test_that("the one-sided threshold edge matches the shipped surfview shader", {
+test_that("surfview itself draws the one-sided threshold edge the bridge relies on", {
+  # surfviewjs 1dfed43 (neurosurf >= 0.1.0.9004) ships the one-sided edge and
+  # per-vertex visibility signs; the bridge no longer rewrites the shader.
   bridge <- r4_read_lib("neuromosaic-surface", "bridge.js")
-  symmetric <- "float surfviewInside = smoothstep( -0.5 * surfviewWidth, 0.5 * surfviewWidth, vSurfviewEdge );"
-  expect_match(bridge, symmetric, fixed = TRUE)
+  for (patch in c("SYMMETRIC_EDGE", "ONE_SIDED_EDGE", "onBeforeCompile", "vertexEdges")) {
+    expect_false(grepl(patch, bridge, fixed = TRUE), info = patch)
+  }
   runtime <- tryCatch(.montage_surface_runtime_info(), error = function(e) NULL)
   skip_if(is.null(runtime), "neurosurf surfview runtime unavailable")
   path <- file.path(system.file(runtime$source, package = "neurosurf"), runtime$script)
   shader <- paste(readLines(path, warn = FALSE), collapse = "\n")
-  # The rewrite is a no-op unless surfview still emits this exact line.
-  expect_match(shader, symmetric, fixed = TRUE)
+  inside <- regmatches(shader, regexpr("float surfviewInside = [^;]+;", shader))
+  expect_length(inside, 1L)
+  inside <- gsub("\\\\n|\\s+", " ", inside)
+  # No colour on the hidden side, at least half on the shown side.
+  expect_match(inside, "vSurfviewEdge >= 0.0", fixed = TRUE)
+  expect_match(inside, "max( 0.5, smoothstep( 0.0, surfviewWidth, vSurfviewEdge ) )", fixed = TRUE)
+  expect_no_match(inside, "-0.5 * surfviewWidth", fixed = TRUE)
 })

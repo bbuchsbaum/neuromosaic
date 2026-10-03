@@ -1222,52 +1222,6 @@
   // current view hides: in a medial view the other hemisphere sits between
   // the camera and the one on screen, so the readout named its parcels.
   // Pick only surfaces that are drawn.
-  function drawn(object) {
-    for (var node = object; node; node = node.parent) {
-      if (node.visible === false) return false;
-    }
-    return true;
-  }
-
-  function pickVisible(viewer, clientX, clientY) {
-    var surfaces = viewer.surfaces;
-    var picker = typeof viewer.ensurePickingController === "function" ?
-      viewer.ensurePickingController() : null;
-    if (!surfaces || typeof surfaces.forEach !== "function" || !picker ||
-        !picker.raycaster || !picker.mouse || typeof picker.updateScreenPosition !== "function" ||
-        !viewer.camera) {
-      return viewer.pick({ x: clientX, y: clientY, useGPU: false });
-    }
-    picker.updateScreenPosition(clientX, clientY);
-    picker.raycaster.setFromCamera(picker.mouse, viewer.camera);
-    var best = null;
-    surfaces.forEach(function (surface, id) {
-      var mesh = surface && surface.mesh;
-      if (!mesh || !drawn(mesh)) return;
-      var material = mesh.material;
-      var faint = Array.isArray(material) ?
-        material.every(function (m) { return m.opacity < 0.1; }) : material && material.opacity < 0.1;
-      if (faint) return;
-      var hits = picker.raycaster.intersectObject(mesh, false);
-      if (hits.length && (!best || hits[0].distance < best.hit.distance)) best = { hit: hits[0], id: id };
-    });
-    if (!best) return { surfaceId: null, vertexIndex: null, point: null };
-    var face = best.hit.face;
-    var mesh = best.hit.object;
-    var position = mesh.geometry && mesh.geometry.getAttribute("position");
-    if (!face || !position) return { surfaceId: best.id, vertexIndex: null, point: best.hit.point };
-    var point = best.hit.point;
-    var probe = point.clone();
-    var vertex = face.a;
-    var nearest = Infinity;
-    [face.a, face.b, face.c].forEach(function (index) {
-      probe.set(position.getX(index), position.getY(index), position.getZ(index)).applyMatrix4(mesh.matrixWorld);
-      var d = probe.distanceToSquared(point);
-      if (d < nearest) { nearest = d; vertex = index; }
-    });
-    return { surfaceId: best.id, vertexIndex: vertex, point: point };
-  }
-
   // Hover values carry two decimals, as in the peak tables and the volume
   // readout ("z = -10.04", never "-10" next to "0.359").
   function fixed2(value) {
@@ -1279,7 +1233,8 @@
     var viewer = handle && handle.viewer;
     var readout = part(host, "readout");
     if (!viewer || !readout || typeof viewer.pick !== "function") return;
-    var hit = pickVisible(viewer, clientX, clientY);
+    // surfview picks the nearest drawn surface (hidden hemispheres excluded).
+    var hit = viewer.pick({ x: clientX, y: clientY, useGPU: false });
     if (!hit || hit.surfaceId === null || hit.vertexIndex === null) {
       hideReadout(host);
       return;
@@ -1458,62 +1413,6 @@
   // A near-black specular: white highlights desaturate the overlay.
   var REPORT_SPECULAR = 0x0a0a0a;
 
-  // surfview anti-aliases the threshold edge symmetrically, so a vertex just
-  // under threshold (signed edge distance within half a pixel's change) gets
-  // a faint partial fill: dotted "ghost" rings around sub-threshold patches
-  // that the static figure does not have. A fade wholly inside the region
-  // (r4) removed the ghosts but under-drew real suprathreshold vertices near
-  // threshold (8-32% coloured at their pixel within 0.1 of it). With per-
-  // vertex sign edges (vertexEdges below) the edge is one-sided at zero with
-  // a floor: no colour below 0, at least half colour from 0 up, full colour
-  // one pixel inside.
-  var SYMMETRIC_EDGE = "float surfviewInside = smoothstep( -0.5 * surfviewWidth, 0.5 * surfviewWidth, vSurfviewEdge );";
-  var ONE_SIDED_EDGE = "float surfviewInside = vSurfviewEdge >= 0.0 ? max( 0.5, smoothstep( 0.0, surfviewWidth, vSurfviewEdge ) ) : 0.0;";
-  function crispThreshold(material) {
-    if (!material || material.userData.nmCrispThreshold || typeof material.onBeforeCompile !== "function") return;
-    material.userData.nmCrispThreshold = true;
-    var compile = material.onBeforeCompile;
-    material.onBeforeCompile = function (shader, renderer) {
-      compile.call(material, shader, renderer);
-      shader.fragmentShader = shader.fragmentShader.replace(SYMMETRIC_EDGE, ONE_SIDED_EDGE);
-    };
-    var key = material.customProgramCacheKey;
-    material.customProgramCacheKey = function () {
-      return (typeof key === "function" ? key.call(material) : "") + "|nm-one-sided-edge";
-    };
-    material.needsUpdate = true;
-  }
-
-  // surfview interpolates each vertex's signed distance to the threshold
-  // (|v| - T) across triangles and colours fragments where it is >= 0. Where
-  // neighbouring vertices differ by much more than a vertex's own margin, the
-  // zero crossing lands next to that vertex, so whether a vertex just above
-  // or below threshold is coloured at its own pixel depends on its neighbours.
-  // Keep only the sign per vertex (+1 shown, -1 not): the contour then runs
-  // midway between a shown and a hidden vertex, every suprathreshold vertex
-  // is coloured around its own position and no sub-threshold vertex is.
-  function vertexEdges(surface) {
-    if (!surface || typeof surface.applyThresholdEdges !== "function") return;
-    var signs = function (target) {
-      var mesh = target.mesh;
-      var attr = mesh && mesh.geometry && mesh.geometry.getAttribute("surfviewEdge");
-      if (!attr || !attr.array) return;
-      var a = attr.array;
-      for (var i = 0; i < a.length; i += 1) a[i] = a[i] >= 0 ? 1 : -1;
-      attr.needsUpdate = true;
-    };
-    if (!surface.__nmVertexEdges) {
-      var apply = surface.applyThresholdEdges;
-      surface.applyThresholdEdges = function () {
-        var out = apply.apply(this, arguments);
-        signs(this);
-        return out;
-      };
-      surface.__nmVertexEdges = true;
-    }
-    signs(surface);
-  }
-
   function surfacesOf(viewer) {
     var list = viewer && viewer.surfaces;
     if (!list) return [];
@@ -1529,8 +1428,6 @@
       if (material && material.specular && typeof material.specular.setHex === "function") {
         material.specular.setHex(REPORT_SPECULAR);
       }
-      vertexEdges(surface);
-      crispThreshold(material);
     });
     if (typeof viewer.requestRender === "function") viewer.requestRender();
   }
@@ -2074,11 +1971,10 @@
   window.NeuroMosaicSurfaceBridge = {
     pick: function (host, x, y) {
       var viewer = host.__nmSurfaceHandle && host.__nmSurfaceHandle.viewer;
-      return viewer ? pickVisible(viewer, x, y) : null;
+      return viewer ? viewer.pick({ x: x, y: y, useGPU: false }) : null;
     },
     release: releaseSurface,
-    exportPNG: exportPNG,
-    vertexEdges: vertexEdges
+    exportPNG: exportPNG
   };
 
   if (document.readyState === "loading") {

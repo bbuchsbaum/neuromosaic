@@ -636,3 +636,157 @@ test("a pane focused by script lets the wheel scroll; a pane the reader focused 
   await expect.poll(z).not.toBe(z1);
   expect(await page.evaluate(() => window.scrollY)).toBe(y1);
 });
+
+// ---- neuroimjs 0.5 behaviour the adapter now relies on ---------------------
+const fineFixture = pathToFileURL(resolve(
+  __dirname, ".artifacts", "interactive-volume-fine.html"
+)).href;
+
+function collectErrors(page) {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  return errors;
+}
+
+test("the Ground switch restyles the open viewer in place", async ({ page }) => {
+  const errors = collectErrors(page);
+  const host = await openInteractiveReport(page);
+  await activate(page, host);
+  await host.evaluate((node) => {
+    const state = globalThis.NeuroMosaicVolumeReport.getState(node);
+    state.viewer.setWorldCoord([-4, -3, -2]);
+    node.__nmViewerBefore = state.viewer;
+    node.querySelector("[data-view] canvas").__nmMark = true;
+  });
+  const before = await host.getAttribute("data-nm-volume-ground");
+  const other = before === "light" ? "dark" : "light";
+  await host.locator(`.nm-volume-ground[data-ground="${other}"]`).click();
+  await expect(host).toHaveAttribute("data-nm-volume-ground", other);
+  await expect(host.locator(`.nm-volume-ground[data-ground="${other}"]`))
+    .toHaveAttribute("aria-pressed", "true");
+  const after = await host.evaluate((node) => {
+    const state = globalThis.NeuroMosaicVolumeReport.getState(node);
+    return {
+      sameViewer: state.viewer === node.__nmViewerBefore,
+      sameCanvas: node.querySelector("[data-view] canvas").__nmMark === true,
+      coord: state.viewer.getWorldCoord(),
+      canvasBackground: node.querySelector("[data-view] canvas").style.background
+    };
+  });
+  expect(after.sameViewer).toBe(true);
+  expect(after.sameCanvas).toBe(true);
+  expect(after.coord).toEqual([-4, -3, -2]);
+  expect(after.canvasBackground).toMatch(other === "dark" ? /17, 22, 25|#111619/ : /250, 250, 247|#fafaf7/);
+  expect(errors).toEqual([]);
+});
+
+test("arrow keys in a form control never step the slices", async ({ page }) => {
+  const host = await openInteractiveReport(page);
+  await activate(page, host);
+  const coord = async () => (await viewerState(host)).worldCoord;
+  const axial = host.locator('[data-nij-view="axial"]');
+  await axial.scrollIntoViewIfNeeded();
+  const box = await axial.boundingBox();
+  // The pointer rests on a pane while the reader edits the threshold.
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const start = await coord();
+  const field = host.getByRole("textbox", { name: "Threshold low" });
+  await field.focus();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 1);
+  await expect(axial).toHaveAttribute("data-nij-hover", "");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(150);
+  expect(await coord()).toEqual(start);
+  // With focus on the page itself, the runtime steps the hovered pane.
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  await page.mouse.move(box.x + box.width / 2 + 1, box.y + box.height / 2);
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(async () => (await coord())[2]).not.toBe(start[2]);
+});
+
+test("a viewer disposed right after a resize does not draw into freed graphics", async ({
+  page
+}) => {
+  const errors = collectErrors(page);
+  const host = await openInteractiveReport(page);
+  await activate(page, host);
+  await page.setViewportSize({ width: 900, height: 700 });
+  await host.evaluate((node) => {
+    window.dispatchEvent(new Event("resize"));
+    globalThis.NeuroMosaicVolumeReport.dispose(node);
+  });
+  await page.waitForTimeout(300);
+  await expect(host.locator("canvas")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("a finer underlay is drawn on its own grid under the maps", async ({ page }) => {
+  const errors = collectErrors(page);
+  const host = await openInteractiveReport(page, fineFixture);
+  await activate(page, host);
+  const grids = await host.evaluate((node) => {
+    const state = globalThis.NeuroMosaicVolumeReport.getState(node);
+    return {
+      underlay: Array.from(state.stack.getLayer(0).volume.space.dim),
+      overlay: Array.from(state.stack.getLayerById("neuromosaic-overlay").volume.space.dim)
+    };
+  });
+  expect(grids.underlay).toEqual([25, 27, 29]);
+  expect(grids.overlay).toEqual([12, 13, 14]);
+
+  // A peak jump lands on the exact peak voxel and reads its value.
+  await host.evaluate((node) => {
+    globalThis.NeuroMosaicVolumeReport.getState(node).viewer.setWorldCoord([-4, -3, -2]);
+  });
+  const peak = await host.evaluate((node) => {
+    const state = globalThis.NeuroMosaicVolumeReport.getState(node);
+    return {
+      coord: state.viewer.getWorldCoord(),
+      value: state.viewer.getValue("neuromosaic-overlay")
+    };
+  });
+  expect(peak.coord).toEqual([-4, -3, -2]);
+  expect(peak.value).toBeCloseTo(7.75, 6);
+  await expect(host.locator("[data-nm-volume-readout]")).toContainText("7.75");
+
+  // A click lands on the centre of the underlay texel under the pointer and
+  // the readout reports the map voxel containing it.
+  const axial = host.locator('[data-nij-view="axial"] canvas');
+  const box = await axial.boundingBox();
+  await page.mouse.click(box.x + box.width * 0.45, box.y + box.height * 0.55);
+  await page.waitForTimeout(100);
+  const clicked = await host.evaluate((node) => {
+    const state = globalThis.NeuroMosaicVolumeReport.getState(node);
+    const coord = state.viewer.getWorldCoord();
+    const under = state.stack.getLayer(0).volume.space.coordToGrid(coord);
+    const overGrid = state.stack.getLayerById("neuromosaic-overlay").volume.space
+      .coordToGrid(coord);
+    const over = overGrid.map(Math.round);
+    const vol = state.stack.getLayerById("neuromosaic-overlay").volume;
+    return {
+      coord,
+      under,
+      overGrid,
+      value: state.viewer.getValue("neuromosaic-overlay"),
+      expected: vol.getAt(over[0], over[1], over[2])
+    };
+  });
+  // The click selects the map voxel under the pointer: the cursor sits on its
+  // centre in the pane's plane, which is also an underlay texel centre.
+  await expect.poll(() => host.evaluate((node) =>
+    globalThis.NeuroMosaicVolumeReport.getState(node).viewer.getWorldCoord()[2])).toBe(-2);
+  for (const axis of [0, 1]) {
+    expect(Math.abs(clicked.overGrid[axis] - Math.round(clicked.overGrid[axis]))).toBeLessThan(1e-6);
+    expect(Math.abs(clicked.under[axis] - Math.round(clicked.under[axis]))).toBeLessThan(1e-6);
+  }
+  if (clicked.expected === null || !Number.isFinite(clicked.expected)) {
+    expect(clicked.value).toBeNull();
+  } else {
+    expect(clicked.value).toBeCloseTo(clicked.expected, 6);
+  }
+  expect(errors).toEqual([]);
+});

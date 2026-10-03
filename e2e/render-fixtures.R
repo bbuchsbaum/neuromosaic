@@ -176,7 +176,22 @@ interactive_manifest$stat_map <- I(list(
   z_volume, estimate_volume, se_volume, reliability_volume, empty_volume
 ))
 
-render_interactive_fixture <- function(filename, assets, map_selector = "auto") {
+# A 1 mm underlay under the 2 mm maps (neuroimjs 'world' alignment): its
+# voxel centres include every map voxel centre.
+fine_space <- neuroim2::NeuroSpace(
+  dim = c(25, 27, 29),
+  spacing = c(1, 1, 1),
+  origin = c(-13, -14, -15)
+)
+fine_grid <- expand.grid(x = seq_len(25), y = seq_len(27), z = seq_len(29))
+fine_underlay <- neuroim2::NeuroVol(array(
+  20 + fine_grid$x / 2 + 0.25 * fine_grid$y + 0.125 * fine_grid$z +
+    3 * sin(fine_grid$x / 2) * cos(fine_grid$y / 3),
+  dim = c(25, 27, 29)
+), fine_space)
+
+render_interactive_fixture <- function(filename, assets, map_selector = "auto",
+                                       underlay = NULL) {
   neuromosaic::render_montage_report(
     interactive_manifest,
     output_file = file.path(artifact_dir, filename),
@@ -203,7 +218,8 @@ render_interactive_fixture <- function(filename, assets, map_selector = "auto") 
       assets = assets,
       controls = c("threshold", "palette", "opacity"),
       max_embed_mb = 10,
-      cache_maps = 2
+      cache_maps = 2,
+      underlay = underlay
     ),
     materialize_recipes = FALSE,
     render_peaks = FALSE,
@@ -217,6 +233,8 @@ render_interactive_fixture <- function(filename, assets, map_selector = "auto") 
 render_interactive_fixture("interactive-volume.html", "embed")
 render_interactive_fixture("interactive-volume-bundle.html", "bundle")
 render_interactive_fixture("interactive-volume-none.html", "embed", "none")
+render_interactive_fixture("interactive-volume-fine.html", "embed",
+                           underlay = fine_underlay)
 
 surface_vertices <- function(side = c("left", "right")) {
   side <- match.arg(side)

@@ -1,7 +1,7 @@
 # Materialization and HTML emission for optional interactive volume reports.
 
-.montage_neuroimjs_version <- "0.4.0"
-.montage_neuroimjs_adapter_version <- "1.4.1"
+.montage_neuroimjs_version <- "0.5.0"
+.montage_neuroimjs_adapter_version <- "1.5.0"
 .montage_volume_runtime_dir <- file.path(
   "htmlwidgets", "lib", "neuromosaic-volume"
 )
@@ -52,9 +52,13 @@
   support_masks <- lapply(as.character(manifest$map_id), function(map_id) {
     report_data$panels[[map_id]][["volume"]]$support_mask
   })
+  # The slices' underlay: the author's finer underlay when given, else bg.
+  # It may be on its own grid ('world' alignment in neuroimjs >= 0.5).
+  underlay <- interactive$underlay %||% background
+  underlay_source <- if (is.null(interactive$underlay)) "bg" else "underlay"
   bundle <- .montage_materialize_volume_assets(
     manifest = manifest,
-    background = background,
+    background = underlay,
     output_dir = asset_dir,
     compression = interactive$compression,
     support_masks = support_masks,
@@ -136,7 +140,10 @@
     )),
     embedded_bytes = embedded_bytes,
     packaging = interactive$assets,
-    compression = interactive$compression
+    compression = interactive$compression,
+    underlay = .montage_interactive_underlay_summary(
+      underlay, bundle$background$asset, source = underlay_source
+    )
   )
   structure(
     list(
@@ -149,11 +156,47 @@
       summary = summary,
       engine_version = .montage_neuroimjs_version,
       adapter_version = .montage_neuroimjs_adapter_version,
-      runtime_sha256 =
-        "0c5176bf47d69c29df10c6e751c8ba9950b0648312fc3f01d4df3c7d9a2c3b48"
+      runtime_sha256 = .montage_volume_runtime_manifest()$sha256
     ),
     class = "montage_interactive_report"
   )
+}
+
+.montage_volume_runtime_manifest <- function() {
+  jsonlite::read_json(.montage_volume_runtime_path("runtime.json"))
+}
+
+# What the interactive slices draw the maps on: template name (from the file
+# name, as for the static underlay), voxel size, grid and the asset's gzip
+# size. `source` is "bg" (the report background) or "underlay".
+.montage_interactive_underlay_summary <- function(underlay, asset, source) {
+  base <- tryCatch(.montage_underlay_summary(underlay), error = function(e) NULL)
+  geometry <- asset$geometry
+  spacing <- as.numeric(geometry$spacing)
+  list(
+    source = source,
+    template = base$template %||% NA_character_,
+    voxel_mm = spacing,
+    dimensions = as.integer(geometry$dimensions),
+    compressed_bytes = as.numeric(asset$compressed_bytes),
+    text = paste0(
+      if (!is.null(base$template) && !is.na(base$template)) base$template else
+        "Underlay",
+      " ", .montage_voxel_size_text(spacing),
+      " (", paste(as.integer(geometry$dimensions), collapse = " \u00d7 "), ")",
+      if (identical(source, "bg")) ", the report background" else
+        ", finer than the maps; each layer is drawn on its own grid"
+    )
+  )
+}
+
+.montage_voxel_size_text <- function(spacing) {
+  spacing <- signif(as.numeric(spacing), 3)
+  if (length(unique(spacing)) == 1L) {
+    paste0(format(spacing[[1L]]), " mm")
+  } else {
+    paste0(paste(format(spacing), collapse = " \u00d7 "), " mm")
+  }
 }
 
 .montage_volume_runtime_path <- function(file = NULL) {
@@ -223,9 +266,10 @@
     } else if (identical(interactive$initial_position, "center")) {
       .montage_geometry_center(bundle$background$asset$geometry)
     } else {
+      # Cluster voxels index the map grid, not the (possibly finer) underlay.
       .montage_volume_scene_p1_coord(
         panels[[group$primary_map_id]][["peak_table"]],
-        bundle$background$asset$geometry
+        bundle$maps[[as.character(group$primary_map_id)]]$asset$geometry
       ) %||% primary$initial_world_coord
     }
     list(

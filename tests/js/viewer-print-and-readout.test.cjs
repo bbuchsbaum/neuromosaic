@@ -4,7 +4,8 @@
 // edge that colours every suprathreshold vertex without ghost fill.
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { readFileSync } = require("node:fs");
+const { existsSync, readFileSync } = require("node:fs");
+const { execFileSync } = require("node:child_process");
 const { resolve } = require("node:path");
 const { runInNewContext } = require("node:vm");
 
@@ -141,17 +142,6 @@ test("viewer peaks use the table's tie digits", () => {
   assert.equal(display.peakText(21.58, 2, fallback), "21.58");
 });
 
-test("the runtime's arrow keys never act on a focused control", () => {
-  const ok = display.runtimeKeyAllowed;
-  assert.equal(ok({ isPage: true }), true);
-  assert.equal(ok({ tag: "INPUT" }), false, "range slider / number field");
-  assert.equal(ok({ tag: "SELECT" }), false);
-  assert.equal(ok({ tag: "BUTTON", inPane: true }), false);
-  assert.equal(ok({ tag: "DIV", editable: true, inPane: true }), false);
-  assert.equal(ok({ tag: "DIV", inPane: true }), true, "a focused slice pane");
-  assert.equal(ok({ tag: "DIV" }), false, "focus elsewhere on the page");
-});
-
 test("the wheel scrolls the page unless the pane is focused or a modifier is held", () => {
   const w = display.wheelAction;
   assert.equal(w({ deltaY: 100 }), "page");
@@ -164,14 +154,21 @@ test("the wheel scrolls the page unless the pane is focused or a modifier is hel
 });
 
 // ---- 3D threshold edge ----------------------------------------------------------
-const shaderLine = (name) => {
-  const m = bridgeSource.match(new RegExp("var " + name + ' = "([^"]+)";'));
-  assert.ok(m, name + " present");
-  return m[1];
-};
-// Evaluate the GLSL expression of a "float surfviewInside = ...;" line.
-function glsl(line) {
-  const expr = line.replace(/^float surfviewInside = /, "").replace(/;$/, "");
+// The one-sided threshold edge and per-vertex visibility signs are surfview's
+// own behaviour (surfviewjs 1dfed43, shipped by neurosurf >= 0.1.0.9004); the
+// bridge no longer patches the shader. Test the expression the runtime ships.
+function surfviewRuntime() {
+  if (process.env.NEUROMOSAIC_SURFVIEW_RUNTIME) return process.env.NEUROMOSAIC_SURFVIEW_RUNTIME;
+  try {
+    return execFileSync("Rscript", ["-e",
+      "cat(system.file('htmlwidgets/lib/neurosurface/surfview.embed.iife.js', package = 'neurosurf'))"
+    ], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch (error) {
+    return "";
+  }
+}
+// Evaluate the GLSL ternary that defines surfviewInside.
+function glsl(expr) {
   const smoothstep = (a, b, x) => {
     const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
     return t * t * (3 - 2 * t);
@@ -181,62 +178,37 @@ function glsl(line) {
   });
 }
 
-test("the shipped edge expression is one-sided at zero with a half-colour floor", () => {
-  const inside = glsl(shaderLine("ONE_SIDED_EDGE"));
+const runtimePath = surfviewRuntime();
+const runtimeSkip = runtimePath && existsSync(runtimePath) ? false :
+  "neurosurf's surfview runtime is not installed";
+
+test("surfview draws the 3D threshold edge one-sided at zero with a half-colour floor", { skip: runtimeSkip }, () => {
+  const runtime = readFileSync(runtimePath, "utf8");
+  const m = runtime.match(/float surfviewInside = ((?:[^;]|\\n)+);/);
+  assert.ok(m, "the runtime defines surfviewInside");
+  const expr = m[1].replace(/\\n/g, " ").replace(/\s+/g, " ").trim();
+  assert.doesNotMatch(expr, /-0\.5 \* surfviewWidth/, "the symmetric ramp is gone");
+  const inside = glsl(expr);
   const w = 0.4;
   assert.equal(inside(-1e-6, w), 0, "below threshold: no colour");
   assert.equal(inside(-0.5 * w, w), 0, "no ghost fill half a pixel below");
   assert.ok(inside(0, w) >= 0.5, "at threshold: coloured");
   assert.ok(inside(0.01 * w, w) >= 0.5);
   assert.equal(inside(w, w), 1, "full colour one pixel inside");
-  // The rewrite targets surfview's symmetric line verbatim.
-  assert.match(shaderLine("SYMMETRIC_EDGE"),
-    /smoothstep\( -0\.5 \* surfviewWidth, 0\.5 \* surfviewWidth, vSurfviewEdge \)/);
-});
-
-function bridgeHooks() {
-  const context = {
-    HTMLCanvasElement: class { getContext() { return null; } },
-    innerHeight: 1000,
-    document: {
-      readyState: "loading", documentElement: { getAttribute: () => null },
-      addEventListener() {}, querySelector() { return null; }, querySelectorAll() { return []; }
-    },
-    location: { protocol: "http:" },
-    setTimeout: () => 0,
-    IntersectionObserver: class { observe() {} },
-    console
-  };
-  context.window = context;
-  context.window.addEventListener = () => {};
-  runInNewContext(bridgeSource, context);
-  return context.NeuroMosaicSurfaceBridge;
-}
-
-test("vertex edges keep only the sign, so a suprathreshold vertex is coloured at its own pixel", () => {
-  const hooks = bridgeHooks();
-  const edges = new Float32Array([0.02, -3, -3, -0.02, 3, 3]);
-  const attr = { array: edges, needsUpdate: false };
-  const surface = {
-    mesh: { geometry: { getAttribute: (k) => (k === "surfviewEdge" ? attr : null) } },
-    applyThresholdEdges() { edges.set([0.5, -0.1, 2, -4, 0, 1]); return true; }
-  };
-  hooks.vertexEdges(surface);
-  assert.deepEqual(Array.from(edges), [1, -1, -1, -1, 1, 1]);
-  assert.equal(attr.needsUpdate, true);
-  // A threshold change rewrites the buffer; the signs are re-applied.
-  surface.applyThresholdEdges();
-  assert.deepEqual(Array.from(edges), [1, -1, 1, -1, 1, 1]);
-
-  // Projection model: a vertex 0.02 above threshold whose neighbours are at
-  // -3, 3 px away; its pixel centre lies up to 0.5 px off the vertex.
-  const inside = glsl(shaderLine("ONE_SIDED_EDGE"));
+  // With per-vertex signs (+1 shown, -1 hidden) the contour runs midway
+  // between a shown and a hidden vertex: a suprathreshold vertex is coloured
+  // at its own pixel wherever the pixel centre falls, a sub-threshold one never.
   const at = (e0, e1, off, spacing) => e0 + (e1 - e0) * (off / spacing);
   for (const off of [0, 0.25, 0.5]) {
-    // Raw magnitudes (r4): the vertex vanishes once the pixel is off-centre.
-    if (off >= 0.25) assert.equal(inside(at(0.02, -3, off, 3), 3.02 / 3), 0);
-    // Signs: coloured at its pixel; the sub-threshold mirror case is not.
     assert.ok(inside(at(1, -1, off, 3), 2 / 3) >= 0.5, `supra at offset ${off}`);
     assert.equal(inside(at(-1, 1, off, 3), 2 / 3), 0, `sub at offset ${off}`);
   }
+});
+
+test("the bridge leaves the threshold edge, picking and edge signs to surfview", () => {
+  for (const patch of ["SYMMETRIC_EDGE", "ONE_SIDED_EDGE", "crispThreshold", "vertexEdges",
+                       "pickVisible", "onBeforeCompile"]) {
+    assert.ok(!bridgeSource.includes(patch), patch + " is gone");
+  }
+  assert.match(bridgeSource, /viewer\.pick\(\{ x: clientX, y: clientY, useGPU: false \}\)/);
 });

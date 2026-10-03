@@ -657,17 +657,15 @@ surf_montage <- function(stat = NULL,
   )
 }
 
-# Volume -> vertex projection with neuroatlas's own plot_brain() projector
-# (internal; looked up at run time so older neuroatlas releases simply fall
-# back to letting plot_brain() project). Returns list(overlay = lh/rh values,
-# meta) or NULL.
+# Volume -> vertex projection with neuroatlas's own plot_brain() projector,
+# neuroatlas::project_cluster_overlay() (exported since neuroatlas#36; looked
+# up at run time so an older neuroatlas without it simply falls back to
+# letting plot_brain() project). Returns list(overlay = lh/rh values, meta) or
+# NULL.
 .nm_project_surface_overlay <- function(vol, surfatlas, fun, sampling,
                                         interpolation, aggregate, depth,
                                         surface_smooth_fwhm) {
-  projector <- tryCatch(
-    utils::getFromNamespace(".project_cluster_overlay", "neuroatlas"),
-    error = function(e) NULL
-  )
+  projector <- .nm_surface_projector()
   if (!is.function(projector)) return(NULL)
   formals_ok <- all(c("cluster_vol", "surfatlas", "fun", "sampling",
                       "interpolation", "aggregate", "depth",
@@ -687,6 +685,16 @@ surf_montage <- function(stat = NULL,
     return(NULL)
   }
   out
+}
+
+# neuroatlas's exported volume -> surface projector, or NULL when the
+# installed neuroatlas predates it.
+.nm_surface_projector <- function() {
+  if (!requireNamespace("neuroatlas", quietly = TRUE)) return(NULL)
+  if (!"project_cluster_overlay" %in% getNamespaceExports("neuroatlas")) {
+    return(NULL)
+  }
+  getExportedValue("neuroatlas", "project_cluster_overlay")
 }
 
 # Vertex values the static surface draws: projected values on the requested

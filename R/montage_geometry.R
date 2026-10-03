@@ -146,11 +146,64 @@
   invisible(candidate_geometry)
 }
 
+# An underlay on its own grid (the interactive viewer's 'world' alignment:
+# each layer is sliced on its own grid and drawn at its world position). The
+# grids may differ in voxel size, dimensions and origin, but must share axis
+# orientation and direction (no relative rotation or obliquity, which the
+# viewer cannot register) and overlap in world space.
+.montage_assert_world_compatible <- function(reference, candidate, label,
+                                             tolerance = 1e-4) {
+  directions <- function(geometry) {
+    affine <- matrix(as.numeric(geometry$affine), nrow = 4L, ncol = 4L)
+    linear <- affine[seq_len(3L), seq_len(3L), drop = FALSE]
+    sweep(linear, 2L, sqrt(colSums(linear^2)), "/")
+  }
+  problem <- if (!identical(as.character(reference$orientation),
+                            as.character(candidate$orientation))) {
+    paste0("axis orientation ", candidate$orientation, " differs from the ",
+           "underlay's ", reference$orientation)
+  } else if (any(abs(directions(reference) - directions(candidate)) > tolerance)) {
+    "its axes are rotated or oblique relative to the underlay's"
+  }
+  if (is.null(problem)) {
+    box <- function(geometry) {
+      affine <- matrix(as.numeric(geometry$affine), nrow = 4L, ncol = 4L)
+      corners <- as.matrix(expand.grid(
+        c(-0.5, geometry$dimensions[[1L]] - 0.5),
+        c(-0.5, geometry$dimensions[[2L]] - 0.5),
+        c(-0.5, geometry$dimensions[[3L]] - 0.5)
+      ))
+      world <- affine %*% rbind(t(corners), 1)
+      apply(world[seq_len(3L), , drop = FALSE], 1L, range)
+    }
+    a <- box(reference)
+    b <- box(candidate)
+    if (any(a[2L, ] <= b[1L, ] | b[2L, ] <= a[1L, ])) {
+      problem <- "it does not overlap the underlay in world space"
+    }
+  }
+  if (!is.null(problem)) {
+    stop(
+      "The interactive underlay cannot be aligned with ", label, ": ",
+      problem, ". The underlay may differ from the maps in voxel size and ",
+      "field of view but must be in the same template space and axis ",
+      "orientation; resample it to the maps' space (for example with ",
+      "neuroim2::resample()) or omit `underlay` in montage_interactive() to ",
+      "use `bg`.",
+      call. = FALSE
+    )
+  }
+  invisible(TRUE)
+}
+
 .montage_validate_report_volume_geometry <- function(manifest,
                                                       background,
                                                       stat_maps,
                                                       tolerance =
-                                                        .montage_geometry_tolerance) {
+                                                        .montage_geometry_tolerance,
+                                                      background_grid =
+                                                        c("same", "world")) {
+  background_grid <- match.arg(background_grid)
   background <- if (is.character(background) && length(background) == 1L) {
     neuroim2::read_vol(background)
   } else {
@@ -172,10 +225,18 @@
         call. = FALSE
       )
     }
-    .montage_assert_same_geometry(
-      background, candidate, analysis_id, map_id,
-      reference_label = "background", tolerance = tolerance
-    )
+    if (identical(background_grid, "same")) {
+      .montage_assert_same_geometry(
+        background, candidate, analysis_id, map_id,
+        reference_label = "background", tolerance = tolerance
+      )
+    } else {
+      .montage_assert_world_compatible(
+        .montage_volume_geometry(background, tolerance),
+        .montage_volume_geometry(candidate, tolerance),
+        label = paste0("analysis_id '", analysis_id, "', map_id '", map_id, "'")
+      )
+    }
 
     group <- groups[[analysis_id]]
     primary_row <- match(group$primary_map_id, manifest$map_id)
