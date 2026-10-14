@@ -1,0 +1,29 @@
+.nm-space { margin: 1.2rem 0 3rem; padding: 1.25rem 0; border-block: 1px solid var(--nm-rule); }
+.nm-space-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.nm-space-controls label { font-weight: 600; }
+.nm-space select, .nm-space button { font: inherit; color: var(--nm-ink); background: var(--nm-control); border: 1px solid var(--nm-rule-strong); border-radius: 4px; padding: .5rem .8rem; min-height: 44px; }
+.nm-space select { min-width: 12rem; max-width: 100%; }
+.nm-space button { cursor: pointer; }
+.nm-space button:hover:enabled { background: var(--nm-accent-soft); }
+.nm-space button:disabled { opacity: .55; cursor: default; }
+.nm-space button:focus-visible, .nm-space select:focus-visible, .nm-space summary:focus-visible { outline: 2px solid var(--nm-accent); outline-offset: 3px; }
+.nm-space [data-nm-space-open] { background: var(--nm-accent); color: var(--nm-page); border-color: var(--nm-accent); }
+.nm-space [data-nm-space-open]:hover:enabled { background: var(--nm-accent-ink); }
+.nm-space [data-nm-space-summary] { margin: .8rem 0 .4rem; font-variant-numeric: tabular-nums; }
+.nm-space-policy { color: var(--nm-ink-2); max-width: 72ch; font-size: .9rem; }
+.nm-space [data-nm-space-status]:empty { display: none; }
+.nm-space-selection { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem; margin: .75rem 0; }
+.nm-space [data-nm-space-stage] { position: relative; height: clamp(520px, 78vh, 900px); width: 100%; margin: 1rem 0; }
+.nm-space [data-nm-space-stage] iframe { display: block; }
+.nm-space [hidden] { display: none !important; }
+.nm-space-members { margin-top: 1rem; font-size: .9rem; }
+.nm-space-members summary { cursor: pointer; color: var(--nm-accent-ink); padding: .5rem 0; }
+@media (max-width: 600px) {
+  .nm-space-controls label { width: 100%; }
+  .nm-space-controls select { flex: 1 1 100%; }
+  .nm-space [data-nm-space-stage] { height: 70vh; min-height: 480px; }
+}
+@media print {
+  .nm-space-controls, .nm-space-selection, .nm-space [data-nm-space-stage], .nm-space [data-nm-space-status], .nm-space-members summary { display: none !important; }
+  .nm-space-members > * { display: block; }
+}

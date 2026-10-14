@@ -45,7 +45,8 @@ render_montage_report(
   surface_scene = NULL,
   interactive = NULL,
   surface = NULL,
-  cerebellum_reference = getOption("neuromosaic.cerebellum_reference", NULL)
+  cerebellum_reference = getOption("neuromosaic.cerebellum_reference", NULL),
+  space = NULL
 )
 }
 \arguments{
@@ -221,6 +222,11 @@ volume with FreeSurfer cerebellum labels 8 (left) and 47 (right). Falls
 back to `getOption("neuromosaic.cerebellum_reference")` when not given.
 Whatever is used is stated in the report header, the Methods paragraph
 and Provenance; see [montage_peak_table()].}
+
+\item{space}{Optional [montage_space()] map-set comparison configuration.
+HTML and QMD reports bundle a lazy Space viewer with explicit comparison
+masks. PDF output includes the member list. The initial runtime supports
+subject sets with one model/contrast per set and t/estimate channels.}
 }
 \value{
 The path to the rendered report (invisibly).

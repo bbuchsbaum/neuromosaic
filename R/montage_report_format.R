@@ -1763,7 +1763,9 @@ montage_report_formatters <- function(manifest = NULL,
     section_notes = section_notes
   )
   panel_hashes <- paste(rep("#", min(length(layout) + 2L, 6L)), collapse = "")
-  cat("\n\n", panel_hashes, " ", label, "\n\n", sep = "")
+  anchor <- .montage_report_map_anchor(as.character(manifest$analysis_id[[i]]),
+                                       as.character(manifest$map_id[[i]]))
+  cat("\n\n", panel_hashes, " ", label, " {#", anchor, "}\n\n", sep = "")
   invisible(NULL)
 }
 

@@ -172,6 +172,10 @@
 #'   `map_id`. Static surface panels are required and remain authoritative.
 #'   Surface typed arrays can be compressed into the HTML for direct `file://`
 #'   viewing or written once as relative content-addressed bundle assets.
+#' @param space Optional [montage_space()] map-set comparison configuration.
+#'   HTML and QMD reports bundle a lazy Space viewer with explicit comparison
+#'   masks. PDF output includes the member list. The initial runtime supports
+#'   subject sets with one model/contrast per set and t/estimate channels.
 #' @param cerebellum_reference Cerebellar reference used to label peaks
 #'   that fall in the cerebellum when `atlas` has no cerebellar regions (for
 #'   example Schaefer + ASEG): `NULL` or `FALSE` (none; the default, and
@@ -257,7 +261,8 @@ render_montage_report <- function(manifest,
                                   surface = NULL,
                                   cerebellum_reference = getOption(
                                     "neuromosaic.cerebellum_reference", NULL
-                                  )) {
+                                  ),
+                                  space = NULL) {
   # Report text is UTF-8 (minus signs, middle dots); build and render it
   # with a UTF-8 character type even in a C-locale session.
   .montage_local_utf8_ctype()
@@ -274,6 +279,9 @@ render_montage_report <- function(manifest,
 
   empty <- match.arg(empty)
   map_selector <- match.arg(map_selector)
+  if (!is.null(space) && !inherits(space, "montage_space")) {
+    stop("'space' must be NULL or created by montage_space().", call. = FALSE)
+  }
   if (!is.null(interactive) &&
       !inherits(interactive, "montage_interactive")) {
     stop("'interactive' must be NULL or created by montage_interactive().",
@@ -393,6 +401,18 @@ render_montage_report <- function(manifest,
   )
   report_data$params$surface_requested <- !is.null(surface)
   report_data$params$interactive_requested <- !is.null(interactive)
+  report_data$params$space_requested <- !is.null(space)
+  report_data["space"] <- list(.prepare_montage_space_report(
+    report_data$manifest, space, background = bg, output_file = output_file,
+    is_html = ext %in% c("html", "qmd")
+  ))
+  if (!is.null(report_data$space)) {
+    report_data$provenance$space_engine <- "neuroimjs 0.6.0 with explicit-mask correction"
+    report_data$provenance$space_comparison <- report_data$space$scene$provenance$comparison
+    report_data$provenance$space_support <- report_data$space$scene$provenance$support
+    report_data$provenance$space_conversion <- report_data$space$scene$provenance$conversion
+    report_data$provenance$space_runtime_source <- report_data$space$scene$provenance$runtime$source_state
+  }
   # Keep an exact, named `surface = NULL` entry when no grouped interactive
   # surface was requested. Assigning NULL with `$<-` removes the entry, after
   # which `$surface` partially matches the legacy `surface_scene` field.
@@ -500,16 +520,18 @@ render_montage_report <- function(manifest,
     identical(report_data$interactive$summary$packaging, "bundle")
   has_surface_bundle <- !is.null(report_data$surface) &&
     identical(report_data$surface$summary$packaging, "bundle")
+  has_space_bundle <- !is.null(report_data$space) && identical(ext, "html")
   output_format <- .montage_rmarkdown_output_format(
     ext,
     latex_engine,
-    self_contained = !(has_interactive_bundle || has_surface_bundle)
+    self_contained = !(has_interactive_bundle || has_surface_bundle || has_space_bundle)
   )
   # A bundle report already travels with its companion directory, so its panel
   # figures go there as files. Inlining them as data URIs would hand rmarkdown's
   # non-self-contained image pass multi-megabyte `src` strings, which
   # utils::URLdecode() processes in quadratic time (tens of minutes per report).
-  if (identical(ext, "html") && (has_interactive_bundle || has_surface_bundle)) {
+  if (identical(ext, "html") &&
+      (has_interactive_bundle || has_surface_bundle || has_space_bundle)) {
     companion <- paste0(
       tools::file_path_sans_ext(basename(output_file)), "_files"
     )
@@ -2497,6 +2519,12 @@ render_montage_report <- function(manifest,
       character(1),
       output_dir = output_dir,
       label = "interactive bundle asset"
+    ))
+  }
+  if (!is.null(report_data$space)) {
+    report_data$space$bundle_files <- unname(vapply(
+      report_data$space$bundle_files, .montage_qmd_relative_path, character(1),
+      output_dir = output_dir, label = "Space bundle asset"
     ))
   }
   report_data

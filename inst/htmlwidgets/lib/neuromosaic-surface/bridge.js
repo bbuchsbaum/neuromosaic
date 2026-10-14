@@ -1490,15 +1490,18 @@
   }
 
   // Mounting ----------------------------------------------------------------
-  function connectHandle(host, handle) {
+  function connectHandle(host, handle, token) {
     host.__nmSurfaceHandle = handle;
     var widget = host.querySelector(".surfwidget");
     if (widget) widget.__surfviewHandle = handle;
     return Promise.resolve(handle.ready).then(function () {
+      if (token.cancelled || host.__nmSurfaceHandle !== handle) return null;
       applyGround(host);
       tuneMaterials(host);
       selectMap(host, host.getAttribute("data-nm-surface-map"));
-      loadParcels().then(function (lookup) { host.__nmSurfaceParcels = lookup; });
+      loadParcels().then(function (lookup) {
+        if (!token.cancelled) host.__nmSurfaceParcels = lookup;
+      });
       buildViews(host);
       host.__nmSurfaceView = initialView(host);
       markView(host, host.__nmSurfaceView);
@@ -1532,6 +1535,7 @@
       setStatus(host, null);
       host.setAttribute("data-nm-surface-ready", "true");
       touchSurfaceBudget(host);
+      return handle;
     });
   }
 
@@ -1589,6 +1593,7 @@
   // Free the surface viewer's context, remembering the view and any display
   // change so the next mount looks the same.
   function releaseSurface(host) {
+    if (host.__nmSurfaceActivation) host.__nmSurfaceActivation.cancelled = true;
     var handle = host.__nmSurfaceHandle;
     GL.drop(surfaceKey(host));
     if (handle) {
@@ -1697,8 +1702,11 @@
 
   function mount(host) {
     if (host.__nmSurfaceMount) return host.__nmSurfaceMount;
+    var token = { cancelled: false };
+    host.__nmSurfaceActivation = token;
     setStatus(host, "loading", "Loading surface");
     host.__nmSurfaceMount = loadRuntime().then(function () {
+      if (token.cancelled) return null;
       var manifestNode = document.getElementById(host.getAttribute("data-nm-surface-manifest"));
       if (!manifestNode) throw new Error("The surface scene manifest is missing.");
       var manifest = JSON.parse(manifestNode.textContent || "{}");
@@ -1714,7 +1722,7 @@
         baseUrl: document.baseURI,
         fetcher: surfaceFetch,
         fitInsets: fitInsets(host),
-        onError: function (error) { showFallback(host, error); }
+        onError: function (error) { if (!token.cancelled) showFallback(host, error); }
       };
       var style = reportStyle(options.preset);
       if (style) options.preset = style;
@@ -1726,8 +1734,9 @@
         options.oblique = parseOblique(host.getAttribute("data-nm-surface-oblique"));
         options.fov = 22;
       }
-      return connectHandle(host, window.surfview.mountSurfView(widget, manifest, options));
+      return connectHandle(host, window.surfview.mountSurfView(widget, manifest, options), token);
     }).catch(function (error) {
+      if (token.cancelled) return null;
       // Let a later choice retry (e.g. after a transient network failure).
       host.__nmSurfaceMount = null;
       showFallback(host, error);
@@ -1857,7 +1866,8 @@
         unparkSurface(host);
         if (surfaceLost(host)) releaseSurface(host);
         if (!host.__nmSurfaceHandle) GL.reserve(surfaceKey(host), 1);
-        mount(host).then(function () {
+        mount(host).then(function (handle) {
+          if (!handle || host.__nmSurfaceHandle !== handle) return;
           touchSurfaceBudget(host);
           if (host.__nmSurfaceHandle) {
             window.requestAnimationFrame(function () {

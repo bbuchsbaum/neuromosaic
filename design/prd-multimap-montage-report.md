@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Draft for review (rev 2 — incorporates code-review findings 2026-06-03) |
+| **Status** | Historical baseline with proposed map-set/Space extension (section 20, 2026-10-14) |
 | **Author** | bbuchsbaum (with Claude) |
-| **Date** | 2026-06-03 |
+| **Date** | 2026-06-03; extension added 2026-10-14 |
 | **Tracking issue** | [#1 — RFE: multi-map montage report mode](https://github.com/bbuchsbaum/neuromosaic/issues/1) |
 | **Home package** | `neuromosaic` (rescoped) |
 
@@ -443,3 +443,47 @@ report, dispatched correctly, schema-validated, with the three assertions firing
   **contract-first** (C1 dispatch, C2 schema+validator, C3 render/template), extended the
   manifest schema for parity, split MVP vs full acceptance, and resolved the surface-layer
   and base64 decisions.
+
+## 20. Map sets and Space
+
+Subject-set slice implemented locally 2026-10-14. Sections 1–19 retain the original implementation history;
+the current code is the authority for functionality already delivered. The
+[map-set and Space specification](space-map-sets.md) defines this extension's
+interface, capability boundaries, reader behavior, and acceptance sequence.
+
+A map set references existing manifest `map_id`s and declares which entities
+and variants are compared. It is distinct from an `analysis_id` group, whose
+primary/auxiliary maps describe one analysis. A set may span analysis groups
+without changing their layout, policy, figures, or map selectors.
+
+The author API is `montage_map_set(...)`, combined with
+`space = montage_space(sets = ...)` on `render_montage_report()`. It follows the
+existing optional `interactive` and `surface` configurations. The report adds
+a lazy **Explore map sets** section beside its results overview, with links
+from selected members back to their existing map panels.
+
+Comparison inputs are raw materialized maps under declared analysis/set masks.
+Display thresholds, cluster filtering, and primary-support restriction must not
+define the similarity input. Space requires a common supported grid, matching
+local HTTP-served runtime assets, explicit scientific channels, and recorded
+precision conversion. Existing static figures remain the report's figures of
+record; Space controls are exploratory.
+
+Neuroimjs 0.6.0 supplies the supported embedding/lifecycle API. Its unpatched
+loader removes shared finite-zero voxels even under an explicit mask; the
+bundled source patch corrects that behavior and an independent native probe
+verifies preservation of the declared comparison domain. Subject terminology,
+t/beta-only channels, and missing-member behavior in Ortho also require upstream
+changes before the full generic/multi-analysis interface can ship. Build the
+subject-set vertical slice after the mask correction, retaining the same map-set
+interface for broader support. Do not fork Space internals or disguise
+unsupported quantities to bypass the boundary.
+
+Implementation sequence: resolve/validate membership and raw assets; integrate
+the packaged Space host/frame; connect report navigation and lifecycle; adopt
+generic labels/z support; then qualify numerical inputs, native browser
+behavior, accessibility, portable output, resource use, and existing regressions.
+Mote `bd-01M4XVE9PJ1SYZ3GVJM3JXB9X5` tracks the work. S1/S2 now provide the
+subject-set path in both report templates, with a pinned correction patch and
+R/JS/browser consumer evidence. Generic labels, z channels, multi-analysis sets,
+and larger-data/release qualification remain open; see specification section 11.

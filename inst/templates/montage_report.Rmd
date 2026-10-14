@@ -50,6 +50,9 @@ interactive_hooks <- neuromosaic::montage_interactive_report_hooks(
 surface_hooks <- neuromosaic::montage_surface_report_hooks(
   rd$surface, is_html = is_html
 )
+space_hooks <- neuromosaic::montage_space_report_hooks(
+  rd$space, is_html = is_html
+)
 ```
 
 ```{r report-overview, results='asis'}
@@ -64,6 +67,7 @@ if (!is_html) fmt$emit_report_overview()
 fmt$emit_qc_summary(qc)
 interactive_hooks$emit_document()
 surface_hooks$emit_document()
+space_hooks$emit_document()
 ```
 
 ```{r interactive-surface, results='asis'}
@@ -84,6 +88,10 @@ if (!is.null(rd$surface_scene)) {
 ```{r results-overview, results='asis'}
 # Emits its own heading, and nothing at all when there is nothing to show.
 fmt$emit_results_overview()
+```
+
+```{r map-set-comparisons, results='asis'}
+space_hooks$emit_host()
 ```
 
 # Maps

@@ -1,0 +1,120 @@
+{
+  "name": "neuroimjs-space",
+  "version": "0.6.0",
+  "source_state": "git:c4d23a4d768e903d2a4235c02cb8a649b3da2dd1+262a5cc01dfb1877ddc96ea81a4cc8d251d0e32f190464ce0e4734d8156e4b91",
+  "source_commit": "c4d23a4d768e903d2a4235c02cb8a649b3da2dd1",
+  "source_tree": "69ebc65e37b26a3ab2a33984c492165ce6bde6e8",
+  "toolchain": {
+    "node": "v26.7.0",
+    "npm": "11.19.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "install": "npm ci --include=dev --no-audit --no-fund",
+    "lockfile_sha256": "fdb8ee2a49e3f220adb9c536ae224f94d2396e71903f5b89936aede627efe4ea",
+    "installed_lock_sha256": "638dd86af64e654076353eb91e013b66560b7a46171f0b517a6951485eb1a4f1",
+    "vendor_tool_sha256": "e4dc268b1f8b54716debdee6b44a13b01cc6abfd9d4ddd69c2eb6ba6b0fd120c"
+  },
+  "upstream_main": "18cd39ff8fa63a37cab16bb8cf204900c448b77e",
+  "patch": {
+    "path": "tools/patches/neuroimjs-space-0.6.0.patch",
+    "sha256": "262a5cc01dfb1877ddc96ea81a4cc8d251d0e32f190464ce0e4734d8156e4b91"
+  },
+  "public_entry": "src/space/index.ts",
+  "global": "window.NeuroMosaicSpaceRuntime",
+  "bundle": "space-host.js",
+  "sha256": "b1ee164e76bf69d1646b3a080c3f7fe52231db9696f7e6dab8cc2e8350509134",
+  "budget_bytes": 2097152,
+  "runtime_bytes": 1194871,
+  "files": [
+    {
+      "path": "LICENSE-neuroimjs",
+      "bytes": 1074,
+      "sha256": "17bad942df780115fe2718bb090a076afe6a67db0e6ee624e9b9606fa4da5338"
+    },
+    {
+      "path": "frame/assets/BufferResource-5cUtVAJ_.js",
+      "bytes": 11116,
+      "sha256": "67b4f3ac48fcf30bd22effb86c0e6515108168cef838e13eba83a89d0a53952d"
+    },
+    {
+      "path": "frame/assets/CanvasRenderer-9us1VFIi.js",
+      "bytes": 17855,
+      "sha256": "d5b732e263cc1a6fc709425b3cde8f6e8da91111b02064f3c03ce5a4b53aee23"
+    },
+    {
+      "path": "frame/assets/Filter-CwANi1vQ.js",
+      "bytes": 903,
+      "sha256": "2fce7a4df3d9c210d0006b6aae2e705aabbf5e8617e2ae6ce6caf072444a92a7"
+    },
+    {
+      "path": "frame/assets/RenderTargetSystem-BaLbymni.js",
+      "bytes": 52135,
+      "sha256": "adb76516db836cec2dc0540a64bb9df49ac1f506570b0d56291e1598b1aebbc7"
+    },
+    {
+      "path": "frame/assets/WebGLRenderer-DJdvXyam.js",
+      "bytes": 72154,
+      "sha256": "44a73274204c25398a929a6bdb880b431379132dcffc5d89e3a5fda78e4de9a0"
+    },
+    {
+      "path": "frame/assets/WebGPURenderer-C_2h-NrL.js",
+      "bytes": 46055,
+      "sha256": "d188ef2fd8d14449e18080540015566f824d21c46aa40c64391df801f8648e25"
+    },
+    {
+      "path": "frame/assets/browserAll-DgERXIGB.js",
+      "bytes": 43149,
+      "sha256": "bff76e80392489685456a1b2bf67d09cd7472e545a2e5dac2f61b9134b8ec0c3"
+    },
+    {
+      "path": "frame/assets/embed.worker-2eESqWGO.js",
+      "bytes": 11946,
+      "sha256": "44419b9b615c979444a1aba9f1bbf803bce3f23a96504121cf784c1e203eb517"
+    },
+    {
+      "path": "frame/assets/embedded-bootstrap-Bho5_2sa.js",
+      "bytes": 2259,
+      "sha256": "4e35cd3edbe86cd2fed945f1e482a283cd5f5d8b0d6da3cf1305a14fe6d5887a"
+    },
+    {
+      "path": "frame/assets/embedded-data-X7MDoMox.js",
+      "bytes": 109193,
+      "sha256": "44a33f4fc4d23ff1f963c4933a84ebcd2f41661db13c77f814534d687a590598"
+    },
+    {
+      "path": "frame/assets/index-8iZfJL8W.js",
+      "bytes": 2347,
+      "sha256": "2305ee28f9bbaeeb5fd188d0476a5e5e1e527e1cada652f67de8ca79b72878e3"
+    },
+    {
+      "path": "frame/assets/main-BvEeVxNg.js",
+      "bytes": 757440,
+      "sha256": "408ee0fdece80f454d45e3bd1cefec9e2f0d8d7b6f15d57ba62e4f76b5bfcb94"
+    },
+    {
+      "path": "frame/assets/smooth.worker-ypIZyHPS.js",
+      "bytes": 2568,
+      "sha256": "425203154fe3a999332b41d4b768ad2712e1c1cdafe0a40547288168776370e7"
+    },
+    {
+      "path": "frame/assets/stability.worker-DJQDIbNW.js",
+      "bytes": 21910,
+      "sha256": "40a665f2cda1fe8627726eaa18b81dc3f932419717072d7ebff7eda7f615888c"
+    },
+    {
+      "path": "frame/assets/webworkerAll-B_jMeaMY.js",
+      "bytes": 15478,
+      "sha256": "1dd20b4538a3dd66dc71cffca9e187731ea87ca136d28bc224d329d15674decb"
+    },
+    {
+      "path": "frame/index.html",
+      "bytes": 15855,
+      "sha256": "d89019c9821a4a4f1b27760c554e02b2a24e08aefc821005de39e95b3d4457d4"
+    },
+    {
+      "path": "space-host.js",
+      "bytes": 12508,
+      "sha256": "b1ee164e76bf69d1646b3a080c3f7fe52231db9696f7e6dab8cc2e8350509134"
+    }
+  ]
+}

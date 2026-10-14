@@ -1,7 +1,7 @@
 (function (root) {
   "use strict";
 
-  var ADAPTER_VERSION = "1.5.1";
+  var ADAPTER_VERSION = "1.5.2";
   var RUNTIME_VERSION = "0.5.0";
   var OVERLAY_LAYER_ID = "neuromosaic-overlay";
   var BACKGROUND_LAYER_ID = "neuromosaic-background";
@@ -293,9 +293,7 @@
     }
   }
 
-  // Bundle reports ship the ~1 MB neuroimjs runtime as a companion file and
-  // load it on the first open; embedded reports inline it. One promise per
-  // page, cleared on failure so a later open can retry.
+  // Bundle runtime: lazy, shared per page, retryable after failure.
   var runtimePromise = null;
 
   function runtimeSource() {
@@ -544,10 +542,8 @@
     return new api.ColorMap(colors, { range: range, name: "Custom" });
   }
 
-  // The underlay as the static figures draw it: the head is everything not
-  // connected to the border through voxels at or below the floor (inner CSF
-  // kept, outside set to `outside`); rim voxels take a blurred copy so the
-  // 2 mm contour is smooth like the static 1 mm rim.
+  // Preserve internal CSF; replace border-connected voxels below the floor
+  // with `outside`. Blur the rim to match the static figures' smooth contour.
   function prepareUnderlay(volume, floor, outside, inside) {
     var data = typeof volume.getData === "function" ? volume.getData() : null;
     var dim = volume.space && volume.space.dim;
@@ -617,9 +613,7 @@
     return withData(volume, result);
   }
 
-  // The ground-dependent part of the underlay display: its grey ramp and, on
-  // the light ground, hiding voxels at or below the floor (outside the head)
-  // so the brain sits on the figure ground as in the static montage.
+  // Ground sets the grey ramp; light ground hides voxels below the head floor.
   function underlayLook(api, underlay, ground) {
     var spec = GROUNDS[ground] || GROUNDS.dark;
     var range = underlay.range, floor = underlay.floor;
@@ -630,9 +624,7 @@
     };
   }
 
-  // The underlay as drawn (floor, display range, smoothed head contour and
-  // head bounds), decoded and prepared once per page and shared by every
-  // viewer: a 1 mm template is 7 M voxels.
+  // Cache the prepared underlay, floor, range and head bounds across viewers.
   var underlays = new Map();
 
   function underlayFor(state, assetId) {
@@ -1104,10 +1096,8 @@
     }, true);
   });
 
-  // Keyboard stepping on a focused slice pane: Up/Right (and Page Up) move
-  // the slice forward along that pane's through-plane axis, Down/Left back.
-  // Bound in the capture phase so the runtime's hover-based handler, which
-  // steps whichever view the pointer last entered, never sees these keys.
+  // Capture slice-stepping keys on the focused pane before the runtime's
+  // hover-based handler: Up/Right/PageUp advance, Down/Left retreat.
   function bindSliceKeys(state) {
     var keys = {
       ArrowUp: 1, ArrowRight: 1, PageUp: 5,
@@ -1477,9 +1467,7 @@
     }
   }
 
-  // Save view (PNG): the three slices as shown, with a title line and the
-  // colour key on a light ground (whatever the page theme), for slides and
-  // lab meetings. The slices keep the ground the reader chose.
+  // PNG: preserve slice grounds; put the title and colour key on light ground.
   function paneImages(state) {
     var cells = Array.prototype.slice.call(state.viewerElement.querySelectorAll("[data-nij-view]"));
     var order = ["sagittal", "coronal", "axial"];
@@ -1507,9 +1495,7 @@
     }).filter(Boolean);
   }
 
-  // "story-gt-math_slices.png": the report's file stem for the map (the same
-  // slug as its figure downloads); other maps of a multi-map analysis keep
-  // their ids.
+  // Match figure-download stems; auxiliary maps retain their IDs.
   function exportName(state) {
     var article = state.host.closest && state.host.closest("[data-nm-file-stem]");
     var stem = article && article.getAttribute("data-nm-file-stem");
@@ -1820,7 +1806,14 @@
     }
   }
 
-  async function createViewer(host) {
+  function checkActivation(token) {
+    if (!token.cancelled) return;
+    var error = new Error("Viewer activation cancelled.");
+    error.name = "AbortError";
+    throw error;
+  }
+
+  async function createViewer(host, token) {
     var scene = sceneFor(host);
     if (needsServer(scene)) fail(FILE_MESSAGE);
     var analysis = analysisFor(scene, host.dataset.nmVolumeAnalysis);
@@ -1862,6 +1855,7 @@
       underlayFor(state, backgroundAsset.asset_id),
       decodeAsset(state, initialMap.asset_id, false)
     ]);
+    checkActivation(token);
     // The underlay may sit on a finer grid than the maps: neuroimjs 0.5 slices
     // each layer on its own grid and draws it at its world position.
     state.overlayGrid = volumes[1];
@@ -1878,7 +1872,7 @@
       overlayLayer(state, volumes[1], initialMap)
     );
     var restoreConsole = quietPixiDeprecations();
-    state.viewer = await root.neuroimjs.SimpleOrthogonalViewer.create(
+    var viewer = await root.neuroimjs.SimpleOrthogonalViewer.create(
       state.viewerElement,
       stack,
       {
@@ -1909,6 +1903,15 @@
         }, theme.orientationLabels)
       }
     );
+    if (token.cancelled) {
+      // dispose() may have run before the asynchronous constructor returned.
+      // A replacement activation waits for this one to relinquish its DOM.
+      var canvases = Array.prototype.slice.call(viewerElement.querySelectorAll("canvas"));
+      try { viewer.dispose(); } finally { GL.loseContexts(canvases); restoreConsole(); }
+      viewerElement.replaceChildren();
+      checkActivation(token);
+    }
+    state.viewer = viewer;
     state.stack = stack;
     // Orientation labels are built on the first frames; release the console
     // filter once those have rendered.
@@ -1940,6 +1943,7 @@
     state.controls.viewer = state.viewer;
     state.controlsElement.appendChild(state.controls);
     await state.controls.updateComplete;
+    checkActivation(token);
     state.controls.selectLayer(OVERLAY_LAYER_ID);
     var initialDefaults = state.controls.setDefaultsFromCurrent(
       OVERLAY_LAYER_ID
@@ -2009,9 +2013,7 @@
     return state;
   }
 
-  // What a reader set up in a viewer that was released (to free WebGL
-  // contexts) or hidden: cursor and per-map display changes come back on
-  // the next open.
+  // Retain cursor and per-map display state across release and reopen.
   function saveMemo(state) {
     if (!state || !state.viewer || !state.currentMapId) return;
     try {
@@ -2257,9 +2259,7 @@
     };
   }
 
-  // Dragging on a slice moves the cursor: while the primary button is held,
-  // each animation frame replays the latest pointer position to the pane's
-  // own click handling.
+  // During dragging, replay the latest pointer position to the pane each frame.
   function bindSliceDrag(state) {
     var drag = null, frame = 0;
     state.onDragDown = function (event) {
@@ -2300,12 +2300,8 @@
     document.addEventListener("pointercancel", state.onDragEnd, true);
   }
 
-  // A click or drag selects the map voxel under the pointer: the cursor moves
-  // to that voxel's centre in the pane's plane (the through-plane coordinate
-  // is left alone). With an underlay on a finer grid the runtime would
-  // otherwise leave it at the underlay texel centre, which can lie on the
-  // boundary between two map voxels; the crosshair, coordinates and value then
-  // all name one map voxel.
+  // Snap in-plane coordinates to map voxel centres, keeping the through-plane
+  // coordinate. A finer underlay must not put the cursor between map voxels.
   function snapToMapVoxel(state, through) {
     var layer = overlayVolLayer(state);
     var space = layer && layer.space;
@@ -2501,9 +2497,15 @@
       applyPendingCoord(state);
       return state;
     }
-    if (host.__nmActivating) return host.__nmActivating;
+    if (host.__nmActivating && host.__nmActivation && !host.__nmActivation.cancelled) return host.__nmActivating;
+    var previous = host.__nmActivating;
+    var token = { cancelled: false };
+    host.__nmActivation = token;
     host.__nmActivating = (async function () {
       try {
+        // Never let two uncancellable constructors write to the same host.
+        if (previous) await previous.catch(function () {});
+        checkActivation(token);
         if (!root.neuroimjs) {
           var status = host.querySelector("[data-nm-volume-status]");
           status.textContent = "Loading the interactive viewer…";
@@ -2511,15 +2513,18 @@
         }
         if (needsServer(sceneFor(host))) fail(FILE_MESSAGE);
         await ensureRuntime();
+        checkActivation(token);
         // Free room first, so creating these contexts never makes the
         // browser drop someone else's.
         GL.reserve(glKey(host), GL_COST);
-        var created = await createViewer(host);
+        var created = await createViewer(host, token);
+        checkActivation(token);
         unpark(host);
         created.shell.hidden = false;
         touchBudget(host);
         return created;
       } catch (error) {
+        if (token.cancelled) return null;
         var status = host.querySelector("[data-nm-volume-status]");
         unpark(host);
         dispose(host);
@@ -2534,16 +2539,17 @@
         }));
         throw error;
       } finally {
-        host.__nmActivating = null;
+        if (host.__nmActivation === token) {
+          host.__nmActivating = null;
+          host.__nmActivation = null;
+        }
       }
     }());
     return host.__nmActivating;
   }
 
-  // The browser took this viewer's contexts (it never does for a viewer we
-  // released ourselves). Rebuild only a viewer the reader can see, only when
-  // it fits the budget, and at most twice in 15 s; anything else waits,
-  // parked, for the reader to come back to it.
+  // Rebuild browser-lost contexts only on screen, within budget, at most twice
+  // per 15 s. Otherwise park until the reader returns.
   document.addEventListener("webglcontextlost", function (event) {
     var canvas = event.target;
     if (!canvas || canvas.__nmReleased || !canvas.closest) return;
@@ -2612,7 +2618,8 @@
       }
       button.disabled = true;
       try {
-        await activate(host);
+        var created = await activate(host);
+        if (!created || states.get(host) !== created) return;
         shell.hidden = false;
         button.setAttribute("aria-expanded", "true");
         button.textContent = "Hide interactive view";
@@ -2660,6 +2667,7 @@
   }
 
   function dispose(host, options) {
+    if (host.__nmActivation) host.__nmActivation.cancelled = true;
     var state = states.get(host);
     if (!(options && options.keepMemo)) {
       if (state) saveMemo(state);

@@ -1,0 +1,149 @@
+diff --git a/src/volumeset/VolumeSet.ts b/src/volumeset/VolumeSet.ts
+index 85c67d7..41365e1 100644
+--- a/src/volumeset/VolumeSet.ts
++++ b/src/volumeset/VolumeSet.ts
+@@ -51,9 +51,10 @@ export class VolumeSet {
+   }
+ 
+   /**
+-   * Build a set from 3D volumes that share one grid. The mask is `mask` (any
+-   * value > 0.5) when given, intersected with voxels where at least one member
+-   * is finite and non-zero.
++   * Build a set from 3D volumes that share one grid. An explicit mask (any
++   * value > 0.5) defines the comparison domain exactly, including positions
++   * where every member is finite zero. Without a mask, retain the compact
++   * non-zero union heuristic.
+    */
+   static fromVolumes(vols: NeuroVol[], metas: MemberMeta[], mask?: NeuroVol): VolumeSet {
+     if (vols.length === 0) throw new Error('volume set is empty');
+@@ -65,7 +66,10 @@ export class VolumeSet {
+     const maskData = mask ? (mask.getData() as ArrayLike<number>) : null;
+     const keep: number[] = [];
+     for (let i = 0; i < n; i++) {
+-      if (maskData && !(maskData[i] > 0.5)) continue;
++      if (maskData) {
++        if (maskData[i] > 0.5) keep.push(i);
++        continue;
++      }
+       let any = false;
+       for (const r of raw) {
+         const x = r[i];
+diff --git a/examples/volume-set/index.html b/examples/volume-set/index.html
+index 6143886..8571045 100644
+--- a/examples/volume-set/index.html
++++ b/examples/volume-set/index.html
+@@ -112,6 +112,20 @@
+         #contrast { width: 130px; } #sort { width: 162px; } #model { width: 70px; } #stat { width: 46px; }
+         .brand small { display: none; }
+       }
++      @media (max-width: 640px) {
++        main {
++          grid-template-columns: minmax(0, 1fr);
++          grid-template-rows: minmax(420px, 65vh) auto;
++          overflow-y: auto;
++          align-content: start;
++        }
++        #view-wrap { min-height: 420px; }
++        #side {
++          border-left: 0;
++          border-top: 1px solid var(--line);
++          overflow: visible;
++        }
++      }
+       #rail { display: block; }
+       canvas.montage { display: block; touch-action: none; }
+       canvas.montage-overlay { position: absolute; left: 0; top: 0; pointer-events: none; }
+@@ -185,16 +199,8 @@
+     <footer><canvas id="rail" aria-label="Value at cursor for every subject"></canvas><button id="copy-rail" class="ghost" title="Copy subject values at the cursor as tab-separated text">Copy values</button></footer>
+     <script type="module">
+       const embedded = new URLSearchParams(location.search).get('embedded') === '1';
+-      if (!embedded) {
+-        const preconnect = document.createElement('link');
+-        preconnect.rel = 'preconnect'; preconnect.href = 'https://fonts.googleapis.com';
+-        document.head.appendChild(preconnect);
+-        const stylesheet = document.createElement('link');
+-        stylesheet.rel = 'stylesheet';
+-        stylesheet.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap';
+-        document.head.appendChild(stylesheet);
+-        import('./main.ts');
+-      } else import('./embedded-bootstrap.ts');
++      if (!embedded) import('./main.ts');
++      else import('./embedded-bootstrap.ts');
+     </script>
+   </body>
+ </html>
+diff --git a/examples/volume-set/main.ts b/examples/volume-set/main.ts
+index b0402b5..442e988 100644
+--- a/examples/volume-set/main.ts
++++ b/examples/volume-set/main.ts
+@@ -2291,12 +2291,21 @@ export async function applyEmbeddedState(patch: SpaceStatePatch, source: 'api' |
+         else throw new Error('No statistic is supplied for the selected analysis.');
+       } else throw new Error(`${next.stat} data are unavailable for the selected analysis.`);
+     }
++    let clearedMissingOrthoSelection = false;
+     if (patch.selectedMemberId !== undefined) {
+       const member = patch.selectedMemberId === null ? null : available.find((m) => m.id === patch.selectedMemberId);
+       if (patch.selectedMemberId !== null && !member) throw new Error('selectedMemberId is not a member of the selected analysis.');
+       next.subject = member?.subject ?? null;
+     } else if (!available.some((m) => m.subject === next.subject)) {
+       next.subject = null;
++      clearedMissingOrthoSelection = next.mode === 'ortho';
++    }
++    if (clearedMissingOrthoSelection) {
++      // A comparison change can make the focused subject unavailable. Do not
++      // let renderOrtho choose order[0], which would silently inspect another
++      // member; return to Space with no focus instead.
++      next.mode = 'space';
++      next.prevMode = 'space';
+     }
+     if (patch.worldCoord !== undefined) {
+       if (patch.worldCoord === null) next.cursor = null;
+@@ -2313,6 +2322,7 @@ export async function applyEmbeddedState(patch: SpaceStatePatch, source: 'api' |
+     refreshAnalysisControls();
+     renderFailure = null;
+     await render();
++    if (clearedMissingOrthoSelection) setStatus('Selected member is unavailable for this comparison; returned to Space.');
+     if (renderFailure) {
+       Object.assign(state, previous);
+       refreshAnalysisControls();
+diff --git a/tests/VolumeSet.test.ts b/tests/VolumeSet.test.ts
+index 325cc37..7fd162e 100644
+--- a/tests/VolumeSet.test.ts
++++ b/tests/VolumeSet.test.ts
+@@ -185,6 +185,17 @@ describe('VolumeSet', () => {
+     expect(set.where({ subject: 'b' })).toEqual([1]);
+   });
+ 
++  it('preserves every explicit-mask voxel, including shared finite zeros', () => {
++    const zeroSensitiveSpace = new NeuroSpace([60, 1, 1], [1, 1, 1], [0, 0, 0]);
++    const repeated = (values: number[]) => Float32Array.from({ length: 60 }, (_, i) => values[i % values.length]);
++    const first = new FloatNeuroVol(zeroSensitiveSpace, repeated([0, 1, 2]));
++    const second = new FloatNeuroVol(zeroSensitiveSpace, repeated([0, 2, 1]));
++    const mask = new FloatNeuroVol(zeroSensitiveSpace, new Float32Array(60).fill(1));
++    const set = VolumeSet.fromVolumes([first, second], [{ subject: 'a' }, { subject: 'b' }], mask);
++    expect(set.maskIndex).toHaveLength(60);
++    expect(pearson(set.members[0].values, set.members[1].values)).toBeCloseTo(0.5, 12);
++  });
++
+   it('rejects members on different grids', () => {
+     const other = new FloatNeuroVol(new NeuroSpace([4, 3, 3], [2, 2, 2], [0, 0, 0]), new Float32Array(36));
+     expect(() => VolumeSet.fromVolumes([mk(() => 1), other], [{}, {}])).toThrow();
+diff --git a/tests/consumers/space.spec.ts b/tests/consumers/space.spec.ts
+index 52ca99e..7177a84 100644
+--- a/tests/consumers/space.spec.ts
++++ b/tests/consumers/space.spec.ts
+@@ -138,8 +138,12 @@ test('Space rejects invalid state atomically and serializes transitions across d
+   expect(result.ordered.map(state => state.threshold)).toEqual([0.1, 0.2]);
+   const frame = page.frameLocator('#first iframe');
+   await expect(frame.locator('#slice')).toHaveValue('9');
+-  const switched = await page.evaluate(() => window.spaceContract.handles.get('first')!.setState({ model: 'other' }));
+-  expect(switched).toMatchObject({ model: 'other', contrast: 'disjoint', statistic: 'beta' });
++  const switched = await page.evaluate(async () => {
++    const handle = window.spaceContract.handles.get('first')!;
++    await handle.setState({ mode: 'ortho', selectedMemberId: 't-only-s01' });
++    return handle.setState({ model: 'other' });
++  });
++  expect(switched).toMatchObject({ mode: 'space', model: 'other', contrast: 'disjoint', statistic: 'beta', selectedMemberId: null });
+   await expect(frame.locator('#contrast')).toHaveValue('disjoint');
+   await expect(frame.locator('#stat option')).toHaveText(['β']);
+   await expect(frame.locator('#sx-colour option[value="rel"]')).toHaveCount(0);
