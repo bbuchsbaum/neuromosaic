@@ -33,7 +33,9 @@ plot_cluster_slices <- function(stat_map,
     coord     = matrix(peak_mni, nrow = 1),
     unit      = "mm",
     cmap      = cmap,
-    crosshair = crosshair
+    crosshair = crosshair,
+    # Report templates and callers consume each named view independently.
+    assemble  = FALSE
   )
 
   if (!is.null(title) && is.list(p)) {

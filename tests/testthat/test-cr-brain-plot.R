@@ -1,4 +1,4 @@
-test_that("plot_cluster_slices returns a plot object", {
+test_that("plot_cluster_slices returns three renderable views with the cluster title", {
   inputs <- make_toy_cluster_report_inputs()
   peak <- c(-3, -3, -3)  # MNI coordinate in the toy space
 
@@ -11,6 +11,10 @@ test_that("plot_cluster_slices returns a plot object", {
   expect_type(p, "list")
   expect_equal(names(p), c("axial", "coronal", "sagittal"))
   expect_true(all(vapply(p, inherits, logical(1), "gg")))
+  for (view in p) {
+    expect_identical(view$labels$subtitle, "Test cluster")
+    expect_s3_class(ggplot2::ggplotGrob(view), "gtable")
+  }
 })
 
 test_that("plot_cluster_slices validates inputs", {
