@@ -42,7 +42,10 @@
 #'   `neuroim2::plot_overlay()` montage.
 #' @param bg_cmap,ov_cmap Background and overlay color maps. `"nm-signed"`
 #'   (the default for signed maps) is the report's threshold-saturated
-#'   diverging palette; see [nm_palette_colors()].
+#'   diverging palette; see [nm_palette_colors()]. Overlay names `"Greens"`,
+#'   `"Blues"`, and `"Reds"` use light-to-dark ColorBrewer tables shared with
+#'   the surface and interactive views. An explicit overlay colour vector is
+#'   ordered from low to high values and is retained in interactive metadata.
 #' @param ov_alpha Overlay alpha.
 #' @param ov_alpha_mode How overlay opacity tracks magnitude. `"binary"` gives
 #'   every suprathreshold voxel full `ov_alpha`; `"ramp"` ramps alpha linearly

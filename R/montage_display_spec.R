@@ -124,6 +124,7 @@
       signed = signed
     ))
 
+  palette_colors <- .montage_palette_colors(ov_cmap)
   structure(
     list(
       background = aligned$background,
@@ -157,7 +158,8 @@
       n_display_voxels = n_display,
       bg_cmap = bg_cmap,
       palette = .montage_volume_palette_identity(ov_cmap),
-      palette_value = ov_cmap,
+      palette_value = palette_colors %||% ov_cmap,
+      palette_colors = palette_colors,
       alpha = as.numeric(ov_alpha),
       alpha_mode = alpha_mode,
       alpha_gamma = alpha_gamma,
@@ -230,6 +232,7 @@
       cap = spec$cap,
       limits = spec$limits,
       palette = spec$palette,
+      palette_colors = spec$palette_colors,
       alpha = spec$alpha,
       alpha_mode = spec$alpha_mode,
       alpha_gamma = spec$alpha_gamma,

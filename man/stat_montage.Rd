@@ -74,7 +74,10 @@ report figure out in rows of six.}
 
 \item{bg_cmap, ov_cmap}{Background and overlay color maps. `"nm-signed"`
 (the default for signed maps) is the report's threshold-saturated
-diverging palette; see [nm_palette_colors()].}
+diverging palette; see [nm_palette_colors()]. Overlay names `"Greens"`,
+`"Blues"`, and `"Reds"` use light-to-dark ColorBrewer tables shared with
+the surface and interactive views. An explicit overlay colour vector is
+ordered from low to high values and is retained in interactive metadata.}
 
 \item{ov_alpha}{Overlay alpha.}
 

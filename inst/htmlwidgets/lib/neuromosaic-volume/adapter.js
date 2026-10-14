@@ -1,7 +1,7 @@
 (function (root) {
   "use strict";
 
-  var ADAPTER_VERSION = "1.5.0";
+  var ADAPTER_VERSION = "1.5.1";
   var RUNTIME_VERSION = "0.5.0";
   var OVERLAY_LAYER_ID = "neuromosaic-overlay";
   var BACKGROUND_LAYER_ID = "neuromosaic-background";
@@ -361,9 +361,7 @@
     return volume;
   }
 
-  // Curate the shared preset registry once: drop qualitative/rainbow maps and
-  // the duplicate "Greys" (shown as a second "Grayscale"), and put the report
-  // palette first.
+  // Curate presets once: report first; omit qualitative/rainbow duplicates.
   function curatePresets(api) {
     var ColorMap = api.ColorMap;
     if (!ColorMap || ColorMap.__nmCurated) return;
@@ -389,12 +387,11 @@
     ColorMap.__nmCurated = true;
   }
 
-  // The report palette (from R, per map) restretched to the live threshold
-  // and range. The preset registry is page-wide, so each viewer re-registers
-  // its colours before its panel reads them.
+  // Restretch nm-signed per viewer before reading the page-wide registry.
   function registerReportPalette(api, display, threshold, range) {
     curatePresets(api);
-    var colors = display && display.palette_colors;
+    if (!display || display.palette !== "nm-signed") return;
+    var colors = display.palette_colors;
     if (!Array.isArray(colors) || colors.length < 2) return;
     if (display.mode === "thresholded") {
       var t = Number(display.threshold);
@@ -439,7 +436,10 @@
       range: resolved.range,
       threshold: resolved.threshold,
       alpha: resolved.alpha,
-      colormap: api.ColorMap.fromPreset(resolved.colormapName),
+      colormap: resolved.colormapName === "Custom" ?
+        new api.ColorMap(resolved.colormapColors, {
+          range: resolved.range, threshold: resolved.threshold, name: "Custom"
+        }) : api.ColorMap.fromPreset(resolved.colormapName),
       colormapName: resolved.colormapName
     };
   }
@@ -2070,12 +2070,26 @@
     if (state && state.host) state.host.__nmAnnounce = null;
   }
 
-  // Reader-facing control panel policy: a curated colour-map menu with plain
-  // names for the map's scale, and threshold entries clamped to the data,
-  // mirrored while "Link symmetric" is pressed.
+  // Curate palettes per scale and clamp linked threshold entries to the data.
   function customizeControls(state) {
     var panel = state.controls;
     var displayApi = root.NeuroMosaicVolumeDisplay;
+    var applyState = panel.applyState.bind(panel);
+    panel.applyState = function (value) {
+      var map = currentMap(state);
+      // Seed Custom with the authored table before resetting from a preset.
+      if (value.colormap === "Custom" && map &&
+          map.display.palette_colors && map.display.palette !== "nm-signed") {
+        var layer = overlayVolLayer(state);
+        state.viewer.updateLayer(OVERLAY_LAYER_ID, {
+          colormap: new root.neuroimjs.ColorMap(
+            displayApi.paletteColors(map.display.palette_colors), {
+              range: layer.getRange(), threshold: layer.getThreshold(), name: "Custom"
+            })
+        });
+      }
+      return applyState(value);
+    };
     panel.colormapNamesIncluding = function (name) {
       var map = state.menuMap || currentMap(state);
       return displayApi.colormapMenu(map && map.display.scale, name);

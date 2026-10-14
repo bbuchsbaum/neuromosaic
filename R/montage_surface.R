@@ -65,7 +65,9 @@
 #' @param palette Base parcel palette.
 #' @param overlay_palette Overlay palette. `"nm-signed"` (the default for
 #'   signed maps) is the report's threshold-saturated diverging palette; it is
-#'   drawn opaque above threshold with no near-threshold fade.
+#'   drawn opaque above threshold with no near-threshold fade. `"Greens"`,
+#'   `"Blues"`, and `"Reds"` use the same light-to-dark ColorBrewer tables as
+#'   volume views. Explicit colour vectors are ordered from low to high values.
 #' @param min_cluster_size Optional minimum cluster extent in voxels for a
 #'   thresholded volumetric `stat`; smaller suprathreshold clusters
 #'   (sign-separated, using `connectivity`) are removed before projection.
@@ -408,6 +410,7 @@ surf_montage <- function(stat = NULL,
   # for unsigned maps the half-range that holds the retained tail so negative
   # one-sided effects are not clamped to a [0, cap] scale.
   overlay_lim <- limits
+  overlay_palette <- .montage_resolve_palette(overlay_palette)
   nm_palette <- .nm_is_palette(overlay_palette)
   palette_name <- overlay_palette
   if (nm_palette) {

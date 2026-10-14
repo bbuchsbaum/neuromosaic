@@ -1299,7 +1299,8 @@ montage_surface <- function(geometry = NULL,
   )
   # The report palette is the default for every view; the heat preset only
   # replaces palettes that are not the report's own.
-  if (!.nm_is_palette(palette) && (isTRUE(heat) ||
+  if (!.nm_is_palette(palette) && is.null(.montage_palette_colors(palette)) &&
+      (isTRUE(heat) ||
       (identical(heat, "thresholded") && identical(display_mode, "thresholded")))) {
     palette <- if (identical(row$effective_scale[[1L]], "diverging")) {
       "surface-heat"
@@ -1397,12 +1398,12 @@ montage_surface <- function(geometry = NULL,
 }
 
 .montage_surface_browser_palette <- function(palette, scale) {
-  if (is.character(palette) && length(palette) > 1L && !anyNA(palette)) {
-    return(palette)
-  }
+  colors <- .montage_palette_colors(palette)
+  if (!is.null(colors)) return(colors)
   fallback <- if (identical(scale, "diverging")) "RdBu" else "inferno"
   if (!is.character(palette) || length(palette) != 1L || is.na(palette)) {
-    return(fallback)
+    stop("Surface palette must be a name or an explicit colour vector.",
+         call. = FALSE)
   }
   key <- tolower(trimws(palette))
   aliases <- c(
@@ -1420,6 +1421,9 @@ montage_surface <- function(geometry = NULL,
     "plasma", "warm", "rainbow-soft", "glasbey"
   )
   if (key %in% supported) return(key)
+  warning("Surface palette '", palette, "' has no browser preset; using '",
+          fallback, "'. Supply an explicit colour vector to preserve its hue.",
+          call. = FALSE)
   fallback
 }
 

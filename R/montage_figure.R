@@ -60,9 +60,9 @@
     out[ok, ] <- rgb
     return(out)
   }
-  pal <- neuroim2::resolve_cmap(palette, 256L)
-  idx <- 1L + floor((v - lo) / max(hi - lo, .Machine$double.eps) * 255)
-  idx <- pmin(pmax(idx, 1L), 256L)
+  pal <- .montage_palette_colors(palette) %||% neuroim2::resolve_cmap(palette, 256L)
+  idx <- 1L + floor((v - lo) / max(hi - lo, .Machine$double.eps) * (length(pal) - 1L))
+  idx <- pmin(pmax(idx, 1L), length(pal))
   out[ok, ] <- t(grDevices::col2rgb(pal[idx])) / 255
   out
 }

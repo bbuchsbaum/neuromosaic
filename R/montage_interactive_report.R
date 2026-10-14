@@ -1,7 +1,7 @@
 # Materialization and HTML emission for optional interactive volume reports.
 
 .montage_neuroimjs_version <- "0.5.0"
-.montage_neuroimjs_adapter_version <- "1.5.0"
+.montage_neuroimjs_adapter_version <- "1.5.1"
 .montage_volume_runtime_dir <- file.path(
   "htmlwidgets", "lib", "neuromosaic-volume"
 )
@@ -356,7 +356,7 @@
           palette = metadata$palette
         )
       } else {
-        NULL
+        metadata$palette_colors %||% .montage_palette_colors(metadata$palette)
       }
     ),
     status = list(

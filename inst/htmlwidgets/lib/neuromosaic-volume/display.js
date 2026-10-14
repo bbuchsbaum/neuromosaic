@@ -73,6 +73,9 @@
   }
 
   function paletteName(display, availableMaps) {
+    if (display.palette_colors != null && display.palette !== "nm-signed") {
+      return "Custom";
+    }
     var requested = String(display.palette || "").toLowerCase();
     var canonical = ALIASES[requested];
     if (!canonical) {
@@ -94,6 +97,23 @@
     return canonical;
   }
 
+  // Convert R's ordered hex table to native ColorMap RGBA entries.
+  function paletteColors(colors) {
+    if (colors == null) return null;
+    if (!Array.isArray(colors) || colors.length < 2) {
+      fail("palette_colors must contain at least two RGB/RGBA colours.");
+    }
+    return colors.map(function (color) {
+      if (typeof color !== "string" || !/^#[0-9a-f]{6}([0-9a-f]{2})?$/i.test(color)) {
+        fail("palette_colors entries must be #RRGGBB or #RRGGBBAA colours.");
+      }
+      return [parseInt(color.slice(1, 3), 16) / 255,
+        parseInt(color.slice(3, 5), 16) / 255,
+        parseInt(color.slice(5, 7), 16) / 255,
+        color.length === 9 ? parseInt(color.slice(7, 9), 16) / 255 : 1];
+    });
+  }
+
   function resolve(display, volumeRange, availableMaps) {
     if (!display || typeof display !== "object") fail("Display spec is missing.");
     if (display.scale !== "diverging" && display.scale !== "sequential") {
@@ -107,12 +127,12 @@
       range: finitePair(display.limits, "Display limits"),
       threshold: thresholdPair(display, volumeRange),
       alpha: alpha,
+      colormapColors: paletteColors(display.palette_colors),
       colormapName: paletteName(display, availableMaps)
     };
   }
 
-  // Neighbour offsets for 6-, 18- (faces + edges) or 26-connectivity, the
-  // definitions neuroim2::conn_comp_3D uses for the report's cluster table.
+  // Match neuroim2::conn_comp_3D connectivity (6 faces; 18 faces + edges).
   function neighbourOffsets(connectivity) {
     var limit = connectivity === "6-connect" ? 1 :
       (connectivity === "26-connect" ? 3 : 2);
@@ -129,9 +149,7 @@
     return out;
   }
 
-  // Voxels of clusters (>= high or <= low, per sign) smaller than
-  // `minClusterSize`: R's .montage_extent_excluded at any threshold.
-  // Uint8Array (1 = excluded), or null when nothing can be excluded.
+  // Per-sign extent mask: 1 excludes clusters smaller than k; null skips it.
   function extentExcluded(data, dims, threshold, minClusterSize, connectivity) {
     var k = Math.floor(Number(minClusterSize));
     var nx = dims[0], ny = dims[1], nz = dims[2];
@@ -173,10 +191,7 @@
     return excluded;
   }
 
-  // The report palette (`colors`, sampled over `limits`) rebuilt for the
-  // layer's threshold and colour `range` (default `limits`), split at 0:
-  // negative ramp over [low, -thr], positive over [thr, high]. A shown value
-  // never takes the gap (hidden) colour, whatever the range.
+  // Stretch each report ramp over its shown range, keeping the gap hidden.
   function resaturate(colors, limits, reportThreshold, threshold, range) {
     var n = Array.isArray(colors) ? colors.length : 0;
     var lo = Number(limits[0]), hi = Number(limits[1]);
@@ -190,8 +205,7 @@
       return colors[Math.max(0, Math.min(n - 1, idx))];
     };
     var gap = lo < 0 && hi > 0 ? at(0) : null;
-    // A bin within one step of the threshold may hold drawn values: it takes
-    // the threshold colour, never the gap.
+    // A bin crossing the threshold takes ramp colour, never the gap.
     var half = rspan / (n - 1) / 2;
     var ramp = function (value) {
       var idx = Math.max(0, Math.min(n - 1, Math.round(((value - lo) / span) * (n - 1))));
@@ -210,8 +224,7 @@
       var cap = positive ? rhi : -rlo;
       var a = Math.abs(v);
       if (!(capSrc > t0)) { out[e] = at(v); continue; }
-      // A range end inside the threshold: its end bin holds every shown
-      // value of that sign (clamped there), so it takes the cap colour.
+      // An end inside the threshold holds clamped peaks: use cap colour.
       if (!(cap > tn) && e === (positive ? n - 1 : 0)) { out[e] = ramp(sign * capSrc); continue; }
       if (a + 2 * half < tn) { out[e] = gap === null ? at(v) : gap; continue; }
       if (!(cap > tn)) { out[e] = ramp(sign * capSrc); continue; }
@@ -221,10 +234,7 @@
     return out;
   }
 
-  // Readout state at a voxel from the displayed value (NaN where the extent
-  // rule removed it), the map's own value and the live threshold [lo, hi]:
-  // outside (NaN or exactly 0: outside the analysis support), below, hidden
-  // (cluster < k) or shown.
+  // Classify raw/displayed voxels by support, live threshold and extent.
   function readoutState(shownValue, rawValue, threshold, minClusterSize) {
     var shown = shownValue === null || shownValue === undefined ? NaN : Number(shownValue);
     var raw = rawValue === null || rawValue === undefined ? NaN : Number(rawValue);
@@ -244,9 +254,7 @@
     return { kind: "shown", value: shown, reason: null };
   }
 
-  // Wheel over a slice pane: "page" scrolls (default), "runtime" (a pane the
-  // reader focused, Ctrl/Cmd zoom) or a +1/-1 step (Alt or Shift + wheel). A
-  // pane focused by script (byReader false, e.g. a peak jump) scrolls.
+  // Only reader focus or modifiers capture wheel events; script focus scrolls.
   function wheelAction(e) {
     if ((e.focused && e.byReader) || e.ctrlKey || e.metaKey) return "runtime";
     if (!(e.altKey || e.shiftKey)) return "page";
@@ -278,9 +286,7 @@
     return list;
   }
 
-  // Scale numbers (cap, threshold, range ends) in the report's rounding:
-  // three significant digits, so the shared cap 22.2539 reads 22.3 in the
-  // viewer as in every caption and key.
+  // Match report rounding: three significant digits (22.2539 -> 22.3).
   function reportNumber(value) {
     var v = Number(value);
     if (!Number.isFinite(v)) return "";
@@ -289,8 +295,7 @@
     return text.replace(/^-/, "\u2212");
   }
 
-  // An unlinked threshold band stays valid: low never above high (the edited
-  // end yields), and a two-sided map keeps low <= 0 <= high.
+  // The edited end yields on crossing; two-sided bands contain zero.
   function orderThresholdBand(pair, which, twoSided) {
     var t = [Number(pair[0]), Number(pair[1])];
     if (twoSided) {
@@ -303,8 +308,7 @@
     return t;
   }
 
-  // Export key note: the threshold, extent and colour scale shown, flagged
-  // when modified. opts: { modified, threshold, extent, symbol, lo, hi }
+  // Export the shown threshold, extent and range, flagging reader changes.
   function exportNote(opts) {
     var t = opts.threshold;
     var shown = "";
@@ -327,8 +331,7 @@
       text + " (report settings).";
   }
 
-  // An edited colour-range end that would cross the other end is rejected:
-  // the previous pair is kept (null when the edit is accepted as is).
+  // Reject crossed range ends by returning the old pair; null accepts.
   function rejectCrossedRange(pair, which, value) {
     var v = Number(value);
     if (!Number.isFinite(v)) return pair.slice();
@@ -336,9 +339,7 @@
     return null;
   }
 
-  // Slider step for a value domain: whole report units (0.1 for spans over
-  // 10, 0.01 below), with the domain rounded outward to that grid so every
-  // arrow-key step lands on a round value (the step base is the minimum).
+  // Round bounds outward so arrow-key steps start and land on round values.
   function sliderGrid(lo, hi) {
     var a = Number(lo), b = Number(hi);
     var span = Math.abs(b - a);
@@ -351,8 +352,7 @@
     };
   }
 
-  // A report opened from disk (file://) cannot fetch companion files: the
-  // lazily loaded runtime or any asset not embedded in the page.
+  // Disk reports cannot fetch a companion runtime or non-embedded assets.
   function needsServer(protocol, scene, hasRuntimeSrc) {
     if (protocol !== "file:") return false;
     if (hasRuntimeSrc) return true;
@@ -374,6 +374,7 @@
     resolve: resolve,
     thresholdPair: thresholdPair,
     paletteName: paletteName,
+    paletteColors: paletteColors,
     neighbourOffsets: neighbourOffsets,
     extentExcluded: extentExcluded,
     colormapMenu: colormapMenu,

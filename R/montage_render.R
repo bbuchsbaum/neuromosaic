@@ -2039,7 +2039,8 @@ render_montage_report <- function(manifest,
 .montage_surface_palette <- function(palette_family, scale) {
   if (identical(palette_family, "diverging")) return("nm-signed")
   if (identical(palette_family, "sequential")) return("lajolla")
-  palette_family %||% if (identical(scale, "diverging")) "nm-signed" else "lajolla"
+  .montage_resolve_palette(palette_family %||%
+    if (identical(scale, "diverging")) "nm-signed" else "lajolla")
 }
 
 .attach_montage_group_views <- function(groups, panels) {
@@ -2234,7 +2235,7 @@ render_montage_report <- function(manifest,
   # Bump when an implicit rendering/projection default changes. Explicit
   # surface_args are already in payload; this version prevents a new release
   # from reusing pixels produced under an older default contract.
-  payload$.surface_contract_version <- 4L
+  payload$.surface_contract_version <- 5L
   substr(rlang::hash(payload), 1, 16)
 }
 

@@ -157,7 +157,7 @@ montage_volume_scene_schema <- function() {
     object = c(
       rep("scene", 9), rep("engine", 3), rep("view", 4),
       rep("packaging", 3), rep("background", 1), rep("analysis", 5),
-      rep("map", 10), rep("status", 2), rep("display", 11),
+      rep("map", 10), rep("status", 2), rep("display", 12),
       rep("asset", 13), rep("location", 2), rep("geometry", 6)
     ),
     field = c(
@@ -173,7 +173,7 @@ montage_volume_scene_schema <- function() {
       "status", "selector_label", "legend_title", "clusters",
       "state", "n_display_voxels",
       "mode", "scale", "center", "limits", "threshold", "tail",
-      "palette", "alpha", "alpha_mode", "support", "units",
+      "palette", "alpha", "alpha_mode", "support", "units", "palette_colors",
       "asset_id", "kind", "location", "encoding", "datatype",
       "compression", "hash_algorithm", "hash_scope", "hash",
       "compressed_bytes", "uncompressed_bytes", "geometry",
@@ -187,7 +187,7 @@ montage_volume_scene_schema <- function() {
       rep(TRUE, 5),
       c(TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE),
       rep(TRUE, 2),
-      c(TRUE, TRUE, FALSE, TRUE, FALSE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE),
+      c(TRUE, TRUE, FALSE, TRUE, FALSE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE),
       rep(TRUE, 13),
       rep(TRUE, 2),
       rep(TRUE, 6)
@@ -205,7 +205,7 @@ montage_volume_scene_schema <- function() {
       "character", "integer",
       "character", "character", "numeric|null", "numeric[2]",
       "numeric|null", "character", "character", "numeric", "character",
-      "character", "character|null",
+      "character", "character|null", "character[]|null",
       "character", "character", "object", "character", "character",
       "character", "character", "character", "character", "integer",
       "integer", "object", "character[]",
@@ -232,7 +232,7 @@ montage_volume_scene_schema <- function() {
       "thresholded or continuous", "diverging or sequential", "scale centre",
       "finite display limits", "display threshold", "tail semantics",
       "canonical palette", "overlay opacity", "opacity behavior",
-      "analysis or primary support", "legend units",
+      "analysis or primary support", "legend units", "ordered RGB/RGBA colour table",
       "content key", "background overlay or mask", "relative or embedded ref",
       "nifti", "declared storage datatype", "gzip or none",
       "hash algorithm", "uncompressed hash scope", "content digest",
@@ -809,6 +809,14 @@ print.montage_volume_scene <- function(x, ...) {
     x$tail, c("two_sided", "positive", "negative"), paste0(label, "$tail")
   )
   .montage_scene_scalar_character(x$palette, paste0(label, "$palette"))
+  if (!is.null(x$palette_colors)) {
+    .montage_validate_palette_colors(x$palette_colors,
+                                     paste0(label, "$palette_colors"))
+    if (any(!grepl("^#[[:xdigit:]]{6}([[:xdigit:]]{2})?$", x$palette_colors))) {
+      stop("'", label, "$palette_colors' must use #RRGGBB or #RRGGBBAA colours.",
+           call. = FALSE)
+    }
+  }
   if (!is.numeric(x$alpha) || length(x$alpha) != 1L || !is.finite(x$alpha) ||
       x$alpha < 0 || x$alpha > 1) {
     stop("'", label, "$alpha' must be between zero and one.", call. = FALSE)

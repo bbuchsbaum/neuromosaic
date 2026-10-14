@@ -142,7 +142,9 @@ a small amount of anatomical context visible beneath the statistic.}
 
 \item{overlay_palette}{Overlay palette. `"nm-signed"` (the default for
 signed maps) is the report's threshold-saturated diverging palette; it is
-drawn opaque above threshold with no near-threshold fade.}
+drawn opaque above threshold with no near-threshold fade. `"Greens"`,
+`"Blues"`, and `"Reds"` use the same light-to-dark ColorBrewer tables as
+volume views. Explicit colour vectors are ordered from low to high values.}
 
 \item{width, height, res}{PNG device settings. Defaults target a 10 by 6.25
 inch, 300-dpi publication raster.}
