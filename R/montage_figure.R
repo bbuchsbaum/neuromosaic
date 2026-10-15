@@ -403,7 +403,7 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
 .nm_with_device_fonts <- function(code) {
   name <- names(grDevices::dev.cur())
   old <- .nm_font_env$force_plain
-  .nm_font_env$force_plain <- !grepl("^agg", name %||% "")
+  .nm_font_env$force_plain <- isTRUE(old) || !grepl("^agg", name %||% "")
   on.exit(.nm_font_env$force_plain <- old, add = TRUE)
   force(code)
 }

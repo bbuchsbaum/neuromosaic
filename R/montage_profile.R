@@ -16,7 +16,9 @@
 #'   surface contract supports zero-centered diverging scales.
 #' @param domain Optional legal value domain. Infinite endpoints are allowed.
 #' @param limits Optional fixed finite display limits. When omitted, limits are
-#'   derived robustly from map values and clipped to `domain`.
+#'   derived robustly from map values and clipped to `domain`. Fixed limits
+#'   apply to thresholded and continuous maps, take precedence over policy caps,
+#'   and are shared only with maps declaring the same limits.
 #' @param palette_family Optional palette name or family understood by the
 #'   renderer.
 #' @param alpha_mode Overlay opacity mode.
@@ -121,6 +123,9 @@ resolve_montage_profiles <- function(manifest, profiles = NULL,
   )
   manifest$effective_lower <- vapply(resolved, `[[`, numeric(1), "lower")
   manifest$effective_upper <- vapply(resolved, `[[`, numeric(1), "upper")
+  manifest$effective_limits_fixed <- vapply(
+    resolved, `[[`, logical(1), "limits_fixed"
+  )
   manifest$effective_domain_lower <- vapply(
     resolved, `[[`, numeric(1), "domain_lower"
   )
@@ -271,6 +276,8 @@ resolve_montage_profiles <- function(manifest, profiles = NULL,
       !is.null(explicit_support)) {
     source <- "explicit"
   }
+  limits_fixed <- !is.null(limits) ||
+    (!is.null(profile$domain) && all(is.finite(profile$domain)))
   limits <- .resolve_profile_limits(
     values = finite_values,
     scale = scale,
@@ -320,6 +327,7 @@ resolve_montage_profiles <- function(manifest, profiles = NULL,
     center = center,
     lower = limits[[1L]],
     upper = limits[[2L]],
+    limits_fixed = limits_fixed,
     domain_lower = profile$domain[[1L]] %||% -Inf,
     domain_upper = profile$domain[[2L]] %||% Inf,
     palette_family = palette,

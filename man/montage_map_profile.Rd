@@ -36,7 +36,9 @@ surface contract supports zero-centered diverging scales.}
 \item{domain}{Optional legal value domain. Infinite endpoints are allowed.}
 
 \item{limits}{Optional fixed finite display limits. When omitted, limits are
-derived robustly from map values and clipped to `domain`.}
+derived robustly from map values and clipped to `domain`. Fixed limits
+apply to thresholded and continuous maps, take precedence over policy caps,
+and are shared only with maps declaring the same limits.}
 
 \item{palette_family}{Optional palette name or family understood by the
 renderer.}

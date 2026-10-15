@@ -58,7 +58,8 @@ surf_montage(
   min_cluster_size = NULL,
   connectivity = c("18-connect", "26-connect", "6-connect"),
   key = c("report", "plot"),
-  layout = c("strip", "grid")
+  layout = c("strip", "grid"),
+  plain_fonts = NULL
 )
 }
 \arguments{
@@ -152,8 +153,9 @@ inch, 300-dpi publication raster.}
 \item{render_device}{Output backend: \code{"auto"} selects Cairo PDF for a
 `.pdf` path, otherwise prefers \pkg{ragg} when it
 is installed and otherwise uses the base PNG device; \code{"ragg"}
-requires \pkg{ragg}; \code{"png"} forces the base device; and
-\code{"pdf"} forces Cairo PDF.}
+requires \pkg{ragg}; \code{"png"} forces base PNG with Cairo when available
+and plain sans fonts; and \code{"pdf"} forces Cairo PDF. Report strip
+variants retain the selected device and font setting.}
 
 \item{title, subtitle, caption}{Plot annotations.}
 
@@ -207,6 +209,11 @@ right medial, right lateral) with small view labels and A/P marks derived
 from the camera geometry, at the report figure width (`width`/`height`/
 `res` are then chosen by the strip, 1760 px at 144 dpi). `"grid"` keeps
 `plot_brain()`'s 2 x 2 arrangement.}
+
+\item{plain_fonts}{Use device-native sans fonts for report labels and keys.
+`NULL` preserves an active plain-font setting and otherwise chooses fonts
+for the device. Use `TRUE` to avoid registered system fonts on ragg, or
+`render_device = "png"` for the portable Cairo/plain-font fallback.}
 }
 \value{
 A `surf_montage_result` list containing the PNG path, projection,

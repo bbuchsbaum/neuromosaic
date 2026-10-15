@@ -57,16 +57,16 @@
 #' @param min_cluster_size Default minimum cluster size.
 #' @param cap_within Character vector of manifest columns that may share color
 #'   caps. Requested groups are automatically partitioned by quantity, resolved
-#'   profile, units, scale type, and center so incompatible maps never share a
+#'   profile, units, scale type, center, and fixed limits so incompatible maps never share a
 #'   scale. When supplied, it takes precedence over `cap_scope`.
 #' @param cap_scope Default sharing of colour caps when `cap_within` is empty.
 #'   `"quantity"` (default) gives every map of the same quantity (same
 #'   statistic, resolved profile, units, scale type and center) one
 #'   report-wide cap, so a weak map is not drawn as vividly as a strong one;
 #'   `"map"` derives a separate cap for each map.
-#' @param cap Optional fixed color cap (magnitude). When supplied, every cap
-#'   group uses this value and the robust quantile default is ignored. `NULL`
-#'   (default) derives a cap per group from the data.
+#' @param cap Optional fixed color cap (magnitude) for maps without fixed
+#'   profile or manifest limits. Explicit display limits take precedence.
+#'   `NULL` (default) derives a cap per automatic group from the data.
 #' @param cap_quantile Quantile of the suprathreshold `|stat|` distribution used
 #'   for the data-driven cap when `cap` is `NULL`. Defaults to `0.99`, which is
 #'   robust to a few extreme voxels (the raw maximum washes the rest of a strong
@@ -499,6 +499,12 @@ resolve_montage_policy <- function(manifest, policy = montage_policy(),
     units,
     scale,
     ifelse(is.na(center), "none", signif(center, 8)),
+    if ("effective_limits_fixed" %in% names(manifest)) {
+      ifelse(manifest$effective_limits_fixed,
+             paste(format(manifest$effective_lower, digits = 17, trim = TRUE),
+                   format(manifest$effective_upper, digits = 17, trim = TRUE),
+                   sep = ":"), "auto")
+    } else "auto",
     sep = "/"
   )
   paste(requested, signature, sep = "::")

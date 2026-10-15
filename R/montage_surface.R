@@ -87,8 +87,13 @@
 #' @param render_device Output backend: \code{"auto"} selects Cairo PDF for a
 #'   `.pdf` path, otherwise prefers \pkg{ragg} when it
 #'   is installed and otherwise uses the base PNG device; \code{"ragg"}
-#'   requires \pkg{ragg}; \code{"png"} forces the base device; and
-#'   \code{"pdf"} forces Cairo PDF.
+#'   requires \pkg{ragg}; \code{"png"} forces base PNG with Cairo when available
+#'   and plain sans fonts; and \code{"pdf"} forces Cairo PDF. Report strip
+#'   variants retain the selected device and font setting.
+#' @param plain_fonts Use device-native sans fonts for report labels and keys.
+#'   `NULL` preserves an active plain-font setting and otherwise chooses fonts
+#'   for the device. Use `TRUE` to avoid registered system fonts on ragg, or
+#'   `render_device = "png"` for the portable Cairo/plain-font fallback.
 #' @param title,subtitle,caption Plot annotations.
 #' @param legend_title Quantity name for static and interactive legends,
 #'   separate from the panel `title`. `NULL` defaults to `"Statistic"`.
@@ -164,7 +169,8 @@ surf_montage <- function(stat = NULL,
                          connectivity = c("18-connect", "26-connect",
                                           "6-connect"),
                          key = c("report", "plot"),
-                         layout = c("strip", "grid")) {
+                         layout = c("strip", "grid"),
+                         plain_fonts = NULL) {
   legend <- .montage_legend(legend_title, units)
   layout <- match.arg(layout)
   connectivity <- match.arg(connectivity)
@@ -178,6 +184,13 @@ surf_montage <- function(stat = NULL,
   camera <- match.arg(camera)
   empty <- match.arg(empty)
   render_device <- match.arg(render_device)
+  if (!is.null(plain_fonts) &&
+      (!is.logical(plain_fonts) || length(plain_fonts) != 1L || is.na(plain_fonts))) {
+    stop("'plain_fonts' must be NULL, TRUE or FALSE.", call. = FALSE)
+  }
+  old_plain <- .nm_font_env$force_plain
+  .nm_font_env$force_plain <- plain_fonts %||% isTRUE(old_plain)
+  on.exit(.nm_font_env$force_plain <- old_plain, add = TRUE)
   appearance <- match.arg(appearance)
   if (is.null(anatomy_style)) {
     anatomy_style <- if (appearance == "freesurfer") "binary" else "publication"
@@ -557,22 +570,14 @@ surf_montage <- function(stat = NULL,
         attr(p, "plot_brain_anatomy"), surface_projection_meta
       )
       plot_backend <- attr(p, "plot_brain_backend") %||% plot_backend
-      plain <- identical(render_device, "png") ||
-        !requireNamespace("ragg", quietly = TRUE)
-      .nm_font_env$force_plain <- plain
-      spec <- tryCatch(.nm_surface_strip_layout(strip),
-                       finally = .nm_font_env$force_plain <- FALSE)
+      strip$render_device <- render_device
+      strip$plain_fonts <- isTRUE(.nm_font_env$force_plain) ||
+        identical(render_device, "png") || !requireNamespace("ragg", quietly = TRUE)
+      spec <- .nm_write_surface_strip(strip, output_file)
       width <- spec$width
       height <- spec$height
       res <- spec$res
-      render_device_used <- .open_surface_montage_device(
-        filename = output_file, width = width, height = height, res = res,
-        device = render_device, background = montage_bg
-      )
-      tryCatch({
-        grid::grid.newpage()
-        grid::grid.draw(spec$grob)
-      }, finally = grDevices::dev.off())
+      render_device_used <- spec$device
     }
   }
 
@@ -627,6 +632,8 @@ surf_montage <- function(stat = NULL,
         legend_title = legend$title,
         units = legend$units,
         device = render_device_used,
+        plain_fonts = isTRUE(.nm_font_env$force_plain) ||
+          render_device_used %in% c("png", "cairo_pdf"),
         width = width,
         height = height,
         res = res,
@@ -973,8 +980,20 @@ surf_montage <- function(stat = NULL,
 # Write a strip variant (theme x width) to `path`.
 .nm_write_surface_strip <- function(parts, path, theme = "light",
                                     variant = "wide") {
+  old <- .nm_font_env$force_plain
+  device <- parts$render_device %||% "auto"
+  .nm_font_env$force_plain <- isTRUE(parts$plain_fonts %||% old) ||
+    identical(device, "png") || !requireNamespace("ragg", quietly = TRUE)
+  on.exit(.nm_font_env$force_plain <- old, add = TRUE)
   spec <- .nm_surface_strip_layout(parts, theme = theme, variant = variant)
-  .nm_write_figure(spec, path)
+  spec$device <- .open_surface_montage_device(
+    path, spec$width, spec$height, spec$res, device = device,
+    background = spec$canvas
+  )
+  tryCatch({
+    grid::grid.newpage()
+    grid::grid.draw(spec$grob)
+  }, finally = grDevices::dev.off())
   invisible(spec)
 }
 
@@ -1026,7 +1045,8 @@ surf_montage <- function(stat = NULL,
     width = width,
     height = height,
     res = res,
-    bg = background
+    bg = background,
+    type = if (capabilities("cairo")) "cairo" else getOption("bitmapType")
   )
   "png"
 }

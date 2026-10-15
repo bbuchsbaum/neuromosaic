@@ -487,3 +487,103 @@ Mote `bd-01M4XVE9PJ1SYZ3GVJM3JXB9X5` tracks the work. S1/S2 now provide the
 subject-set path in both report templates, with a pinned correction patch and
 R/JS/browser consumer evidence. Generic labels, z channels, multi-analysis sets,
 and larger-data/release qualification remain open; see specification section 11.
+
+## 21. Independent reference anatomy and fixed quantity scales
+
+Issues [#30](https://github.com/bbuchsbaum/neuromosaic/issues/30),
+[#31](https://github.com/bbuchsbaum/neuromosaic/issues/31), and
+[#32](https://github.com/bbuchsbaum/neuromosaic/issues/32) distinguish reference
+anatomy from a measured quantity and require consistent, readable output.
+
+### Fixed scales and portable labels
+
+Fixed `montage_map_profile(limits = ...)` or manifest `lower`/`upper` values
+govern thresholded as well as continuous maps. They take precedence over the
+fallback policy cap. Cap-sharing groups include fixed limits in addition to
+quantity, profile, units, scale and center; differing declared ranges never
+widen one another. Automatic groups retain the robust-cap behavior. Static
+volume/surface keys, native viewer scenes, and summary thumbnails use the
+resolved map scale, including endpoints above the observed maximum.
+
+For machines with unreliable registered-font/ragg combinations, authors can
+use `surface_args = list(render_device = "png", plain_fonts = TRUE)`.
+This uses Cairo PNG when available and device-native sans text, including
+all light/dark and wide/narrow strip variants. Font state is scoped and
+restored, and the selected device/font policy participates in surface caching.
+PNG creation alone is not evidence of legibility: inspect the quantity title,
+units, numeric ticks, hemisphere/view labels and orientation marks at delivery
+size. The reported Trillium environment still needs its own confirmation.
+
+Local verification on 2026-10-14: 3,616 R assertions passed with no failures or
+errors (128 existing warnings and one existing skip). A fresh browser fixture
+retains 0–100, 0–17 and 0–1 native ranges through switching and reset. All four
+Cairo/plain-font toy strips were visually checked at their shipped dimensions.
+This does not establish that the default ragg font path works on Trillium.
+
+### Reference anatomy contract (proposed; not implemented)
+
+An anatomical reference is a display layer beneath the selected quantitative
+map and above anatomical shading. It is not a manifest map, primary/auxiliary
+variant, analysis mask, inferential input, or Space comparison member. The
+original anatomy and quantitative arrays remain unchanged.
+
+Proposed author interface:
+
+```r
+reference_overlays = list(
+  montage_reference(
+    id = "psl", mask = psl_mask, label = "Glasser PSL",
+    color = "#43868B", opacity = 0.18, visible = TRUE
+  )
+)
+```
+
+The initial contract accepts one finite binary `NeuroVol` or NIfTI mask;
+reject multiple references until stacking has independent tests. IDs are
+stable and unique, colors are explicit, and opacity is in `[0, 1]`. Validate
+dimensions, affine, orientation and declared template against every target
+map before writing figures or assets; no silent resampling or restamping.
+Do not apply the primary map's support/threshold or cluster-extent mask to the
+reference. Reference zeros are transparent and ones carry the named tint.
+
+Static output uses the configured initial visibility/opacity and a small
+categorical swatch separate from the quantitative colorbar. Volume viewers
+use categorical nearest-neighbor sampling and an independent checkbox and
+opacity control. Switching quantitative maps preserves reference state;
+reset restores the declared defaults. Surface references must use explicit
+nearest-voxel projection with a declared categorical depth aggregation and
+record mesh identity, source mask hash, interpolation, sampling depths and
+aggregation. Do not imply that a projected volume label is a native surface
+parcellation. Reader controls never change effect readouts or inference.
+
+The currently bundled surfview report API rejects independent visibility
+and order changes: `ReportSceneControlTarget.setLayerVisibility()` returns
+`unsupported`, and `selectLayer()` uses an exclusive displayed-map policy.
+The installed static `neurosurf::render_surface_rgba()` accepts one scalar
+field and grayscale anatomy, without an independent reference input. Bypassing
+these contracts with private hooks would recreate the study-local workaround.
+
+Required upstream work before wiring the author option:
+
+1. Extend the portable surface scene contract with reference layers, excluded
+   from exclusive quantitative selection and effect inspection. Expose
+   reference visibility/opacity through the supported report control target;
+   maintain anatomy → reference → selected-map order across map changes,
+   reset, remount and disposal.
+2. Extend the CPU surface renderer with independently mapped reference
+   coverage beneath the scalar overlay. Keep scalar values, interpolation,
+   thresholds, limits, shading and diagnostics unchanged. Qualify overlap and
+   non-overlap pixels with a synthetic mesh before using real anatomy.
+3. Add `montage_reference()` and `reference_overlays` to direct and report
+   rendering, content-addressed assets, scene schemas, both report templates,
+   provenance and cache identities. Existing reports remain unchanged when
+   no reference is supplied. Unsupported consumers fail during validation.
+4. Verify static/volume/surface ordering, categorical edges, independent
+   controls, exact source/projection provenance, unchanged numerical map
+   hashes/cluster counts, light/dark/narrow output, and relocated bundles.
+   Use a percentage foreground below 100%, coverage below 17, and a binary
+   reference to ensure reference data never enter cap-sharing or readouts.
+
+Mote `bd-01M4Y6E7KV5Z9124D94H295VWD` tracks these issue follow-ups. The upstream
+extension and report-level reference API remain pending; the fixed-scale and
+portable-font fixes are independently testable in this repository.

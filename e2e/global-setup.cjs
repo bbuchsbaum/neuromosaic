@@ -6,9 +6,10 @@ module.exports = async function globalSetup() {
   const repoRoot = resolve(__dirname, "..");
   const fixtureScript = resolve(__dirname, "render-fixtures.R");
   const spaceFixtureScript = resolve(__dirname, "build-space-fixture.R");
+  const fixedScalesScript = resolve(__dirname, "build-fixed-scales-fixture.R");
   const result = spawnSync("Rscript", [
     "-e",
-    `source(${JSON.stringify(fixtureScript)}, chdir = FALSE); source(${JSON.stringify(spaceFixtureScript)}, chdir = FALSE)`
+    `source(${JSON.stringify(fixtureScript)}, chdir = FALSE); source(${JSON.stringify(spaceFixtureScript)}, chdir = FALSE); source(${JSON.stringify(fixedScalesScript)}, chdir = FALSE)`
   ], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -36,6 +37,7 @@ module.exports = async function globalSetup() {
     "interactive-surface-bundle.html",
     "parcel-surface-visual.html",
     "interactive-mixed.html",
+    "fixed-scales.html",
     "space-report.html",
     "space-single.html",
     "space-quarto/space-report.html"

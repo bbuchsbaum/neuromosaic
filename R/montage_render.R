@@ -859,7 +859,8 @@ render_montage_report <- function(manifest,
   if (length(policy$cap_within) == 0L) return(manifest)
   for (key in unique(manifest$cap_key)) {
     rows <- which(
-      manifest$cap_key == key & manifest$effective_display_mode == "continuous"
+      manifest$cap_key == key & manifest$effective_display_mode == "continuous" &
+        !(manifest$effective_limits_fixed %||% rep(FALSE, nrow(manifest)))
     )
     if (length(rows) < 2L) next
     if (!is.null(policy$cap)) {
@@ -1209,7 +1210,6 @@ render_montage_report <- function(manifest,
     layout = policy$layout %||% character(),
     scope = policy$slice_scope %||% "section"
   )
-  summary_scale <- .montage_summary_scale(manifest, caps)
   summary_specs <- list()
 
   for (i in seq_len(nrow(manifest))) {
@@ -1237,7 +1237,7 @@ render_montage_report <- function(manifest,
       } else {
         NULL
       },
-      limits = if (continuous) limits else NULL,
+      limits = if (continuous || isTRUE(manifest$effective_limits_fixed[[i]])) limits else NULL,
       support_mask = support_masks[[i]],
       zlevels = group_zlevels[[i]]$zlevels,
       ov_cmap = .montage_volume_palette(
@@ -1308,6 +1308,8 @@ render_montage_report <- function(manifest,
   }
 
   for (map_id in names(summary_specs)) {
+    summary_scale <- list(cap = summary_specs[[map_id]]$cap,
+                          limits = summary_specs[[map_id]]$limits)
     summary_path <- file.path(
       image_dir, paste0(.safe_file_stem(map_id), "_summary.png")
     )
@@ -1398,7 +1400,7 @@ render_montage_report <- function(manifest,
           } else {
             NULL
           },
-          limits = if (continuous) limits else NULL,
+          limits = if (continuous || isTRUE(manifest$effective_limits_fixed[[i]])) limits else NULL,
           support_mask = support_masks[[i]],
           overlay_palette = .montage_surface_palette(
             manifest$effective_palette_family[[i]],
@@ -1879,18 +1881,6 @@ render_montage_report <- function(manifest,
   )
 }
 
-# One colour scale for every summary thumbnail: the largest thresholded cap.
-.montage_summary_scale <- function(manifest, caps) {
-  values <- unlist(lapply(seq_len(nrow(manifest)), function(i) {
-    if (!identical(manifest$effective_display_mode[[i]], "thresholded")) {
-      return(NULL)
-    }
-    caps[[manifest$cap_key[[i]]]]
-  }), use.names = FALSE)
-  values <- values[is.finite(values) & values > 0]
-  list(cap = if (length(values)) max(values) else NA_real_)
-}
-
 .montage_write_summary_image <- function(spec, scale, path,
                                          theme = "light") {
   continuous <- identical(spec$display_mode, "continuous")
@@ -1900,11 +1890,7 @@ render_montage_report <- function(manifest,
   } else {
     0
   }
-  limits <- if (!continuous && is.finite(scale$cap)) {
-    if (isTRUE(spec$signed)) c(-scale$cap, scale$cap) else c(0, scale$cap)
-  } else {
-    spec$limits
-  }
+  limits <- scale$limits %||% spec$limits
   .nm_glass_brain(
     background = spec$background,
     stat_values = values,
@@ -2052,8 +2038,8 @@ render_montage_report <- function(manifest,
   paste0(
     "Glass brain of ", .montage_alt_label(row),
     ": strongest effect along each line of sight in sagittal, coronal and ",
-    "axial projections, colour strength scaled to the report-wide colour cap",
-    if (is.finite(scale$cap)) paste0(" (\u00b1", .nm_format_tick(scale$cap), ")"),
+    "axial projections, using the map's colour scale (",
+    paste(vapply(spec$limits, .nm_format_tick, character(1)), collapse = " to "), ")",
     "."
   )
 }
@@ -2100,6 +2086,13 @@ render_montage_report <- function(manifest,
   caps <- stats::setNames(vector("list", length(keys)), keys)
   for (key in keys) {
     rows <- which(manifest$cap_key == key)
+    fixed <- rows[which((manifest$effective_limits_fixed %||%
+                          rep(FALSE, nrow(manifest)))[rows])]
+    if (length(fixed)) {
+      caps[[key]] <- max(abs(c(manifest$effective_lower[fixed],
+                              manifest$effective_upper[fixed])))
+      next
+    }
     if (!is.null(cap_override)) {
       caps[[key]] <- cap_override
       next
@@ -2236,6 +2229,8 @@ render_montage_report <- function(manifest,
   payload <- base_args[setdiff(
     names(base_args), c("stat", "vals", "surfatlas", "output_file", "empty")
   )]
+  payload$plain_fonts <- base_args$plain_fonts %||%
+    isTRUE(.nm_font_env$force_plain)
   payload$.surfatlas <- list(
     name = surfatlas$name %||% NA_character_,
     surface_space = surfatlas$surface_space %||% NA_character_,
@@ -2257,7 +2252,7 @@ render_montage_report <- function(manifest,
   # Bump when an implicit rendering/projection default changes. Explicit
   # surface_args are already in payload; this version prevents a new release
   # from reusing pixels produced under an older default contract.
-  payload$.surface_contract_version <- 5L
+  payload$.surface_contract_version <- 6L
   substr(rlang::hash(payload), 1, 16)
 }
 
