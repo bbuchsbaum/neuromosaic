@@ -901,12 +901,12 @@ montage_report_formatters <- function(manifest = NULL,
   slices <- .montage_report_slice_text(.montage_report_volume_meta(panel)$slice_labels)
   vol_alt <- paste0(label, ": slice montage",
                     if (nzchar(slices)) paste0(" at ", slices), ", ",
-                    "positive effects in warm colours, negative in cool")
+                    .montage_report_colour_text(row, .montage_report_volume_meta(panel)))
   shared <- .montage_report_slice_share(panel$slice_scope, label)
   .montage_report_emit_panel_image(
     panel$volume_image %||% panel$volume_image_path, vol_alt,
     is_html = is_html, empty = empty, figure_assets = figure_assets,
-    caption = paste0(if (nzchar(slices)) "Axial slices" else "Volume slices",
+    caption = paste0(.montage_report_slice_plane(.montage_report_volume_meta(panel)$slice_labels), " slices",
                      " \u00b7 left hemisphere on the left",
                      if (!is.null(shared)) paste0(" \u00b7 ", shared$short)),
     dark = panel$volume_image_dark, narrow = panel$volume_image_narrow,
@@ -917,11 +917,9 @@ montage_report_formatters <- function(manifest = NULL,
   )
   .montage_report_emit_panel_image(
     panel$surface_image %||% panel$surface_image_path,
-    paste0(label, ": cortical surface, lateral and medial views of both hemispheres"),
+    paste0(label, ": ", sub("^Cortical", "cortical", .montage_report_surface_text(row, panel))),
     is_html = is_html, empty = empty, figure_assets = figure_assets,
-    caption = paste("Cortical surface \u00b7 values averaged over cortical depth,",
-                    "so peaks are lower than in the volume \u00b7",
-                    "subcortical and cerebellar effects not shown"),
+    caption = .montage_report_surface_text(row, panel),
     dark = panel$surface_image_dark, narrow = panel$surface_image_narrow,
     narrow_dark = panel$surface_image_narrow_dark,
     full_caption = .montage_report_figure_caption(row, panel, "surface"),
@@ -1000,12 +998,7 @@ montage_report_formatters <- function(manifest = NULL,
   meta <- panel[[kind]]
   if (!is.list(meta)) meta <- panel[["volume"]]
   if (!is.list(meta)) meta <- list()
-  cap <- suppressWarnings(as.numeric(meta$cap %||% NA))
-  signed <- isTRUE(meta$signed %||% TRUE)
-  scale <- if (length(cap) == 1L && is.finite(cap) && cap > 0) {
-    paste0("Colour scale saturates at ", if (signed) "\u00b1" else "", fmt(round(cap, 1)),
-           "; warm = positive, cool = negative.")
-  }
+  scale <- paste0(.montage_report_colour_text(row, meta), ".")
   first <- paste0(
     paste(c(if (!is.null(stat)) paste0(stat, " map"),
             if (!(length(n) == 1L && is.na(n))) paste0("N = ", fmt(n))),
@@ -1017,13 +1010,14 @@ montage_report_formatters <- function(manifest = NULL,
   where <- if (kind == "volume") {
     slices <- .montage_report_slice_text(meta$slice_labels)
     shared <- .montage_report_slice_share(panel$slice_scope)
-    paste0(if (nzchar(slices)) paste0("Axial slices at ", slices, " (MNI)") else "Volume slices",
+    paste0(if (nzchar(slices)) paste0(.montage_report_slice_plane(meta$slice_labels), " slices at ", slices, " (MNI)") else "Volume slices",
            "; left hemisphere on the left.",
+           switch(meta$slice_selection %||% "unknown",
+             explicit = " User-supplied slice indices.",
+             automatic = " Slices selected automatically from the displayed voxel extent.", ""),
            if (!is.null(shared)) paste0(" ", shared$full))
   } else {
-    paste("Cortical surface, lateral and medial views; values are averaged",
-          "over cortical depth, so peaks are lower than in the volume;",
-          "subcortical and cerebellar effects are not shown.")
+    .montage_report_surface_text(row, panel, detailed = TRUE)
   }
   paste(c(title, if (first != ".") first, scale, where), collapse = " ")
 }
@@ -2599,7 +2593,8 @@ montage_report_formatters <- function(manifest = NULL,
     note = if (!is.null(prov$package_source) && !is.na(prov$package_source)) prov$package_source else NA_character_
   )))
 
-  # Threshold and extent.
+  # Threshold and extent apply to the rendered domain.
+  has_volume <- any(vapply(panels, function(pn) !is.null(.montage_report_volume_meta(pn)), logical(1)))
   thr <- same("effective_threshold")
   tail <- same("effective_tail")
   k <- same("effective_min_cluster_size")
@@ -2613,7 +2608,7 @@ montage_report_formatters <- function(manifest = NULL,
                    negative = paste0(sym, " \u2264 \u2212", fmt(thr), " (negative tail)"),
                    paste0("|", sym, "| \u2265 ", fmt(thr), " (two-sided)"))
     how <- if (fixed) {
-      "a fixed voxelwise threshold of "
+      if (has_volume) "a fixed voxelwise threshold of " else "a fixed value threshold of "
     } else if (!is.null(q)) {
       paste0("Benjamini\u2013Hochberg FDR q = ", format(signif(q, 3), scientific = FALSE, trim = TRUE), " per map, i.e. ")
     } else if (is.numeric(p) && length(p) == 1L) {
@@ -2622,8 +2617,8 @@ montage_report_formatters <- function(manifest = NULL,
     } else {
       ""
     }
-    s <- paste0("Maps were thresholded at ", how, rule)
-    if (!is.null(k) && !is.null(conn)) {
+    s <- paste0(if (has_volume) "Volume maps" else "Surface values", " were thresholded at ", how, rule)
+    if (has_volume && !is.null(k) && !is.null(conn)) {
       s <- paste0(s, ", and clusters smaller than ", fmt(k), " voxels (",
                   sub("-connect$", "-connectivity", conn), ") were removed")
     }
@@ -2641,7 +2636,11 @@ montage_report_formatters <- function(manifest = NULL,
   signed <- any(vapply(panels, function(pn) {
     isTRUE((.montage_report_volume_meta(pn) %||% list())$signed %||% TRUE)
   }, logical(1)))
-  if (length(caps)) {
+  fixed_limits <- "effective_limits_fixed" %in% names(manifest) &&
+    any(manifest$effective_limits_fixed)
+  if (fixed_limits) {
+    sentences <- c(sentences, "Maps with declared display limits retain those limits; other maps use the resolved automatic colour scale. Each figure states its own quantity and limits.")
+  } else if (length(caps)) {
     pm <- if (signed) "\u00b1" else ""
     uniq <- unique(round(caps, 1))
     if (!is.null(policy) && !is.null(policy$cap)) {
@@ -2659,7 +2658,7 @@ montage_report_formatters <- function(manifest = NULL,
         if (pooled && length(uniq) == 1L && n_maps > 1L) " pooled across all maps of the same statistic" else
           if (pooled) " pooled within each group of comparable maps" else " of each map",
         if (!is.null(policy$cap_floor)) paste0(" (at least ", fmt(policy$cap_floor), ")") else "",
-        "; warm colours are positive and cool colours negative."
+        "."
       ))
     }
   }
@@ -2705,11 +2704,24 @@ montage_report_formatters <- function(manifest = NULL,
     } else {
       ""
     }
+    selection <- vapply(panels, function(pn) {
+      .montage_report_volume_meta(pn)$slice_selection %||% "unknown"
+    }, "")
+    selection <- selection[names(slice_sets)]
+    selection_text <- if (length(selection) && all(selection == "explicit")) {
+      ", at user-supplied slice indices"
+    } else if (length(selection) && all(selection == "automatic")) {
+      paste0(", spaced in equal whole-voxel steps and centred within the 5th\u201395th percentile range of the",
+        " displayed (suprathreshold, extent-filtered) voxels' ", plane, " positions",
+        if (shared) ", with one slice set shared by related maps" else "")
+    } else if (any(selection == "explicit")) {
+      "; slice selection is specified per figure, with user-supplied indices for some maps"
+    } else {
+      "; slice selection details were not recorded"
+    }
     sentences <- c(sentences, paste0(
       "Volume figures show up to ", n_slices, " ", plane, " slices", underlay,
-      ", spaced in equal whole-voxel steps and centred within the 5th\u201395th percentile range of the",
-      " displayed (suprathreshold, extent-filtered) voxels' ", plane, " positions",
-      if (shared) ", with one slice set shared by the maps of a section (chosen from their combined extent) so that related maps are shown at the same positions" else "",
+      selection_text,
       "; coordinates are MNI millimetres and the left hemisphere is on the left."
     ))
   }
@@ -2723,43 +2735,13 @@ montage_report_formatters <- function(manifest = NULL,
       ", each map at its own voxel positions without resampling."
     ))
   }
-  if (any(vapply(panels, function(pn) is.list(pn) && !is.null(pn$surface_image), logical(1)))) {
-    sm <- rd$surface_method
-    thr_s <- same("effective_threshold")
-    if (is.list(sm) && identical(sm$sampling, "thickness") && length(sm$depth)) {
-      mesh <- paste0(
-        if (!is.null(sm$space) && !is.na(sm$space)) paste0("the ", sm$space, " ") else "the ",
-        "cortical surface",
-        if (is.finite(sm$vertices %||% NA)) paste0(" (", .montage_report_int(sm$vertices), " vertices per hemisphere)") else ""
-      )
-      depth <- paste0(length(sm$depth), " depths from ", fmt(round(100 * min(sm$depth))), "% to ",
-                      fmt(round(100 * max(sm$depth))), "% of cortical thickness")
-      # surf_montage projects the unthresholded map (only voxels of clusters
-      # below the extent removed) and thresholds the depth averages.
-      k_s <- suppressWarnings(as.integer(k %||% NA))
-      removed <- if (length(k_s) == 1L && !is.na(k_s) && k_s > 1L) {
-        paste0(" (voxels of clusters smaller than ", k_s, " voxels removed)")
-      } else {
-        ""
-      }
-      sentences <- c(sentences, paste0(
-        "Surface figures sample the unthresholded ", sym, " map", removed, " on ", mesh,
-        " at ", depth, " (", if (identical(sm$interpolation, "linear")) "trilinear interpolation" else
-          paste0(sm$interpolation, " interpolation"), "), average them per vertex",
-        if (!is.null(thr_s)) paste0(", and show vertices whose depth-averaged value reaches |", sym, "| \u2265 ", fmt(thr_s)) else "",
-        ", drawn on the ", sm$surface %||% "inflated", " surface",
-        if (isTRUE(sm$medial_wall)) " with the medial wall masked" else "",
-        ". The voxel extent rule applies before projection, not to surface patches; ",
-        "surface peaks are lower than volume peaks, and subcortical and cerebellar effects ",
-        "appear only in the volume figures."
-      ))
-    } else {
-      sentences <- c(sentences, paste(
-        "Surface figures show the volume values projected to the cortical surface and",
-        "averaged across cortical depth, so surface peaks are lower than volume peaks;",
-        "subcortical and cerebellar effects appear only in the volume figures."
-      ))
-    }
+  for (i in seq_len(nrow(manifest))) {
+    row <- manifest[i, , drop = FALSE]
+    panel <- panels[[as.character(row$map_id[[1L]])]]
+    if (!is.list(panel) || is.null(panel$surface_image)) next
+    sentences <- c(sentences, paste0(as.character(row$label[[1L]]), ": ",
+      .montage_report_surface_text(row, panel, detailed = TRUE,
+        fallback = rd$surface_method)))
   }
   has_glance <- nrow(manifest) >= 2L && any(vapply(panels, function(pn) {
     is.list(pn) && !is.null(pn$summary_image)
@@ -2767,7 +2749,7 @@ montage_report_formatters <- function(manifest = NULL,
   if (has_glance) {
     sentences <- c(sentences, paste0(
       "The glance thumbnails are maximum-|", sym, "| projections (glass brain) of each map's displayed voxels ",
-      "in sagittal, coronal and axial views, on one colour scale for all maps; ",
+      "in sagittal, coronal and axial views, using each map's colour scale; ",
       "an opposite-sign effect behind a stronger one is hidden."
     ))
   }

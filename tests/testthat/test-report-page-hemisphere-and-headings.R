@@ -79,9 +79,9 @@ r4_methods_rd <- function() {
     effective_q = NA_real_, stringsAsFactors = FALSE
   )
   panels <- list(
-    a = list(volume = list(cap = 22.25, signed = TRUE, slice_labels = c("z = -30", "z = 62")),
+    a = list(volume = list(cap = 22.25, signed = TRUE, slice_selection = "automatic", slice_labels = c("z = -30", "z = 62")),
              surface_image = "s.png", summary_image = "t.png"),
-    b = list(volume = list(cap = 22.25, signed = TRUE, slice_labels = c("z = -30", "z = 62")),
+    b = list(volume = list(cap = 22.25, signed = TRUE, slice_selection = "automatic", slice_labels = c("z = -30", "z = 62")),
              summary_image = "u.png")
   )
   list(
@@ -113,9 +113,9 @@ test_that("Methods name the underlay, surface method, glass brain and the code's
   # Surface: mesh, depth sampling, re-thresholding after averaging, no extent claim.
   expect_match(text, "the fsaverage6 cortical surface (40,962 vertices per hemisphere)", fixed = TRUE)
   expect_match(text, "at 5 depths from 10% to 90% of cortical thickness (trilinear interpolation)", fixed = TRUE)
-  expect_match(text, "depth-averaged value reaches |z| ≥ 5", fixed = TRUE)
+  expect_match(text, "aggregation: mean; projection function: avg", fixed = TRUE)
   expect_match(text, "with the medial wall masked", fixed = TRUE)
-  expect_match(text, "The voxel extent rule applies before projection, not to surface patches", fixed = TRUE)
+  expect_match(text, "removed before projection; the remaining volume values are sampled before thresholding", fixed = TRUE)
   expect_match(text, "maximum-|z| projections (glass brain)", fixed = TRUE)
   expect_match(text, "the hemisphere follows the peak's x coordinate (midline when |x| < 2 mm)", fixed = TRUE)
   expect_match(text, "peaks equal at the printed precision are ordered by their unrounded values", fixed = TRUE)
@@ -125,11 +125,11 @@ test_that("Methods name the underlay, surface method, glass brain and the code's
   expect_match(refs[[1]], "https://github.com/bbuchsbaum/neuromosaic", fixed = TRUE)
   html <- paste(utils::capture.output(neuromosaic:::.montage_report_emit_methods(rd, TRUE)), collapse = "")
   expect_match(html, "<a href=\"https://github.com/bbuchsbaum/neuromosaic\">", fixed = TRUE)
-  # Without the method details the older, general wording remains.
+  # Without method details, do not invent a projection or aggregation rule.
   rd$surface_method <- NULL
   rd$underlay <- NULL
   text2 <- neuromosaic:::.montage_report_methods(rd)$text
-  expect_match(text2, "averaged across cortical depth", fixed = TRUE)
+  expect_match(text2, "surface mapping details not recorded", fixed = TRUE)
   expect_false(grepl("brain template", text2, fixed = TRUE))
 })
 

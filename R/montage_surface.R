@@ -646,7 +646,9 @@ surf_montage <- function(stat = NULL,
         palette = if (has_vals) overlay_palette else palette,
         overlay_palette = if (has_vals) NULL else palette_name,
         limits = overlay_lim,
-        projection = list(
+        projection = if (has_vals) list(source = "parcel_values") else list(
+          source = if (is.null(projection)) "volume_projection" else "precomputed",
+          fun = fun,
           interpolation = interpolation,
           sampling = sampling,
           aggregate = aggregate,

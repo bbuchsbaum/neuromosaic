@@ -271,7 +271,7 @@ test_that("the Methods paragraph states inputs, threshold, cap, slices, labels a
   expect_match(text, "clusters smaller than 20 voxels (18-connectivity) were removed", fixed = TRUE)
   expect_match(text, "saturate at ±22.3, the 99th percentile of suprathreshold |z| pooled", fixed = TRUE)
   expect_match(text, "up to 3 axial slices", fixed = TRUE)
-  expect_match(text, "averaged across cortical depth", fixed = TRUE)
+  expect_match(text, "surface mapping details not recorded", fixed = TRUE)
   expect_match(text, "P1 is the strongest positive cluster", fixed = TRUE)
   expect_match(text, "Schaefer-200 (7 networks) and ASEG atlases (Schaefer et al., 2018)", fixed = TRUE)
   expect_match(text, "within 4 mm", fixed = TRUE)
@@ -336,12 +336,12 @@ test_that("shared slice sets are captioned from the renderer's slice scope", {
   expect_null(neuromosaic:::.montage_report_slice_share(list(scope = "map", map_ids = "a")))
   expect_null(neuromosaic:::.montage_report_slice_share(NULL))
   row <- data.frame(map_id = "a", label = "A > B", stat_kind = "z", stringsAsFactors = FALSE)
-  panel <- list(volume = list(slice_labels = c("z = -30", "z = 58")), slice_scope = scope)
+  panel <- list(volume = list(slice_selection = "automatic", slice_labels = c("z = -30", "z = 58")), slice_scope = scope)
   cap <- neuromosaic:::.montage_report_figure_caption(row, panel, "volume")
   expect_match(cap, "The same slices are shown for all 3 maps in Working memory (N-back).", fixed = TRUE)
   rd <- list(manifest = data.frame(map_id = c("a", "b"), label = c("A", "B"), stringsAsFactors = FALSE),
              panels = list(a = panel, b = panel), params = list(policy = montage_policy()))
-  expect_match(neuromosaic:::.montage_report_methods(rd)$text, "one slice set shared by the maps of a section",
+  expect_match(neuromosaic:::.montage_report_methods(rd)$text, "one slice set shared by related maps",
                fixed = TRUE)
 })
 

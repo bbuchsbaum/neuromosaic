@@ -210,10 +210,10 @@ test_that("figure captions state contrast, threshold, extent, N, cap and slices"
   expect_match(cap, "N = 486", fixed = TRUE)
   expect_match(cap, "|z| ≥ 5 (two-sided)", fixed = TRUE)
   expect_match(cap, "clusters of at least 20 voxels (18-connectivity)", fixed = TRUE)
-  expect_match(cap, "saturates at ±17.9", fixed = TRUE)
+  expect_match(cap, "colour scale −17.9 to 17.9", fixed = TRUE)
   expect_match(cap, "z = −30, −22, +62 mm", fixed = TRUE)
   surf <- neuromosaic:::.montage_report_figure_caption(row, panel, "surface")
-  expect_match(surf, "averaged over cortical depth, so peaks are lower than in the volume",
+  expect_match(surf, "surface mapping details not recorded",
                fixed = TRUE)
 })
 

@@ -241,17 +241,16 @@
   inset: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 8px;
   padding: clamp(10px, 6cqi, 22px);
   color: var(--nm-vv-stage-ink);
   font-size: 12px;
 }
 
 .nm-volume-legend-head {
-  position: absolute;
-  top: clamp(8px, 5cqi, 18px);
-  right: clamp(8px, 5cqi, 18px);
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
 }
 
@@ -324,7 +323,6 @@
 .nm-volume-readout-title {
   min-width: 0;
   overflow: hidden;
-  padding-right: 40px;
   color: var(--nm-vv-stage-ink-2);
   font-size: 12.5px;
   font-weight: 600;
@@ -748,7 +746,6 @@
   }
 
   .nm-volume-readout-title {
-    padding-right: 40px;
     font-size: 9.5px;
   }
 

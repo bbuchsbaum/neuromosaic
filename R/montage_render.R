@@ -1287,6 +1287,10 @@ render_montage_report <- function(manifest,
     )
     panels[[map_id]]$volume$style <- result$style
     panels[[map_id]]$volume$slice_labels <- result$slice_labels
+    panels[[map_id]]$volume$slice_selection <- if (!is.null(volume_args$zlevels)) {
+      "explicit"
+    } else group_zlevels[[i]]$selection %||% "automatic"
+    panels[[map_id]]$volume$slice_indices <- result$zlevels
     # Which maps share this figure's slice set (for the page caption): scope
     # "section"/"analysis" with the sharing map_ids, or "map" when the map
     # chose its own (single-map section, per-map or caller override).
@@ -1442,6 +1446,9 @@ render_montage_report <- function(manifest,
     # report-level default. `empty` is excluded from the cache key (non-visual),
     # so the policy must be enforced explicitly on both branches below.
     eff_empty <- base_args$empty %||% empty
+    surface_method <- .montage_surface_method(surfatlas, base_args)
+    surface_method$source <- if (!is.null(source_args$vals)) "parcel_values" else
+      if (!is.null(base_args$projection)) "precomputed" else "volume_projection"
 
     if (isTRUE(cache_surface) && file.exists(image_path)) {
       cached_mask <- .montage_display_mask(
@@ -1479,10 +1486,6 @@ render_montage_report <- function(manifest,
       for (field in names(variants)) {
         panels[[map_id]][[field]] <- variants[[field]]
       }
-      panels[[map_id]]$surface_alt <- .montage_surface_alt(
-        manifest[i, , drop = FALSE], eff_threshold, eff_tail,
-        eff_cap %||% NA_real_
-      )
       panels[[map_id]]$surface <- list(
         threshold = eff_threshold,
         display_mode = manifest$effective_display_mode[[i]],
@@ -1509,10 +1512,13 @@ render_montage_report <- function(manifest,
         support = manifest$effective_support[[i]],
         n_suprathreshold = n_supra,
         surface_space = NA_character_,
+        method = surface_method,
         views = base_args$views %||% c("lateral", "medial"),
         hemis = base_args$hemis %||% c("left", "right"),
         diagnostics = list(cache_hit = TRUE)
       )
+      panels[[map_id]]$surface_alt <- .montage_report_surface_text(
+        manifest[i, , drop = FALSE], panels[[map_id]])
       next
     }
 
@@ -1524,10 +1530,6 @@ render_montage_report <- function(manifest,
     for (field in names(variants)) {
       panels[[map_id]][[field]] <- variants[[field]]
     }
-    panels[[map_id]]$surface_alt <- .montage_surface_alt(
-      manifest[i, , drop = FALSE], result$threshold, result$tail,
-      result$cap %||% NA_real_
-    )
     panels[[map_id]]$surface <- list(
       threshold = result$threshold,
       display_mode = result$display_mode,
@@ -1546,10 +1548,13 @@ render_montage_report <- function(manifest,
       support = manifest$effective_support[[i]],
       n_suprathreshold = result$n_suprathreshold,
       surface_space = result$surface_space,
+      method = surface_method,
       views = result$views,
       hemis = result$hemis,
       diagnostics = result$diagnostics
     )
+    panels[[map_id]]$surface_alt <- .montage_report_surface_text(
+      manifest[i, , drop = FALSE], panels[[map_id]])
   }
 
   panels
@@ -1831,6 +1836,7 @@ render_montage_report <- function(manifest,
     for (r in shared) {
       out[[r]] <- list(
         zlevels = z,
+        selection = "automatic",
         scope = if (length(shared) > 1L) scope else "map",
         section = label_of(rows),
         map_ids = map_ids[shared]
@@ -1841,7 +1847,7 @@ render_montage_report <- function(manifest,
     for (r in seq_len(n)) {
       z <- manifest$zlevels[[r]]
       if (is.null(z) || !length(z) || all(is.na(z))) next
-      out[[r]] <- list(zlevels = as.integer(z), scope = "map",
+      out[[r]] <- list(zlevels = as.integer(z), selection = "explicit", scope = "map",
                        section = out[[r]]$section %||% NA_character_,
                        map_ids = map_ids[[r]])
     }
@@ -2014,23 +2020,14 @@ render_montage_report <- function(manifest,
   }
   spec <- result$display_spec
   paste0(
-    .montage_alt_label(row), ": ", length(labels), " axial slice",
+    .montage_alt_label(row), ": ", length(labels), " ",
+    tolower(.montage_report_slice_plane(labels)), " slice",
     if (length(labels) == 1L) "" else "s", span,
     " (left hemisphere on the left), showing ",
     .montage_alt_display_rule(
-      spec$threshold, spec$tail, spec$cap %||% max(abs(spec$limits)),
-      spec$min_cluster_size
+      spec$threshold, spec$tail, NA_real_, spec$min_cluster_size
     ),
-    "."
-  )
-}
-
-.montage_surface_alt <- function(row, threshold, tail, cap) {
-  paste0(
-    .montage_alt_label(row), ": inflated cortical surface, left and right ",
-    "hemispheres in lateral and medial views, showing ",
-    .montage_alt_display_rule(threshold, tail, cap),
-    "; values averaged across cortical depth."
+    "; ", .montage_report_colour_text(row, spec), "."
   )
 }
 

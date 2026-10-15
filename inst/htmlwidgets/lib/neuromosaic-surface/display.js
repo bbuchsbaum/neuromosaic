@@ -309,7 +309,16 @@
     });
   }
 
+  function mappingNote(provenance) {
+    var source = provenance && provenance.source;
+    if (source === "parcel_values") return "Parcel values mapped directly to the cortical surface";
+    if (source === "volume_projection") return "Volume values projected to the cortical surface";
+    if ((source === "precomputed" || source === "provided_vertex_values")) return "Precomputed vertex values mapped to the cortical surface";
+    return "Surface mapping details not recorded";
+  }
+
   return Object.freeze({
+    mappingNote: mappingNote,
     formatFixed: formatFixed,
     manifestNeedsServer: manifestNeedsServer,
     atlasName: atlasName,

@@ -38,16 +38,17 @@ test_that("Methods say the surface samples the unthresholded map, not the cluste
   text <- r4b_methods()
   expect_match(
     text,
-    "Surface figures sample the unthresholded z map (voxels of clusters smaller than 20 voxels removed) on the fsaverage6 cortical surface",
+    "Voxels of clusters smaller than 20 voxels are removed before projection; the remaining volume values are sampled before thresholding",
     fixed = TRUE
   )
-  expect_match(text, "average them per vertex, and show vertices whose depth-averaged value reaches |z| ≥ 5",
+  expect_match(text, "aggregation: mean; projection function: avg",
                fixed = TRUE)
   expect_false(grepl("values of the displayed volume clusters", text, fixed = TRUE))
   expect_false(grepl("still reaches", text, fixed = TRUE))
   # Without an extent rule nothing is said to be removed.
   text1 <- r4b_methods(k = 1L)
-  expect_match(text1, "sample the unthresholded z map on the", fixed = TRUE)
+  expect_match(text1, "Volume values are sampled before thresholding", fixed = TRUE)
+  expect_false(grepl("voxels are removed", text1, fixed = TRUE))
 })
 
 test_that("viewer cluster records carry the table's digits for tied peaks", {

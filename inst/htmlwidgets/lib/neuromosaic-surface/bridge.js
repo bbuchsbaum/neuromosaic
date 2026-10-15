@@ -271,6 +271,7 @@
 
   // Maps --------------------------------------------------------------------
   function setTarget(host, mapId) {
+    if (host.getAttribute("data-nm-surface-map") !== mapId) clearPendingEdits(host);
     host.setAttribute("data-nm-surface-map", mapId);
     var labels = parse(host, "data-nm-surface-labels");
     var title = part(host, "target");
@@ -736,6 +737,7 @@
   }
 
   function resetDisplay(host) {
+    clearPendingEdits(host);
     var defaults = host.__nmSurfaceDisplayStore.get(currentLayerId(host));
     if (!defaults) return;
     var fieldset = host.querySelector(".nm-sv-threshold");
@@ -761,11 +763,24 @@
   }
 
   // Inputs apply as the reader types (debounced) and once more on commit.
+  function clearPendingEdits(host) {
+    Object.keys(host.__nmSurfaceTimers || {}).forEach(function (key) {
+      window.clearTimeout(host.__nmSurfaceTimers[key]);
+    });
+  }
+
   function debounced(host, key, callback) {
     host.__nmSurfaceTimers = host.__nmSurfaceTimers || {};
     return function () {
       window.clearTimeout(host.__nmSurfaceTimers[key]);
       host.__nmSurfaceTimers[key] = window.setTimeout(callback, 220);
+    };
+  }
+
+  function committed(host, key, callback) {
+    return function () {
+      window.clearTimeout((host.__nmSurfaceTimers || {})[key]);
+      callback(true);
     };
   }
 
@@ -806,7 +821,7 @@
       var input = part(host, name);
       if (!input) return;
       input.addEventListener("input", debounced(host, "range", function () { applyRange(false); }));
-      input.addEventListener("change", function () { applyRange(true); });
+      input.addEventListener("change", committed(host, "range", applyRange));
     });
     // Thresholds are clamped into the data range: a threshold above the
     // largest |value| would claim a cut no vertex can pass.
@@ -820,7 +835,7 @@
     var abs = part(host, "threshold-abs");
     if (abs) {
       abs.addEventListener("input", debounced(host, "abs", applyAbs));
-      abs.addEventListener("change", function () { applyAbs(true); });
+      abs.addEventListener("change", committed(host, "abs", applyAbs));
     }
     var applyMask = function (commit) {
       var low = part(host, "threshold-low");
@@ -840,7 +855,7 @@
       var input = part(host, name);
       if (!input) return;
       input.addEventListener("input", debounced(host, "mask", function () { applyMask(false); }));
-      input.addEventListener("change", function () { applyMask(true); });
+      input.addEventListener("change", committed(host, "mask", applyMask));
     });
     var modeToggle = part(host, "threshold-toggle");
     if (modeToggle) {
@@ -1066,11 +1081,13 @@
       var shown = mask && mask[1] > mask[0] ?
         (Math.abs(mask[0] + mask[1]) < 1e-9 ?
           "shown where |" + symbolFor(legend) + "| \u2265 " + display.formatNumber(mask[1]) :
-          "hidden between " + display.formatNumber(mask[0]) + " and " + display.formatNumber(mask[1])) + " after averaging" :
+          "hidden between " + display.formatNumber(mask[0]) + " and " + display.formatNumber(mask[1])) :
         "no threshold";
+      var sourceLayer = manifestLayers(host)[currentLayerId(host)];
+      var mapping = display.mappingNote(sourceLayer && sourceLayer.provenance);
       var note = host.getAttribute("data-nm-surface-modified") === "true" ?
-        "Display modified in the browser (exploratory): " + shown + ". The Static view is the figure of record." :
-        "Values averaged across cortical depth; " + shown + "; report display settings.";
+        mapping + "; display modified in the browser (exploratory): " + shown + ". The Static view is the figure of record." :
+        mapping + "; " + shown + "; report display settings.";
       host.__nmLastExportNote = note;
       ctx.fillText(note, PAD, top + keyH + 34);
     }
