@@ -112,6 +112,19 @@ render_fixture(
   "none"
 )
 
+long_label <- paste(
+  "Full acoustic adjustment — Recording alignment —",
+  "Whole-brain family FWER < .05 (no centres survive)"
+)
+long_manifest <- manifest[expanded_rows, , drop = FALSE]
+long_manifest$selector_label[[2L]] <- long_label
+render_fixture(
+  "selector-long-label.html",
+  long_manifest,
+  panels[long_manifest$map_id],
+  "select"
+)
+
 volume_space <- neuroim2::NeuroSpace(
   dim = c(12, 13, 14),
   spacing = c(2, 2, 2),

@@ -109,6 +109,32 @@ test("the selector remains usable without horizontal overflow on a narrow screen
   )).toBe(true);
 });
 
+for (const width of [375, 430]) {
+  test(`a long select option label does not overflow at ${width}px`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await openFixture(page, "selector-long-label.html");
+    const group = groupFor(page, "faces");
+    const select = group.getByRole("combobox", { name: "Map variant" });
+
+    await expect(select).toBeVisible();
+    await select.scrollIntoViewIfNeeded();
+    await expect.poll(() => page.evaluate(() =>
+      document.documentElement.scrollWidth <=
+        document.documentElement.clientWidth + 1
+    )).toBe(true);
+    await expect.poll(() => select.evaluate((node) =>
+      node.getBoundingClientRect().right <= window.innerWidth + 1
+    )).toBe(true);
+
+    // The full option text is preserved even though the control is clipped.
+    await expect(select.locator("option").nth(1)).toHaveText(/Whole-brain family FWER < \.05/);
+    await select.selectOption({ index: 1 });
+    await expect(variantFor(group, "faces_estimate")).toBeVisible();
+  });
+}
+
 test("print media expands every variant and hides interactive selectors", async ({ page }) => {
   await openFixture(page);
   await page.emulateMedia({ media: "print" });
