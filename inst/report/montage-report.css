@@ -596,7 +596,12 @@ html .nm-view-router label { white-space: nowrap; }
   outline: 2px solid var(--nm-accent);
   outline-offset: 2px;
 }
+.nm-map-selector { min-width: 0; max-width: 100%; }
 .nm-map-select {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  text-overflow: ellipsis;
   background: var(--nm-surface);
   border: 1px solid var(--nm-rule-strong);
   border-radius: 7px;

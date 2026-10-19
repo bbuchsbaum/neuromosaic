@@ -30,6 +30,7 @@ module.exports = async function globalSetup() {
   for (const name of [
     "selector-auto.html",
     "selector-none.html",
+    "selector-long-label.html",
     "interactive-volume.html",
     "interactive-volume-bundle.html",
     "interactive-volume-fine.html",
