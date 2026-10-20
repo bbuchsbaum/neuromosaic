@@ -42,6 +42,7 @@
 #' @param provenance Optional metadata to merge into the automatically captured
 #'   report provenance.
 #' @param ... Additional arguments passed to [build_cluster_explorer_data()].
+#' @param assets HTML packaging, passed to [render_cluster_report()].
 #'
 #' @return Invisibly, a `cluster_report_result` object (an S3 class that
 #'   supports `print()`, `summary()`, `plot()`, and `export_csv()`). Components
@@ -105,7 +106,9 @@ cluster_report <- function(stat_map,
                            brain_cmap = "inferno",
                            quiet = TRUE,
                            provenance = NULL,
+                           assets = c("auto", "embed", "bundle"),
                            ...) {
+  assets <- .report_assets_mode(assets, output_file %||% "report.html")
   connectivity <- match.arg(connectivity)
   tail <- match.arg(tail)
   table_style <- match.arg(table_style)
@@ -304,7 +307,8 @@ cluster_report <- function(stat_map,
       report_data = report_data,
       output_file = output_file,
       template = template,
-      quiet = quiet
+      quiet = quiet,
+      assets = assets
     )
   }
 

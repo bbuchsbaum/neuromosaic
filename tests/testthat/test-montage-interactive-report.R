@@ -46,6 +46,33 @@ render_interactive_qmd <- function(config, label = "Z statistic") {
   )
 }
 
+test_that("report-wide packaging overrides volume delivery without changing values", {
+  inputs <- make_interactive_montage_inputs()
+  config <- montage_interactive(assets = "bundle")
+  output_dir <- tempfile("volume-export-policy-"); dir.create(output_dir)
+  scenes <- lapply(c("embed", "bundle"), function(mode) {
+    output <- file.path(output_dir, paste0(mode, ".qmd"))
+    suppressMessages(render_montage_report(inputs$manifest, output,
+      bg = inputs$background, interactive = config, assets = mode,
+      materialize_recipes = FALSE, render_peaks = FALSE))
+    rd <- readRDS(sub("\\.qmd$", "_report-data.rds", output))
+    expect_identical(rd$interactive$summary$packaging, mode)
+    if (mode == "bundle") {
+      size <- .report_declared_files(rd, output)
+      expect_true(any(grepl("\\.nii\\.gz$", size)))
+      expect_false(any(basename(size) %in% c("scene.json", "runtime.json")))
+      html <- .montage_interactive_document_html(rd$interactive)
+      expect_match(html, '/runtime/adapter.js"', fixed = TRUE)
+      expect_no_match(html, '<script data-nm-volume-adapter>', fixed = TRUE)
+    }
+    rd$interactive$scene
+  })
+  expect_identical(config$assets, "bundle")
+  expect_identical(scenes[[1]]$analyses, scenes[[2]]$analyses)
+  expect_identical(vapply(scenes[[1]]$assets, `[[`, character(1), "hash"),
+                   vapply(scenes[[2]]$assets, `[[`, character(1), "hash"))
+})
+
 test_that("bundle reports carry a primary-first VolumeScene beside static panels", {
   rendered <- render_interactive_qmd(montage_interactive(
     assets = "bundle",

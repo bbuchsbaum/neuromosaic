@@ -46,7 +46,8 @@ render_montage_report(
   interactive = NULL,
   surface = NULL,
   cerebellum_reference = getOption("neuromosaic.cerebellum_reference", NULL),
-  space = NULL
+  space = NULL,
+  assets = c("auto", "embed", "bundle")
 )
 }
 \arguments{
@@ -227,6 +228,13 @@ and Provenance; see [montage_peak_table()].}
 HTML and QMD reports bundle a lazy Space viewer with explicit comparison
 masks. PDF output includes the member list. The initial runtime supports
 subject sets with one model/contrast per set and t/estimate channels.}
+
+\item{assets}{HTML packaging: `"auto"` preserves viewer-specific choices,
+`"embed"` makes one self-contained file, and `"bundle"` writes relative
+companion files, including for static-only reports. Explicit modes override
+enabled viewers' packaging choices. Figure quality and scientific data are
+unchanged. Space requires a bundle. See [report_size()] and
+[write_report_bundle()] for measuring and staging the complete output.}
 }
 \value{
 The path to the rendered report (invisibly).

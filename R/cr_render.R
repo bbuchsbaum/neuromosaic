@@ -11,6 +11,9 @@
 #' @param template Path to a custom Rmd/Qmd template. If `NULL`, uses the
 #'   bundled template matching `output_file`.
 #' @param quiet Logical; suppress render progress messages? Default `TRUE`.
+#' @param assets HTML packaging: `"auto"` preserves existing behavior,
+#'   `"embed"` makes one self-contained file, and `"bundle"` uses relative
+#'   companion files. See [report_size()] and [write_report_bundle()].
 #'
 #' @details Quarto source output depends on a sidecar `_report-data.rds` file.
 #'   Keep that file in the same directory as the generated `.qmd`, and render
@@ -21,7 +24,10 @@
 render_cluster_report <- function(report_data,
                                   output_file = "cluster_report.pdf",
                                   template = NULL,
-                                  quiet = TRUE) {
+                                  quiet = TRUE,
+                                  assets = c("auto", "embed", "bundle")) {
+  assets <- .report_assets_mode(assets, output_file)
+  builtin_template <- is.null(template)
   ext <- tolower(tools::file_ext(output_file))
   if (!ext %in% c("html", "pdf", "qmd")) {
     stop(
@@ -39,6 +45,9 @@ render_cluster_report <- function(report_data,
            call. = FALSE)
     }
   }
+
+  template <- normalizePath(template, mustWork = TRUE)
+  builtin_template <- .report_builtin_template(template, "cluster_report")
 
   template_ext <- tolower(tools::file_ext(template))
   if (ext %in% c("html", "pdf") && identical(template_ext, "qmd")) {
@@ -60,7 +69,7 @@ render_cluster_report <- function(report_data,
     return(invisible(.write_cluster_report_qmd(
       report_data = report_data,
       output_file = output_file,
-      template = template
+      template = template, assets = assets, builtin_template = builtin_template
     )))
   }
 
@@ -76,16 +85,22 @@ render_cluster_report <- function(report_data,
       output_file = basename(output_file),
       output_dir = ".",
       output_format = output_format,
+      output_options = if (ext == "html" && assets != "auto") {
+        list(self_contained = assets == "embed")
+      } else NULL,
+      intermediates_dir = output_dir,
       params = list(report_data = report_data),
       envir = new.env(parent = globalenv()),
       quiet = quiet
     )
   })
+  if (ext == "html") .report_append_registry(output_file, character(), builtin_template)
 
   invisible(normalizePath(output_file, mustWork = FALSE))
 }
 
-.write_cluster_report_qmd <- function(report_data, output_file, template) {
+.write_cluster_report_qmd <- function(report_data, output_file, template,
+                                      assets = "auto", builtin_template = TRUE) {
   lines <- readLines(template, warn = FALSE)
   sidecar <- paste0(
     tools::file_path_sans_ext(basename(output_file)),
@@ -95,6 +110,7 @@ render_cluster_report <- function(report_data,
 
   saveRDS(report_data, sidecar_path)
   lines <- gsub("__REPORT_DATA_FILE__", sidecar, lines, fixed = TRUE)
+  lines <- .report_qmd_packaging(lines, assets, character(), builtin_template)
   note_lines <- c(
     paste0(
       "<!-- NOTE: This .qmd expects the sidecar file '", sidecar,

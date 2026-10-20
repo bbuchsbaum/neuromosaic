@@ -470,6 +470,25 @@
   }
   runtime_dir <- .montage_volume_runtime_path()
   runtime_ref <- x$runtime_ref
+  if (!is.null(runtime_ref)) {
+    # These files already travel in the bundle. Refer to them once instead of
+    # also carrying their full text in the HTML.
+    root <- dirname(runtime_ref)
+    esc <- .montage_html_escape
+    scripts <- paste(vapply(c("geometry.js", "display.js", "adapter.js"), function(name) {
+      paste0('<script data-nm-volume-', tools::file_path_sans_ext(name),
+             ' src="', esc(paste0(root, "/", name)), '"></script>\n')
+    }, character(1)), collapse = "")
+    return(paste0(
+      '<link rel="stylesheet" href="', esc(paste0(root, "/adapter.css")), '" />\n',
+      '<script type="application/json" data-nm-volume-runtime-src>',
+      .montage_json_script_escape(as.character(jsonlite::toJSON(
+        list(src = runtime_ref, version = .montage_neuroimjs_version), auto_unbox = TRUE
+      ))), "</script>\n", scripts,
+      '<script type="application/json" id="', esc(x$scene_id), '">',
+      x$scene_json, "</script>\n"
+    ))
+  }
   runtime <- if (is.null(runtime_ref)) {
     .montage_read_inline_asset(file.path(
       runtime_dir, paste0("neuroimjs-", .montage_neuroimjs_version, ".umd.js")

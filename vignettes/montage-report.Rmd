@@ -704,6 +704,38 @@ prefers `ragg` when available and otherwise uses the base PNG device. In PDF
 reports, cortical panels remain rasterized while headings, orientation marks,
 annotations, and legends are composed as vector-capable text and graphics.
 
+## Smaller hosted reports with the same figures and data
+
+The report-wide `assets` argument chooses HTML packaging, including when no
+interactive viewer is requested. `"auto"` retains existing behavior; `"embed"`
+produces a self-contained HTML file; `"bundle"` stores figures and viewer assets
+beside the HTML. Explicit choices override enabled viewers' packaging settings.
+Space requires a bundle. These choices preserve resolution, colour, all figure
+variants, and scientific values.
+
+```{r hosted-export, eval=FALSE}
+render_montage_report(manifest, "results/index.html", surfatlas = atlas,
+                      assets = "bundle")
+size <- report_size("results/index.html")  # requires optional xml2
+size$by_category
+size$total_bytes
+write_report_bundle("results/index.html", "upload")
+```
+
+Upload the contents of `upload/`, keeping the HTML and relative companion paths
+together. The staging helper requires a new or empty directory and copies only
+the report's declared and directly referenced assets, verifying their hashes.
+It leaves original figures, source maps and caches in place. Duplicate figures
+use one companion file, and visualization runtimes load locally when needed.
+Embedded payload diagnostics are already included in the HTML total; they must
+not be added a second time. Initial download size and decoded browser memory
+are separate measurements.
+
+Generated built-in reports declare dynamic viewer dependencies. Older/custom
+reports can still receive a partial size inventory, but the staging helper
+requires a complete inventory with no remote resources. QMD output carries the
+packaging choice into later HTML rendering. PDF remains static.
+
 ## Recap
 
 ```r

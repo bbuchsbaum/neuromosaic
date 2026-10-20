@@ -169,6 +169,36 @@ Static intensity-dependent alpha ramps are approximated by uniform interactive
 opacity, so the contract is semantic parity rather than pixel identity and the
 static montage remains authoritative.
 
+To choose packaging for the entire report, pass `assets` to the renderer itself.
+This also works for static-only reports and overrides enabled viewers' packaging
+choices. Bundle figures are stored once by content, retaining their original
+PNG bytes, resolution, light/dark variants, and responsive layouts:
+
+```r
+render_montage_report(maps, "results/index.html", bg = anatomical_volume,
+                      assets = "bundle")
+size <- report_size("results/index.html")  # optional xml2 package required
+size$by_category
+size$total_bytes                         # HTML plus required companions
+write_report_bundle("results/index.html", "upload")
+```
+
+Upload the contents of `upload/` together, preserving relative paths. The copy
+contains the report and its declared dependencies, excluding caches, original
+source maps, and unrelated files. Its destination must be new or empty. Viewer
+runtimes remain local to the bundle; HPC users do not need Node or a CDN.
+
+Use `assets = "embed"` for a single file, or leave the default `"auto"` to retain
+existing behavior. Space requires bundle packaging. Both cluster and montage
+CLI reports accept `--assets bundle`; QMD output retains the chosen HTML policy.
+Size diagnostics distinguish embedded payloads from total file bytes and flag
+older/custom outputs or remote resources as incomplete inventories. Moving
+assets outside HTML and lazy loading alone do not eliminate their upload bytes.
+
+The fixed eight-map specimen in `tools/benchmark-report-assets.R` repeats four
+unchanged PNG variants. It measured about 19.84 MB embedded versus 1.98 MB for
+the complete bundle; real savings depend on repetition and data size.
+
 As a reproducible reference, one background plus eight dense FLOAT64 maps used
 29.39 MiB after gzip and base64 on a `91 x 109 x 91` lattice and 234.88 MiB at
 `182 x 218 x 182`. With the default two-map cache, measured Chromium backing

@@ -161,6 +161,12 @@
 #' @param quiet Logical; suppress render progress messages? Default `TRUE`.
 #' @param validate Logical; run [validate_manifest()] before rendering?
 #' @param check_files Logical; passed to [validate_manifest()].
+#' @param assets HTML packaging: `"auto"` preserves viewer-specific choices,
+#'   `"embed"` makes one self-contained file, and `"bundle"` writes relative
+#'   companion files, including for static-only reports. Explicit modes override
+#'   enabled viewers' packaging choices. Figure quality and scientific data are
+#'   unchanged. Space requires a bundle. See [report_size()] and
+#'   [write_report_bundle()] for measuring and staging the complete output.
 #' @param load_maps Logical; passed to [validate_manifest()] for map-level QC.
 #' @param provenance Optional provenance list to include in the report bundle.
 #' @param surface_scene Optional `neurosurf::SurfaceScene` rendered once as the
@@ -262,10 +268,27 @@ render_montage_report <- function(manifest,
                                   cerebellum_reference = getOption(
                                     "neuromosaic.cerebellum_reference", NULL
                                   ),
-                                  space = NULL) {
+                                  space = NULL,
+                                  assets = c("auto", "embed", "bundle")) {
   # Report text is UTF-8 (minus signs, middle dots); build and render it
   # with a UTF-8 character type even in a C-locale session.
   .montage_local_utf8_ctype()
+  assets <- .report_assets_mode(assets, output_file, space)
+  builtin_template <- is.null(template)
+  if (assets != "auto") {
+    if (!is.null(interactive)) {
+      if (!inherits(interactive, "montage_interactive")) {
+        stop("'interactive' must be created by montage_interactive().", call. = FALSE)
+      }
+      interactive$assets <- assets
+    }
+    if (!is.null(surface)) {
+      if (!inherits(surface, "montage_surface")) {
+        stop("'surface' must be created by montage_surface().", call. = FALSE)
+      }
+      surface$assets <- assets
+    }
+  }
   volume_args <- .validate_montage_passthrough(
     volume_args, stat_montage, c("bg", "stat", "draw"), "volume_args"
   )
@@ -346,6 +369,7 @@ render_montage_report <- function(manifest,
   # Absolutize the template so a relative `template=` still resolves after
   # withr::with_dir() changes the working directory below.
   template <- normalizePath(template, mustWork = TRUE)
+  builtin_template <- .report_builtin_template(template, "montage_report")
 
   output_dir <- dirname(output_file)
   if (!dir.exists(output_dir)) {
@@ -504,34 +528,17 @@ render_montage_report <- function(manifest,
     ), collapse = "; ")
   }
 
-  if (ext == "qmd") {
-    return(invisible(.write_montage_report_qmd(
-      report_data = report_data,
-      output_file = output_file,
-      template = template
-    )))
-  }
-
-  if (!requireNamespace("rmarkdown", quietly = TRUE)) {
-    stop("Package 'rmarkdown' is required to render reports.", call. = FALSE)
-  }
-
   has_interactive_bundle <- !is.null(report_data$interactive) &&
     identical(report_data$interactive$summary$packaging, "bundle")
   has_surface_bundle <- !is.null(report_data$surface) &&
     identical(report_data$surface$summary$packaging, "bundle")
-  has_space_bundle <- !is.null(report_data$space) && identical(ext, "html")
-  output_format <- .montage_rmarkdown_output_format(
-    ext,
-    latex_engine,
-    self_contained = !(has_interactive_bundle || has_surface_bundle || has_space_bundle)
-  )
+  has_space_bundle <- !is.null(report_data$space) && ext %in% c("html", "qmd")
+  bundled <- assets == "bundle" || has_interactive_bundle || has_surface_bundle || has_space_bundle
   # A bundle report already travels with its companion directory, so its panel
   # figures go there as files. Inlining them as data URIs would hand rmarkdown's
   # non-self-contained image pass multi-megabyte `src` strings, which
   # utils::URLdecode() processes in quadratic time (tens of minutes per report).
-  if (identical(ext, "html") &&
-      (has_interactive_bundle || has_surface_bundle || has_space_bundle)) {
+  if (ext %in% c("html", "qmd") && bundled) {
     companion <- paste0(
       tools::file_path_sans_ext(basename(output_file)), "_files"
     )
@@ -540,6 +547,19 @@ render_montage_report <- function(manifest,
       href = paste0(companion, "/figures")
     )
   }
+  report_data$params$assets <- assets
+  report_data$params$builtin_template <- builtin_template
+  if (ext == "qmd") {
+    return(invisible(.write_montage_report_qmd(
+      report_data = report_data, output_file = output_file, template = template
+    )))
+  }
+  if (!requireNamespace("rmarkdown", quietly = TRUE)) {
+    stop("Package 'rmarkdown' is required to render reports.", call. = FALSE)
+  }
+  output_format <- .montage_rmarkdown_output_format(
+    ext, latex_engine, self_contained = !bundled
+  )
   withr::with_dir(output_dir, {
     rmarkdown::render(
       input = template,
@@ -555,6 +575,10 @@ render_montage_report <- function(manifest,
       quiet = quiet
     )
   })
+
+  if (ext == "html") .report_append_registry(
+    output_file, .report_declared_files(report_data, output_file), builtin_template
+  )
 
   invisible(normalizePath(output_file, mustWork = FALSE))
 }
@@ -2434,6 +2458,11 @@ render_montage_report <- function(manifest,
   report_data <- .montage_qmd_portable_report_data(
     report_data, output_file
   )
+  lines <- .report_qmd_packaging(
+    lines, report_data$params$assets %||% "auto",
+    .report_declared_files(report_data, output_file),
+    isTRUE(report_data$params$builtin_template)
+  )
   saveRDS(report_data, sidecar_path)
   lines <- gsub("__REPORT_DATA_FILE__", sidecar, lines, fixed = TRUE)
   # The page title goes into a double-quoted YAML scalar.
@@ -2518,6 +2547,9 @@ render_montage_report <- function(manifest,
       report_data$space$bundle_files, .montage_qmd_relative_path, character(1),
       output_dir = output_dir, label = "Space bundle asset"
     ))
+  }
+  if (!is.null(report_data$figure_assets)) {
+    report_data$figure_assets$dir <- report_data$figure_assets$href
   }
   report_data
 }

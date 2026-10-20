@@ -581,3 +581,25 @@ test_that("surface parcel lookups describe atlas vertices one-to-one", {
   expect_null(.montage_surface_parcel_lookup(no_ids, list(left = geometry)))
   expect_null(.package_montage_surface_parcels(NULL))
 })
+
+
+test_that("report-wide assets overrides surface delivery without changing data hashes", {
+  root <- tempfile("surface-export-policy-"); dir.create(root)
+  atlas <- make_interactive_surface_atlas()
+  manifest <- make_interactive_surface_manifest()
+  config <- montage_surface(assets = "bundle")
+  image <- file.path(root, "static.png")
+  writeBin(charToRaw("static surface fallback"), image)
+  hashes <- lapply(c("embed", "bundle"), function(mode) {
+    output <- file.path(root, paste0(mode, ".qmd"))
+    suppressMessages(render_montage_report(manifest, output, surfatlas = atlas,
+      surface = config, assets = mode, materialize_recipes = FALSE,
+      panels = make_interactive_surface_panels(manifest$map_id, image),
+      render_surface = FALSE, check_files = FALSE))
+    rd <- readRDS(sub("\\.qmd$", "_report-data.rds", output))
+    expect_identical(rd$surface$summary$packaging, mode)
+    vapply(rd$surface$assets, `[[`, character(1), "hash")
+  })
+  expect_identical(config$assets, "bundle")
+  expect_identical(hashes[[1]], hashes[[2]])
+})

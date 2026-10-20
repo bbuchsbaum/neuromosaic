@@ -8,7 +8,8 @@ render_cluster_report(
   report_data,
   output_file = "cluster_report.pdf",
   template = NULL,
-  quiet = TRUE
+  quiet = TRUE,
+  assets = c("auto", "embed", "bundle")
 )
 }
 \arguments{
@@ -23,6 +24,10 @@ render_cluster_report(
 bundled template matching `output_file`.}
 
 \item{quiet}{Logical; suppress render progress messages? Default `TRUE`.}
+
+\item{assets}{HTML packaging: `"auto"` preserves existing behavior,
+`"embed"` makes one self-contained file, and `"bundle"` uses relative
+companion files. See [report_size()] and [write_report_bundle()].}
 }
 \value{
 The path to the rendered report (invisibly).

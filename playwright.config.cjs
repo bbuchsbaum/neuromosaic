@@ -19,6 +19,7 @@ module.exports = defineConfig({
     timeout: 20_000
   },
   use: {
+    baseURL: "http://127.0.0.1:4173",
     browserName: "chromium",
     viewport: { width: 1440, height: 900 },
     colorScheme: "light",

@@ -1028,15 +1028,7 @@ montage_report_formatters <- function(manifest = NULL,
   if (is.null(figure_assets)) {
     return(knitr::image_uri(path))
   }
-  dir.create(figure_assets$dir, recursive = TRUE, showWarnings = FALSE)
-  name <- paste0(
-    substr(digest::digest(file = path, algo = "sha256"), 1L, 16L), ".",
-    tolower(tools::file_ext(path))
-  )
-  target <- file.path(figure_assets$dir, name)
-  if (!file.exists(target) && !file.copy(path, target)) {
-    stop("Could not copy report figure to ", target, call. = FALSE)
-  }
+  name <- .report_copy_asset(path, figure_assets$dir)
   paste0(figure_assets$href, "/", utils::URLencode(name))
 }
 

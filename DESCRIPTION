@@ -59,7 +59,8 @@ Suggests:
     shiny,
     systemfonts,
     testthat (>= 3.0.0),
-    V8
+    V8,
+    xml2
 Remotes:
     bbuchsbaum/fmrigds,
     bbuchsbaum/neuroatlas,

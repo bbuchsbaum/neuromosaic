@@ -976,3 +976,19 @@ test_that("cli report formula normalization warns on unsupported left-hand sides
     "measure + group"
   )
 })
+
+
+test_that("CLI exposes validated report packaging and describes it in dry runs", {
+  fx <- make_cli_montage_fixture()
+  spec <- cli_main(c("report", "--style", "montage", "--render-manifest",
+    fx$manifest_path, "--assets", "bundle"), execute = FALSE)
+  expect_identical(spec$args$assets, "bundle")
+  text <- capture.output(cli_main(c("report", "--style", "montage",
+    "--render-manifest", fx$manifest_path, "--assets", "bundle", "--dry-run")))
+  expect_true(any(grepl("HTML assets: bundle", text, fixed = TRUE)))
+  expect_error(cli_main(c("report", "--style", "montage", "--render-manifest",
+    fx$manifest_path, "--assets", "invalid"), execute = FALSE), "arg")
+  expect_error(cli_main(c("report", "--style", "montage", "--render-manifest",
+    fx$manifest_path, "--assets", "bundle", "--out", "report.pdf"), execute = FALSE),
+    "HTML/QMD")
+})

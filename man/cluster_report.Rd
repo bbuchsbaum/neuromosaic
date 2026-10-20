@@ -24,6 +24,7 @@ cluster_report(
   brain_cmap = "inferno",
   quiet = TRUE,
   provenance = NULL,
+  assets = c("auto", "embed", "bundle"),
   ...
 )
 }
@@ -83,6 +84,8 @@ cluster? Default `TRUE`.}
 
 \item{provenance}{Optional metadata to merge into the automatically captured
 report provenance.}
+
+\item{assets}{HTML packaging, passed to [render_cluster_report()].}
 
 \item{...}{Additional arguments passed to [build_cluster_explorer_data()].}
 }

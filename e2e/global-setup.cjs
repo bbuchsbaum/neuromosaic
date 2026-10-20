@@ -7,9 +7,10 @@ module.exports = async function globalSetup() {
   const fixtureScript = resolve(__dirname, "render-fixtures.R");
   const spaceFixtureScript = resolve(__dirname, "build-space-fixture.R");
   const fixedScalesScript = resolve(__dirname, "build-fixed-scales-fixture.R");
+  const exportFixtureScript = resolve(__dirname, "build-report-assets-fixture.R");
   const result = spawnSync("Rscript", [
     "-e",
-    `source(${JSON.stringify(fixtureScript)}, chdir = FALSE); source(${JSON.stringify(spaceFixtureScript)}, chdir = FALSE); source(${JSON.stringify(fixedScalesScript)}, chdir = FALSE)`
+    `source(${JSON.stringify(fixtureScript)}, chdir = FALSE); source(${JSON.stringify(spaceFixtureScript)}, chdir = FALSE); source(${JSON.stringify(fixedScalesScript)}, chdir = FALSE); source(${JSON.stringify(exportFixtureScript)}, chdir = FALSE)`
   ], {
     cwd: repoRoot,
     encoding: "utf8",
