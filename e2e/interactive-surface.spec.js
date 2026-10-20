@@ -143,8 +143,12 @@ test("static and surface map selectors synchronize in both directions", async ({
   await expect(host).toHaveAttribute("data-nm-surface-map", "surface_estimate");
   await expect(surfaceMap).toHaveValue("surface_estimate");
   await expect(surfaceMap.locator("option:checked")).toHaveText("Estimate");
+  await expect(host).toHaveAttribute("aria-label", "Interactive cortical surface: Estimate");
+  await expect(host.locator(".nm-sv-stage")).toHaveAttribute("aria-label", "3D surface viewer: Estimate");
 
   await activateSurface(host);
+  await expect(host).toHaveAccessibleName("Interactive cortical surface: Estimate");
+  await expect(host.getByRole("group", { name: "3D surface viewer: Estimate", exact: true })).toBeVisible();
   const mapping = await host.evaluate((node) => JSON.parse(
     node.getAttribute("data-nm-surface-map-to-layer")
   ));
@@ -153,6 +157,8 @@ test("static and surface map selectors synchronize in both directions", async ({
 
   await surfaceMap.selectOption("surface_se");
   await expect(host).toHaveAttribute("data-nm-surface-map", "surface_se");
+  await expect(host).toHaveAccessibleName("Interactive cortical surface: SE");
+  await expect(host.getByRole("group", { name: "3D surface viewer: SE", exact: true })).toBeVisible();
   await expect.poll(async () => (await surfaceState(host)).displayedLayerId)
     .toBe(mapping.surface_se);
   await expect(group.getByRole("tab", { name: "SE" })).toHaveAttribute(

@@ -80,6 +80,7 @@
   meta <- panel[["surface"]]
   if (!is.list(meta)) meta <- list()
   method <- .montage_report_surface_method(row, panel, fallback)
+  surface <- method[["surface", exact = TRUE]]
   views <- meta$views
   hemis <- meta$hemis
   extent <- .montage_report_pick(row, "effective_min_cluster_size", "min_cluster_size")
@@ -98,7 +99,7 @@
     "; ", .montage_surface_mapping_text(method, detailed),
     if (detailed && !is.null(method$space) && !is.na(method$space)) paste0("; mesh: the ", method$space,
       " cortical surface", if (is.finite(method$vertices %||% NA)) paste0(" (", .montage_report_int(method$vertices), " vertices per hemisphere)")),
-    if (detailed && !is.null(method$surface) && !is.na(method$surface)) paste0("; drawn on the ", method$surface, " surface"),
+    if (detailed && !is.null(surface) && !is.na(surface)) paste0("; drawn on the ", surface, " surface"),
     if (detailed && isTRUE(method$medial_wall)) " with the medial wall masked",
     ".", extent_text, " Subcortical and cerebellar effects are not shown.")
 }

@@ -73,6 +73,19 @@ test_that("slice selection provenance distinguishes per-map overrides and automa
   expect_false(grepl("5th|95th", text))
 })
 
+test_that("surface geometry descriptions require an exact metadata field", {
+  row <- data.frame(map_id = "a", label = "A", quantity = "estimate", min_cluster_size = 1)
+  method <- list(source = "precomputed", surface_smooth_fwhm = 0)
+  describe <- function(method) .montage_report_surface_text(
+    row, list(surface = list(method = method)), detailed = TRUE)
+  expect_match(describe(method), "precomputed vertex values", fixed = TRUE)
+  expect_false(grepl("drawn on", describe(method), fixed = TRUE))
+  method$surface <- "inflated"
+  expect_match(describe(method), "drawn on the inflated surface", fixed = TRUE)
+  method$surface <- NA_character_
+  expect_false(grepl("drawn on", describe(method), fixed = TRUE))
+})
+
 test_that("surface descriptions retain projection settings without assuming averaging", {
   row <- data.frame(map_id = "a", label = "A", quantity = "estimate", min_cluster_size = 1)
   panel <- list(surface = list(views = "ventral", hemis = "left",

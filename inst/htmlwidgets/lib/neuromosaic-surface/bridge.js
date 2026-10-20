@@ -274,8 +274,12 @@
     if (host.getAttribute("data-nm-surface-map") !== mapId) clearPendingEdits(host);
     host.setAttribute("data-nm-surface-map", mapId);
     var labels = parse(host, "data-nm-surface-labels");
+    var label = labels[mapId] || mapId;
+    host.setAttribute("aria-label", "Interactive cortical surface: " + label);
+    var stage = host.querySelector(".nm-sv-stage");
+    if (stage) stage.setAttribute("aria-label", "3D surface viewer: " + label);
     var title = part(host, "target");
-    if (title) title.textContent = labels[mapId] || mapId;
+    if (title) title.textContent = label;
     var select = part(host, "map-select");
     if (select && select.value !== mapId) select.value = mapId;
   }
