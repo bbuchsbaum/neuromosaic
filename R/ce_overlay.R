@@ -220,23 +220,28 @@
   }
 
   if (is.null(white)) {
-    warning(
-      "Could not load white surface for overlay projection in hemi '",
-      hemi, "'; falling back to inflated geometry. ",
-      "Projection accuracy may be reduced.", call. = FALSE
-    )
+    warning(.overlay_fallback_message("white", hemi, surf_type), call. = FALSE)
     white <- current_geom
   }
   if (is.null(pial)) {
-    warning(
-      "Could not load pial surface for overlay projection in hemi '",
-      hemi, "'; falling back to inflated geometry. ",
-      "Projection accuracy may be reduced.", call. = FALSE
-    )
+    warning(.overlay_fallback_message("pial", hemi, surf_type), call. = FALSE)
     pial <- current_geom
   }
 
   list(white = white, pial = pial, surface_space = surface_space)
+}
+
+# Inflated, very inflated and spherical meshes are not in volume space, so a
+# projection that falls back to them samples the volume at the wrong anatomy.
+.overlay_fallback_message <- function(surface_type, hemi, atlas_type) {
+  shown <- if (is.na(atlas_type) || !nzchar(atlas_type)) "display" else atlas_type
+  paste0(
+    "Could not load the ", surface_type, " surface for hemi '", hemi,
+    "'; projecting with the atlas's own ", shown, " geometry instead. ",
+    "Unless that geometry is in the same space as the volume (inflated and ",
+    "spherical meshes are not), projected values are sampled at the wrong ",
+    "anatomy."
+  )
 }
 
 .surface_template_defaults <- function(surface_space) {
@@ -397,16 +402,30 @@
   if (is.null(coords) || is.null(faces)) {
     return(NULL)
   }
-  faces <- matrix(as.integer(faces), ncol = 3L)
-  if (min(faces, na.rm = TRUE) == 0L) {
-    faces <- faces + 1L
-  }
+  faces <- .gifti_faces_zero_based(faces, n_vert = nrow(coords))
   tryCatch(
     neurosurf::SurfaceGeometry(
       vert = coords,
       faces = faces,
       hemi = if (identical(hemi, "L")) "left" else "right"
     ),
-    error = function(e) NULL
+    error = function(e) {
+      warning(
+        "Could not build a surface from '", basename(path), "': ",
+        conditionMessage(e), call. = FALSE
+      )
+      NULL
+    }
   )
+}
+
+# neurosurf::SurfaceGeometry() takes 0-based triangle indices, which is how
+# GIFTI stores them. Only input that is unambiguously 1-based (smallest index 1
+# and largest index equal to the vertex count) is shifted down.
+.gifti_faces_zero_based <- function(faces, n_vert) {
+  faces <- matrix(as.integer(faces), ncol = 3L)
+  if (min(faces, na.rm = TRUE) == 1L && max(faces, na.rm = TRUE) == n_vert) {
+    faces <- faces - 1L
+  }
+  faces
 }
