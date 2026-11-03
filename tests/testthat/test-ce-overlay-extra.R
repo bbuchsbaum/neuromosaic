@@ -12,14 +12,15 @@ test_that(".surface_template_defaults returns correct defaults for fsaverage6", 
   d <- neuromosaic:::.surface_template_defaults("fsaverage6")
   expect_equal(d$template_id, "fsaverage")
   expect_equal(d$density, "41k")
-  expect_equal(d$resolution, "06")
+  # TemplateFlow fsaverage offers only resolution 1; select by density (#44).
+  expect_null(d$resolution)
 })
 
 test_that(".surface_template_defaults returns correct defaults for fsaverage5", {
   d <- neuromosaic:::.surface_template_defaults("fsaverage5")
   expect_equal(d$template_id, "fsaverage")
   expect_equal(d$density, "10k")
-  expect_equal(d$resolution, "05")
+  expect_null(d$resolution)
 })
 
 test_that(".surface_template_defaults returns correct defaults for fsaverage", {

@@ -245,16 +245,19 @@
 }
 
 .surface_template_defaults <- function(surface_space) {
+  # TemplateFlow's tpl-fsaverage keys its surfaces by density (den-10k,
+  # den-41k, den-164k) and offers only resolution 1, so the fsaverage5/6
+  # spaces are selected by density alone.
   if (is.null(surface_space) || !nzchar(surface_space)) {
-    return(list(template_id = "fsaverage", density = "41k", resolution = "06"))
+    return(list(template_id = "fsaverage", density = "41k", resolution = NULL))
   }
 
   switch(
     as.character(surface_space),
     fsaverage6 = list(template_id = "fsaverage", density = "41k",
-                      resolution = "06"),
+                      resolution = NULL),
     fsaverage5 = list(template_id = "fsaverage", density = "10k",
-                      resolution = "05"),
+                      resolution = NULL),
     fsaverage = list(template_id = "fsaverage", density = "164k",
                      resolution = NULL),
     fsLR = list(template_id = "fsLR", density = "32k",
@@ -310,12 +313,15 @@
   }
 
   hemi_tf <- if (identical(hemi, "lh")) "L" else "R"
+  log <- new.env(parent = emptyenv())
+  log$errors <- character()
   result <- .load_overlay_surface_template(
     template_id = defaults$template_id,
     surface_type = surface_type,
     hemi = hemi_tf,
     density = density,
-    resolution = resolution
+    resolution = resolution,
+    log = log
   )
   if (is.null(result) && identical(defaults$template_id, "fsLR") &&
       surface_type %in% c("white", "pial")) {
@@ -324,11 +330,20 @@
       surface_type = "midthickness",
       hemi = hemi_tf,
       density = density,
-      resolution = resolution
+      resolution = resolution,
+      log = log
     )
   }
   if (!is.null(result)) {
     assign(cache_key, result, envir = .overlay_geom_cache)
+  } else {
+    reasons <- log$errors
+    warning(
+      "Could not load the ", surface_space, " ", surface_type,
+      " surface (", hemi, ") from TemplateFlow",
+      if (length(reasons)) paste0(": ", paste(unique(reasons), collapse = "; ")),
+      call. = FALSE
+    )
   }
   result
 }
@@ -337,7 +352,15 @@
                                            surface_type,
                                            hemi,
                                            density,
-                                           resolution) {
+                                           resolution,
+                                           log = NULL) {
+  errors <- character()
+  failed <- function(step) {
+    function(e) {
+      errors <<- c(errors, paste0(step, ": ", conditionMessage(e)))
+      NULL
+    }
+  }
   result <- tryCatch(
     neuroatlas::load_surface_template(
       template_id = template_id,
@@ -346,7 +369,7 @@
       density = density,
       resolution = resolution
     ),
-    error = function(e) NULL
+    error = failed("load_surface_template")
   )
   if (!is.null(result)) {
     return(result)
@@ -361,9 +384,10 @@
       resolution = resolution,
       load_as_path = TRUE
     ),
-    error = function(e) NULL
+    error = failed("get_surface_template")
   )
   if (is.null(path) || length(path) == 0L || !file.exists(path[[1]])) {
+    if (!is.null(log)) log$errors <- c(log$errors, errors)
     return(NULL)
   }
   .read_gifti_surface_geometry(path[[1]], hemi = hemi)
