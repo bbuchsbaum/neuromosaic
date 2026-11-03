@@ -81,12 +81,13 @@ test_that(".surface_template_defaults returns valid defaults for known spaces", 
   d6 <- neuromosaic:::.surface_template_defaults("fsaverage6")
   expect_equal(d6$template_id, "fsaverage")
   expect_equal(d6$density, "41k")
-  expect_equal(d6$resolution, "06")
+  # TemplateFlow fsaverage offers only resolution 1; select by density (#44).
+  expect_null(d6$resolution)
 
   d5 <- neuromosaic:::.surface_template_defaults("fsaverage5")
   expect_equal(d5$template_id, "fsaverage")
   expect_equal(d5$density, "10k")
-  expect_equal(d5$resolution, "05")
+  expect_null(d5$resolution)
 
   d_full <- neuromosaic:::.surface_template_defaults("fsaverage")
   expect_equal(d_full$template_id, "fsaverage")
