@@ -322,9 +322,15 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
 # Tick label: whole numbers stay whole, otherwise one decimal.
 .nm_format_tick <- function(x) {
   vapply(x, function(v) {
-    # Whole numbers stay whole; otherwise keep the second decimal only when it
-    # carries information, so a 4.25 colour cap is not printed as 4.2.
-    digits <- if (abs(v - round(v)) < 0.005) 0L else if (abs(v * 10 - round(v * 10)) < 0.05) 1L else 2L
+    # Three significant digits, as the interactive viewers print values
+    # (reportNumber): 17.85 -> 17.9, 4.25 stays 4.25, 0.004 is not 0. Only
+    # the decimals that value needs are shown (2.50 -> 2.5, 20 -> 20).
+    if (!is.finite(v) || v == 0) return(.nm_format_signed(v, digits = 0L, plus = FALSE))
+    sv <- signif(v, 3)
+    digits <- 0L
+    while (digits < 6L && abs(round(sv, digits) - sv) > 1e-9 * max(1, abs(sv))) {
+      digits <- digits + 1L
+    }
     .nm_format_signed(v, digits = digits, plus = FALSE)
   }, character(1))
 }

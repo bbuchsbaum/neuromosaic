@@ -459,7 +459,9 @@ surf_montage <- function(stat = NULL,
   # One underlay for the figure of record and the interactive surface: without
   # an explicit metric, use the sulcal depth montage_surface() shows by
   # default, so both views draw the same broad gyral/sulcal pattern.
-  if (is.null(anatomy_metric) && !is.null(surfatlas)) {
+  # Vertex and volume maps only: parcel figures use their own renderer, whose
+  # layout must not change because an anatomy metric is present.
+  if (is.null(anatomy_metric) && !is.null(surfatlas) && !has_vals) {
     depth <- tryCatch(
       lapply(c(lh = "lh", rh = "rh"), function(h) {
         neuroatlas::surface_anatomy(surfatlas, h, type = "sulcal_depth")$metric
@@ -574,8 +576,10 @@ surf_montage <- function(stat = NULL,
         plot_args$render_height <- 625L
       }
     }
-    # Older neuroatlas releases cannot fade; never send them the argument.
-    if (is.null(magnitude_opacity)) plot_args$overlay_magnitude_opacity <- NULL
+    # The fade is for vertex/volume overlays on the CPU renderer. Parcel
+    # figures use their own renderer, and older neuroatlas releases cannot
+    # fade: neither receives the argument.
+    if (is.null(magnitude_opacity) || has_vals) plot_args$overlay_magnitude_opacity <- NULL
     do.call(plot_fun, plot_args)
   }
   # Cap triangles mark values beyond the cap that are actually drawn: the
