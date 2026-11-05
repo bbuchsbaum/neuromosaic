@@ -34,6 +34,12 @@
 #'   (sign-separated, using `connectivity`) are not drawn, matching the
 #'   cluster table.
 #' @param connectivity Voxel connectivity for `min_cluster_size`.
+#' @param peak_labels Optional data frame of cluster peaks to tag on the
+#'   report figure, with columns `label` (e.g. `"P1"`) and `x`, `y`, `z`
+#'   (world millimetres). Each tag is drawn beside its peak on the slice
+#'   nearest to it, when that slice lies within half a slice step. The report
+#'   passes each thresholded map's cluster table, so the figure and the table
+#'   share one vocabulary. Ignored by `figure = "classic"`.
 #' @param figure `"report"` (default) draws the report's figure of record: a
 #'   cropped slice grid labelled in world millimetres with L/R markers, the
 #'   threshold-saturated palette, opaque suprathreshold colour (at least 0.92
@@ -97,7 +103,8 @@ stat_montage <- function(bg,
                          min_cluster_size = NULL,
                          connectivity = c("18-connect", "26-connect",
                                           "6-connect"),
-                         figure = c("report", "classic")) {
+                         figure = c("report", "classic"),
+                         peak_labels = NULL) {
   tail <- match.arg(tail)
   connectivity <- match.arg(connectivity)
   figure <- match.arg(figure)
@@ -135,6 +142,7 @@ stat_montage <- function(bg,
 
   plot <- if (identical(figure, "report")) {
     .stat_montage_report_figure(spec, legend = legend, ncol = ncol,
+                                peak_labels = peak_labels,
                                 along = along)
   } else {
     .stat_montage_classic_plot(
@@ -228,7 +236,8 @@ stat_montage <- function(bg,
 }
 
 # The report's figure of record (see R/montage_figure.R).
-.stat_montage_report_figure <- function(spec, legend, ncol, along) {
+.stat_montage_report_figure <- function(spec, legend, ncol, along,
+                                        peak_labels = NULL) {
   continuous <- identical(spec$display_mode, "continuous")
   values <- as.numeric(as.array(spec$source))
   if (continuous) {
@@ -259,6 +268,7 @@ stat_montage <- function(bg,
     note = note,
     ncol = ncol,
     alpha = max(spec$alpha, 0.92),
+    peak_labels = peak_labels,
     magnitude_opacity = magnitude_opacity
   )
 }
@@ -379,10 +389,12 @@ stat_montage <- function(bg,
   )
 }
 
-.stat_montage_zlevels <- function(supra_arr, along, max_slices = 12L) {
+.stat_montage_zlevels <- function(supra_arr, along, max_slices = 12L,
+                                  probs = c(0.05, 0.95)) {
   along <- as.integer(along)
   if (length(along) != 1L || is.na(along) || along < 1L || along > 3L) {
     return(NULL)
   }
-  .stat_montage_central_zlevels(supra_arr, along, max_slices = max_slices)
+  .stat_montage_central_zlevels(supra_arr, along, max_slices = max_slices,
+                                probs = probs)
 }

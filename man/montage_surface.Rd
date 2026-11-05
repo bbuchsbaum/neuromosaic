@@ -22,7 +22,7 @@ montage_surface(
   controls = .montage_surface_control_names,
   preset = "report",
   layout = c("anatomical", "split"),
-  view = c("left", "oblique", "right", "dorsal", "ventral", "anterior", "posterior",
+  view = c("oblique", "left", "right", "dorsal", "ventral", "anterior", "posterior",
     "left-medial", "right-medial"),
   anatomy = c("sulcal_depth", "curvature"),
   oblique = "auto",
@@ -89,8 +89,9 @@ coherent brain in RAS position that rotates as a whole; `"split"` rotates
 each hemisphere into the chosen view and places them side by side.}
 
 \item{view}{Initial whole-brain view for the anatomical layout. The default
-`"left"` (lateral left hemisphere) matches the first panel of the static
-surface strip; `"oblique"` is the Overview pose set by `oblique`.}
+`"oblique"` is the Overview pose set by `oblique`, which by default faces
+the most suprathreshold cortex, so the viewer opens on the data; `"left"`
+(lateral left hemisphere) matches the first panel of the static strip.}
 
 \item{anatomy}{Computed underlay used when no `curvature` is supplied:
 `"sulcal_depth"` (a white-to-inflated sulcal-depth proxy with broad

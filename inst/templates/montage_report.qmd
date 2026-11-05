@@ -135,6 +135,12 @@ if (nrow(manifest) == 0L) {
     rows <- match(group$map_ids, manifest$map_id)
     if (is_html && length(rows) > 1L) {
       fmt$emit_group_start(group, rows[[1]], rows)
+      # The view switch and its viewers sit under the map tabs, so Slices and
+      # 3D open in place of the figures rather than below every table.
+      fmt$emit_view_slot(as.character(group$analysis_id),
+                         as.character(group$analysis_label %||% group$analysis_id))
+      interactive_hooks$emit_host(as.character(group$analysis_id))
+      surface_hooks$emit_host(as.character(group$analysis_id))
       for (j in seq_along(rows)) {
         i <- rows[[j]]
         fmt$emit_variant_start(manifest[i, , drop = FALSE], group, j)
@@ -142,8 +148,6 @@ if (nrow(manifest) == 0L) {
         fmt$emit_variant_end()
       }
       fmt$emit_group_end()
-      interactive_hooks$emit_host(as.character(group$analysis_id))
-      surface_hooks$emit_host(as.character(group$analysis_id))
     } else if (length(rows) == 1L) {
       i <- rows[[1]]
       fmt$emit_map_start(i, as.character(manifest$label[[i]]),

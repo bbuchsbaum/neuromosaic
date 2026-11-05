@@ -1932,15 +1932,16 @@
       if (node) top = Math.max(top, node.getBoundingClientRect().bottom - box.top);
     });
     var bottom = 0;
-    // A colour bar that spans much of a narrow stage would sit on the brain;
-    // reserve its height too. On wide stages it only occupies a corner.
+    // The colour-bar card sits over the stage's lower edge; reserve its height
+    // so the fitted brain never runs under it (a corner card still covered
+    // the ventral surface in the Overview pose).
     var legend = part(host, "legend");
     if (legend) {
       var wasHidden = legend.hidden;
       legend.hidden = false;
       var rect = legend.getBoundingClientRect();
       legend.hidden = wasHidden;
-      if (rect.width > 0.35 * box.width) bottom = Math.max(bottom, box.bottom - rect.top + 4);
+      if (rect.height > 0) bottom = Math.max(bottom, box.bottom - rect.top + 4);
     }
     return { top: Math.max(0, Math.round(top)), bottom: Math.max(0, Math.round(bottom)) };
   }
@@ -2034,7 +2035,15 @@
     router.setAttribute("data-nm-view-router", analysisId);
     var legend = document.createElement("legend");
     var viewLabel = slot && slot.getAttribute("data-nm-view-label");
-    legend.textContent = viewLabel ? "View for " + viewLabel : "View";
+    legend.textContent = "View";
+    if (viewLabel) {
+      // The analysis name is for assistive tech; the slot already sits under
+      // that analysis's heading.
+      var sr = document.createElement("span");
+      sr.className = "nm-sr-only";
+      sr.textContent = " for " + viewLabel;
+      legend.appendChild(sr);
+    }
     router.appendChild(legend);
     var name = "nm-view-" + analysisId.replace(/[^A-Za-z0-9_-]/g, "-");
     function add(value, label) {

@@ -122,7 +122,8 @@ montage_report_formatters <- function(manifest = NULL,
     emit_summary_matrix = function() {
       .montage_report_emit_summary_matrix(
         groups = groups, manifest = manifest, panels = panels,
-        layout = layout, is_html = isTRUE(is_html)
+        layout = layout, is_html = isTRUE(is_html),
+        figure_assets = figure_assets
       )
     },
     emit_maps_controls = function() {
@@ -631,6 +632,16 @@ montage_report_formatters <- function(manifest = NULL,
     check.names = FALSE
   )
   names(out)[names(out) == "Peak Stat"] <- peak_label
+  # Effect size at the peak (estimate, SE) sits beside the test statistic.
+  effect_labels <- attr(tbl, "effect_labels") %||% character()
+  for (field in intersect(c("peak_estimate", "peak_se"), names(tbl))) {
+    v <- as.numeric(tbl[[field]])
+    digits <- max(2L, min(4L, 2L - floor(log10(max(abs(v), 1e-12, na.rm = TRUE))) ))
+    at <- match("Region", names(out))
+    col <- data.frame(round(v, digits), check.names = FALSE)
+    names(col) <- effect_labels[[field]] %||% field
+    out <- cbind(out[seq_len(at - 1L)], col, out[at:ncol(out)])
+  }
   # Positive clusters first, then negative, each in cluster-number order, so
   # the IDs read in sequence (the selection itself is by |peak|).
   sign_rank <- match(as.character(tbl$sign), c("positive", "negative"))
@@ -1147,6 +1158,7 @@ montage_report_formatters <- function(manifest = NULL,
   all <- attr(tbl, "all_clusters")
   if (!is.data.frame(all) || nrow(all) == 0L) all <- tbl
   near <- any(attr(.montage_report_region_text(all), "near"))
+  off <- any(.montage_report_region_cells(all)$off_atlas)
   label <- if (is.data.frame(row) && "label" %in% names(row)) {
     as.character(row$label[[1L]])
   } else if ("map_id" %in% names(all)) {
@@ -1166,6 +1178,8 @@ montage_report_formatters <- function(manifest = NULL,
   cere <- attr(tbl, "cerebellum_source") %||% attr(all, "cerebellum_source")
   keys <- c(
     if (near) "\u2248 nearest atlas region to a peak outside it, with the distance.",
+    # Say why a peak can have no label: most parcellations are cortical only.
+    if (off) "Outside atlas: no labelled region at or near the peak; cortical parcellations do not label subcortical or cerebellar structures.",
     if (!is.null(cere)) paste0("Cerebellum labels: ", cere, ".")
   )
   note <- if (length(keys)) {
@@ -1367,6 +1381,13 @@ montage_report_formatters <- function(manifest = NULL,
       )
     }
     parts <- c(parts, threshold = value)
+    # A fixed value threshold is voxelwise and uncorrected; say so beside it.
+    q <- .montage_report_scalar(row, "effective_q")
+    fixed <- .montage_report_scalar(row, "threshold")
+    if (!(length(fixed) == 1L && is.na(fixed)) && (length(q) == 1L && is.na(q)) &&
+        !.montage_report_is_parcel_row(row)) {
+      parts <- c(parts, inference = "uncorrected")
+    }
   } else if (identical(as.character(display_mode), "continuous") &&
              !(length(lower) == 1L && is.na(lower)) &&
              !(length(upper) == 1L && is.na(upper))) {
@@ -1452,6 +1473,10 @@ montage_report_formatters <- function(manifest = NULL,
     qc_tbl$map_id
   }
   display <- data.frame(Map = map_label, check.names = FALSE)
+  if ("analysis" %in% names(qc_tbl) && length(unique(qc_tbl$analysis)) > 1L) {
+    display <- data.frame(Analysis = qc_tbl$analysis, Map = map_label,
+                          check.names = FALSE)
+  }
   if ("effective_n" %in% names(qc_tbl)) {
     display[["N"]] <- qc_tbl$effective_n
   }
@@ -1859,8 +1884,58 @@ montage_report_formatters <- function(manifest = NULL,
   sets[[1L]]
 }
 
+# "0.93 to 1.72" (or "-1.68 to 1.72"): an unthresholded companion map's values
+# at its analysis's tabulated peaks; NULL when none were sampled.
+.montage_report_cell_peak_range <- function(cell) {
+  pt <- if (is.list(cell$primary)) cell$primary$peak_table else NULL
+  field <- switch(as.character(cell$quantity %||% ""),
+                  estimate = "peak_estimate", standard_error = "peak_se", NULL)
+  if (is.null(field) || !is.data.frame(pt) || !field %in% names(pt)) return(NULL)
+  v <- as.numeric(pt[[field]])
+  v <- v[is.finite(v)]
+  if (!length(v)) return(NULL)
+  digits <- max(2L, min(4L, 2L - floor(log10(max(abs(v), 1e-12)))))
+  # Signs only when the values have them (an SE range reads "0.19 to 0.41").
+  f <- if (all(v >= 0)) function(x) formatC(x, format = "f", digits = digits) else
+    function(x) .montage_report_signed(x, digits)
+  span <- function(x) {
+    if (!length(x)) return(NULL)
+    x <- sort(x, decreasing = all(x < 0))
+    if (length(x) == 1L || isTRUE(all.equal(min(x), max(x)))) f(x[[1L]]) else
+      paste0(f(x[[1L]]), " to ", f(x[[length(x)]]))
+  }
+  # An estimate's positive and negative peaks are separate effects: one range
+  # per sign, stacked, so neither hides the other's size.
+  if (any(v > 0) && any(v < 0)) {
+    return(paste0(span(sort(v[v > 0])), "<br>", span(v[v < 0])))
+  }
+  span(sort(v))
+}
+
+# A word-sized glass brain for a summary-matrix cell, with its dark variant.
+.montage_report_cell_thumb <- function(panel, alt_label, figure_assets = NULL) {
+  if (!is.list(panel)) return("")
+  path <- panel[["summary_image"]]
+  ok <- function(p) !is.null(p) && length(p) == 1L && !is.na(p) && file.exists(p)
+  if (!ok(path)) return("")
+  dims <- .montage_png_dimensions(path)
+  dark <- panel[["summary_image_dark"]]
+  img <- paste0("<img src=\"", .montage_report_image_src(path, figure_assets),
+                "\" alt=\"Glass brain of ", alt_label, "\"",
+                if (!is.null(dims)) paste0(" width=\"", dims[[1]], "\" height=\"", dims[[2]], "\""),
+                " loading=\"lazy\" decoding=\"async\" />")
+  if (ok(dark)) {
+    q <- "screen and (prefers-color-scheme: dark)"
+    img <- paste0("<picture><source media=\"", q, "\" data-nm-media=\"", q,
+                  "\" data-nm-theme=\"dark\" srcset=\"",
+                  .montage_report_image_src(dark, figure_assets), "\" />", img, "</picture>")
+  }
+  paste0("<span class=\"nm-cell-thumb\">", img, "</span>")
+}
+
 .montage_report_emit_summary_matrix <- function(groups, manifest, panels,
-                                                layout, is_html) {
+                                                layout, is_html,
+                                                figure_assets = NULL) {
   labels <- .montage_report_shared_labels(groups, manifest)
   if (is.null(labels)) return(invisible(NULL))
   esc <- .montage_report_html_escape
@@ -1875,10 +1950,17 @@ montage_report_formatters <- function(manifest = NULL,
       row <- manifest[i, , drop = FALSE]
       list(count = .montage_report_map_count(
         row, panels[[as.character(row$map_id[[1L]])]]
-      ), map_id = as.character(row$map_id[[1L]]))
+      ), map_id = as.character(row$map_id[[1L]]),
+      label = as.character(row$label[[1L]]),
+      quantity = if ("quantity" %in% names(row)) as.character(row$quantity[[1L]]) else NA_character_,
+      panel = panels[[as.character(row$map_id[[1L]])]],
+      primary = panels[[as.character(g$primary_map_id %||% g$map_ids[[1L]])]])
     })
   })
   unit <- cells[[1L]][[1L]]$count$unit
+  has_thumbs <- any(vapply(unlist(cells, recursive = FALSE), function(cell) {
+    is.list(cell$panel) && !is.null(cell$panel[["summary_image"]])
+  }, logical(1)))
   if (!isTRUE(is_html)) {
     tbl <- data.frame(
       vapply(groups, function(g) as.character(g$analysis_label %||% g$analysis_id), ""),
@@ -1906,8 +1988,18 @@ montage_report_formatters <- function(manifest = NULL,
     tds <- vapply(cells[[r]], function(cell) {
       n <- cell$count$n
       max_abs <- cell$count$max_abs
+      # An unthresholded map's glass brain is its noise ceiling; its values at
+      # the analysis's reported peaks say more, in fewer marks.
+      at_peaks <- if (is.na(n)) .montage_report_cell_peak_range(cell) else NULL
+      thumb <- if (is.na(n)) "" else .montage_report_cell_thumb(cell$panel, paste0(
+        esc(g$analysis_label %||% g$analysis_id), ": ", esc(cell$label)), figure_assets)
       inner <- if (is.na(n)) {
-        "<span class=\"nm-cell-empty\">&ndash;</span>"
+        if (!is.null(at_peaks)) {
+          paste0("<span class=\"nm-cell-range\">", at_peaks, "</span>",
+                 "<span class=\"nm-cell-max\">at the peaks</span>")
+        } else {
+          "<span class=\"nm-cell-empty\">&ndash;</span>"
+        }
       } else if (n == 0L) {
         "<span class=\"nm-cell-empty\">0</span>"
       } else {
@@ -1921,7 +2013,7 @@ montage_report_formatters <- function(manifest = NULL,
         .montage_report_dom_id("nm-variant", g$analysis_id, cell$map_id),
         "\" data-nm-goto-group=\"",
         esc(g$analysis_id), "\" data-nm-goto-map=\"", esc(cell$map_id), "\">",
-        inner, "</a></td>"
+        thumb, "<span class=\"nm-cell-stats\">", inner, "</span></a></td>"
       )
     }, "")
     paste0("<tr><th scope=\"row\">",
@@ -1930,8 +2022,10 @@ montage_report_formatters <- function(manifest = NULL,
   }, "")
   cat(
     "<div class=\"nm-summary\">",
-    "<p class=\"nm-summary-note\">Surviving ", unit,
-    " per map (largest |statistic| beneath). Select a cell to open that map.</p>",
+    "<p class=\"nm-summary-note\">",
+    if (has_thumbs) "Glass brain of each thresholded map with its surviving " else "Surviving ",
+    unit, " and largest |statistic|; for unthresholded maps, the range of values at those peaks.",
+    " Select a cell to open that map.</p>",
     "<div class=\"nm-table-wrap\"><table class=\"nm-table nm-summary-table\">",
     head, "<tbody>", paste(body, collapse = ""), "</tbody></table></div></div>\n\n",
     sep = ""
@@ -1999,21 +2093,41 @@ montage_report_formatters <- function(manifest = NULL,
 # dropped, and every status is OK; one line then says everything the table
 # would. Returns the shared N (numeric) or NULL.
 .montage_report_qc_uniform_n <- function(qc_tbl) {
+  n <- .montage_report_qc_ns(qc_tbl)
+  if (is.null(n) || length(n) != 1L) return(NULL)
+  n[[1L]]
+}
+
+# The N of each analysis when every map is OK, drops nobody and shares its
+# analysis's N; NULL otherwise. Named by analysis when there are several.
+.montage_report_qc_ns <- function(qc_tbl) {
   if (!.montage_report_qc_has_values(qc_tbl)) return(NULL)
   n <- if ("effective_n" %in% names(qc_tbl)) qc_tbl$effective_n else NA
-  if (any(is.na(n)) || length(unique(n)) != 1L) return(NULL)
+  if (any(is.na(n))) return(NULL)
   if (!all(qc_tbl$qc_status == "ok")) return(NULL)
   if ("dropped_n" %in% names(qc_tbl) &&
       any(!is.na(qc_tbl$dropped_n) & qc_tbl$dropped_n > 0)) return(NULL)
   if ("source_n" %in% names(qc_tbl) &&
       any(!is.na(qc_tbl$source_n) & qc_tbl$source_n != n)) return(NULL)
-  n[[1L]]
+  if (length(unique(n)) == 1L) return(n[[1L]])
+  analysis <- if ("analysis" %in% names(qc_tbl)) as.character(qc_tbl$analysis) else NULL
+  if (is.null(analysis) || anyNA(analysis)) return(NULL)
+  per <- tapply(n, factor(analysis, levels = unique(analysis)), unique, simplify = FALSE)
+  if (any(lengths(per) != 1L)) return(NULL)
+  unlist(per)
 }
 
 .montage_report_qc_line <- function(qc_tbl) {
-  n <- .montage_report_qc_uniform_n(qc_tbl)
+  n <- .montage_report_qc_ns(qc_tbl)
   if (is.null(n)) return(NULL)
   maps <- nrow(qc_tbl)
+  if (length(n) > 1L) {
+    shown <- vapply(unname(n), .montage_report_fmt_val, "")
+    # "Working-memory load (2-back > 0-back)" -> "Working-memory load".
+    who <- trimws(sub("\\s*\\([^()]*\\)\\s*$", "", names(n)))
+    return(paste0(paste0("N = ", shown, " (", who, ")", collapse = " \u00b7 "),
+                  " \u00b7 QC: ok for all ", maps, " maps (as supplied)"))
+  }
   paste0("N = ", .montage_report_fmt_val(n),
          if (maps > 1L) paste0(" for all ", maps, " maps") else "",
          " \u00b7 QC: ok (as supplied)")
@@ -2086,7 +2200,9 @@ montage_report_formatters <- function(manifest = NULL,
     overview,
     if (length(facts)) {
       paste0("<p class=\"nm-report-facts\">",
-             paste0("<span", ifelse(seq_along(facts) <= length(qc_parts), " class=\"nm-fact-qc\"", ""),
+             paste0("<span", ifelse(seq_along(facts) <= length(qc_parts),
+                                    ifelse(startsWith(facts, "QC:"), " class=\"nm-fact-qc nm-fact-status\"",
+                                           " class=\"nm-fact-qc\""), ""),
                     ">", esc(facts), "</span>",
                     collapse = "<span class=\"nm-sep\" aria-hidden=\"true\"> &middot; </span>"),
              "</p>")
@@ -2197,7 +2313,8 @@ montage_report_formatters <- function(manifest = NULL,
   # Analyses with shared variants already get the variant matrix.
   if (!is.null(.montage_report_shared_labels(groups, manifest))) {
     cat("# ", heading, "\n\n", sep = "")
-    .montage_report_emit_summary_matrix(groups, manifest, panels, layout, is_html)
+    .montage_report_emit_summary_matrix(groups, manifest, panels, layout, is_html,
+                                        figure_assets = figure_assets)
     return(invisible(TRUE))
   }
   if (is.null(groups)) {
@@ -2554,6 +2671,11 @@ montage_report_formatters <- function(manifest = NULL,
   n <- same("n")
   sentences <- character(0)
   refs <- list()
+  # Topic of each sentence, for the paragraphed view (run-in heads).
+  topics <- character(0)
+  mark <- function(name) {
+    topics <<- c(topics, rep(name, length(sentences) - length(topics)))
+  }
 
   # Inputs.
   what <- paste0(
@@ -2587,14 +2709,36 @@ montage_report_formatters <- function(manifest = NULL,
     note = if (!is.null(prov$package_source) && !is.na(prov$package_source)) prov$package_source else NA_character_
   )))
 
-  # Threshold and extent apply to the rendered domain.
+  if (.montage_report_qc_has_values(rd$qc)) {
+    sentences <- c(sentences, paste0(
+      "QC status \"ok\" means a map reports its N and drops no subjects; N is taken as supplied ",
+      "in the manifest, not recomputed from the images."))
+  }
+  mark("Data")
+  # Threshold and extent apply to the rendered domain. Only thresholded maps
+  # carry a rule; unthresholded companions (estimate, SE) must not hide it.
   has_volume <- any(vapply(panels, function(pn) !is.null(.montage_report_volume_meta(pn)), logical(1)))
-  thr <- same("effective_threshold")
-  tail <- same("effective_tail")
-  k <- same("effective_min_cluster_size")
-  conn <- same("effective_connectivity")
-  fixed <- "threshold" %in% names(manifest) && all(!is.na(manifest$threshold))
-  q <- same("effective_q")
+  mode <- if ("effective_display_mode" %in% names(manifest)) {
+    as.character(manifest$effective_display_mode)
+  } else {
+    rep("thresholded", n_maps)
+  }
+  thr_rows <- which(mode == "thresholded")
+  n_unthr <- n_maps - length(thr_rows)
+  same_thr <- function(field) {
+    if (!length(thr_rows) || !field %in% names(manifest)) return(NULL)
+    v <- manifest[[field]][thr_rows]
+    if (is.list(v)) return(NULL)
+    u <- unique(v)
+    if (length(u) == 1L && !is.na(u)) u else NULL
+  }
+  thr <- same_thr("effective_threshold")
+  tail <- same_thr("effective_tail")
+  k <- same_thr("effective_min_cluster_size")
+  conn <- same_thr("effective_connectivity")
+  fixed <- "threshold" %in% names(manifest) && length(thr_rows) &&
+    all(!is.na(manifest$threshold[thr_rows]))
+  q <- same_thr("effective_q")
   p <- if (!is.null(policy)) policy$p else NULL
   if (!is.null(thr) && !is.null(tail)) {
     rule <- switch(as.character(tail),
@@ -2602,7 +2746,8 @@ montage_report_formatters <- function(manifest = NULL,
                    negative = paste0(sym, " \u2264 \u2212", fmt(thr), " (negative tail)"),
                    paste0("|", sym, "| \u2265 ", fmt(thr), " (two-sided)"))
     how <- if (fixed) {
-      if (has_volume) "a fixed voxelwise threshold of " else "a fixed value threshold of "
+      if (has_volume) "a fixed, uncorrected voxelwise threshold of " else
+        "a fixed, uncorrected value threshold of "
     } else if (!is.null(q)) {
       paste0("Benjamini\u2013Hochberg FDR q = ", format(signif(q, 3), scientific = FALSE, trim = TRUE), " per map, i.e. ")
     } else if (is.numeric(p) && length(p) == 1L) {
@@ -2611,16 +2756,27 @@ montage_report_formatters <- function(manifest = NULL,
     } else {
       ""
     }
-    s <- paste0(if (has_volume) "Volume maps" else "Surface values", " were thresholded at ", how, rule)
+    what_thr <- if (n_unthr > 0L) {
+      paste0(if (has_volume) "Thresholded volume maps (" else "Thresholded surface maps (",
+             fmt(length(thr_rows)), " of ", fmt(n_maps), ")")
+    } else if (has_volume) "Volume maps" else "Surface values"
+    s <- paste0(what_thr, " were thresholded at ", how, rule)
     if (has_volume && !is.null(k) && !is.null(conn)) {
       s <- paste0(s, ", and clusters smaller than ", fmt(k), " voxels (",
-                  sub("-connect$", "-connectivity", conn), ") were removed")
+                  sub("-connect$", "-connectivity", conn),
+                  ") were removed from display (an extent filter, not cluster-level inference)")
     }
     sentences <- c(sentences, paste0(s, "; no further correction was applied in the report."))
+    if (n_unthr > 0L) {
+      sentences <- c(sentences, paste0(
+        "The other ", fmt(n_unthr), if (n_unthr == 1L) " map is" else " maps are",
+        " shown unthresholded."))
+    }
   } else {
     sentences <- c(sentences, "Thresholds differ by map and are stated in each map's specification line.")
   }
 
+  mark("Thresholding")
   # Colour cap.
   caps <- unlist(lapply(panels, function(pn) {
     vm <- .montage_report_volume_meta(pn)
@@ -2644,19 +2800,54 @@ montage_report_formatters <- function(manifest = NULL,
       pct <- paste0(fmt(round(100 * qtile, 1)), "th percentile")
       pooled <- length(policy$cap_within %||% character()) > 0L ||
         identical(policy$cap_scope %||% "quantity", "quantity")
-      sentences <- c(sentences, paste0(
-        "Colour scales saturate at ",
-        if (length(uniq) == 1L) paste0(pm, fmt(uniq)) else
-          paste0(pm, fmt(min(uniq)), "\u2013", fmt(max(uniq))),
-        ", the ", pct, " of suprathreshold |", sym, "|",
-        if (pooled && length(uniq) == 1L && n_maps > 1L) " pooled across all maps of the same statistic" else
-          if (pooled) " pooled within each group of comparable maps" else " of each map",
-        if (!is.null(policy$cap_floor)) paste0(" (at least ", fmt(policy$cap_floor), ")") else "",
-        "."
-      ))
+      # One cap per quantity: thresholded statistics and unthresholded
+      # companions (estimate, SE) have different units and must not share a
+      # range in the text.
+      cap_of <- function(id) {
+        vm <- .montage_report_volume_meta(panels[[id]])
+        v <- if (!is.null(vm)) suppressWarnings(as.numeric(vm$cap)) else NA
+        if (length(v) == 1L && is.finite(v)) v else NA_real_
+      }
+      ids <- as.character(manifest$map_id)
+      cap_by_row <- vapply(ids, cap_of, numeric(1))
+      signed_by_row <- vapply(ids, function(id) {
+        isTRUE((.montage_report_volume_meta(panels[[id]]) %||% list())$signed %||% TRUE)
+      }, logical(1))
+      is_thr <- mode == "thresholded"
+      thr_caps <- unique(round(cap_by_row[is_thr & is.finite(cap_by_row)], 1))
+      s <- character()
+      if (length(thr_caps)) {
+        pm_t <- if (any(signed_by_row[is_thr])) "\u00b1" else ""
+        s <- paste0(
+          "Colour scales saturate at ",
+          if (length(thr_caps) == 1L) paste0(pm_t, fmt(thr_caps)) else
+            paste0(pm_t, fmt(min(thr_caps)), "\u2013", fmt(max(thr_caps))),
+          if (n_unthr > 0L) " for the thresholded maps" else "",
+          ", the ", pct, " of suprathreshold |", sym, "|",
+          if (pooled && length(thr_caps) == 1L && sum(is_thr) > 1L) " pooled across all maps of the same statistic" else
+            if (pooled) " pooled within each group of comparable maps" else " of each map",
+          if (!is.null(policy$cap_floor)) paste0(" (at least ", fmt(policy$cap_floor), ")") else "")
+      }
+      other <- which(!is_thr & is.finite(cap_by_row))
+      if (length(other)) {
+        lab <- if ("label" %in% names(manifest)) as.character(manifest$label) else ids
+        parts <- vapply(unique(lab[other]), function(l) {
+          rows <- other[lab[other] == l]
+          v <- unique(round(cap_by_row[rows], 2))
+          pm_o <- if (any(signed_by_row[rows])) "\u00b1" else ""
+          paste0(tolower(substr(l, 1L, 1L)), substring(l, 2L), " ",
+                 if (length(v) == 1L) paste0(pm_o, fmt(v)) else
+                   paste0(pm_o, fmt(min(v)), "\u2013", fmt(max(v))))
+        }, "")
+        s <- paste0(s, if (length(s)) "; unthresholded maps at " else
+          "Colour scales saturate at ", .montage_report_and(parts),
+          ", the ", pct, " of their displayed |values|")
+      }
+      if (length(s)) sentences <- c(sentences, paste0(s, "."))
     }
   }
 
+  mark("Colour scales")
   # Slices.
   slice_sets <- lapply(panels, function(pn) {
     l <- .montage_report_volume_meta(pn)$slice_labels
@@ -2704,6 +2895,12 @@ montage_report_formatters <- function(manifest = NULL,
     selection <- selection[names(slice_sets)]
     selection_text <- if (length(selection) && all(selection == "explicit")) {
       ", at user-supplied slice indices"
+    } else if (length(selection) && all(selection == "extent")) {
+      paste0(", spaced in equal whole-voxel steps across the full ", plane,
+        " extent of the reported (suprathreshold, extent-filtered) clusters, so every tabulated peak",
+        " lies within half a step of a slice",
+        if (shared) "; related maps share the slice set of their thresholded maps" else "",
+        if (!is.null(labelling)) "; each thresholded figure tags its clusters' peaks (P1, N1, ...) on the nearest slice, muted when the peak lies off that slice" else "")
     } else if (length(selection) && all(selection == "automatic")) {
       paste0(", spaced in equal whole-voxel steps and centred within the 5th\u201395th percentile range of the",
         " displayed (suprathreshold, extent-filtered) voxels' ", plane, " positions",
@@ -2729,25 +2926,48 @@ montage_report_formatters <- function(manifest = NULL,
       ", each map at its own voxel positions without resampling."
     ))
   }
+  mark("Volume figures")
+  # One sentence per distinct surface method: maps rendered the same way share
+  # it, so the paragraph states each fact once.
+  surface_text <- character(0)
+  surface_label <- character(0)
   for (i in seq_len(nrow(manifest))) {
     row <- manifest[i, , drop = FALSE]
     panel <- panels[[as.character(row$map_id[[1L]])]]
     if (!is.list(panel) || is.null(panel$surface_image)) next
-    sentences <- c(sentences, paste0(as.character(row$label[[1L]]), ": ",
-      .montage_report_surface_text(row, panel, detailed = TRUE,
-        fallback = rd$surface_method)))
+    surface_text <- c(surface_text, .montage_report_surface_text(
+      row, panel, detailed = TRUE, fallback = rd$surface_method))
+    surface_label <- c(surface_label, as.character(row$label[[1L]]))
   }
+  for (txt in unique(surface_text)) {
+    who <- unique(surface_label[surface_text == txt])
+    lead <- if (length(unique(surface_text)) == 1L) {
+      if (length(surface_text) > 1L) "Surface figures" else who
+    } else {
+      .montage_report_and(who)
+    }
+    sentences <- c(sentences, paste0(lead, ": ", txt))
+  }
+  mark("Surface figures")
   has_glance <- nrow(manifest) >= 2L && any(vapply(panels, function(pn) {
     is.list(pn) && !is.null(pn$summary_image)
   }, logical(1)))
   if (has_glance) {
+    matrix_view <- length(rd$groups) > 0L && !is.null(tryCatch(
+      .montage_report_shared_labels(rd$groups, manifest), error = function(e) NULL))
     sentences <- c(sentences, paste0(
-      "The glance thumbnails are maximum-|", sym, "| projections (glass brain) of each map's displayed voxels ",
-      "in sagittal, coronal and axial views, using each map's colour scale; ",
-      "an opposite-sign effect behind a stronger one is hidden."
+      "The glance thumbnails are maximum-|", sym, "| projections (glass brain) of each ",
+      if (matrix_view && n_unthr > 0L) "thresholded " else "",
+      "map's displayed voxels in sagittal, coronal and axial views, using each map's colour scale; ",
+      "an opposite-sign effect behind a stronger one is hidden",
+      if (matrix_view && n_unthr > 0L) {
+        "; unthresholded maps instead give the range of their values at the analysis's tabulated peaks, by sign"
+      } else "",
+      "."
     ))
   }
 
+  mark("Results at a glance")
   # Labels.
   if (!is.null(labelling) && length(labelling$atlases)) {
     s <- paste0(
@@ -2775,6 +2995,7 @@ montage_report_formatters <- function(manifest = NULL,
     sentences <- c(sentences, paste0(s, "."))
   }
 
+  mark("Clusters and labels")
   # Software.
   sw <- prov$software
   if (!is.null(sw) && !is.na(sw) && nzchar(sw)) {
@@ -2788,8 +3009,19 @@ montage_report_formatters <- function(manifest = NULL,
       if (!is.null(prov$r_version)) paste0("; R ", prov$r_version) else "", "."
     ))
   }
+  mark("Software")
   refs <- refs[!duplicated(vapply(refs, function(r) as.character(r$short %||% ""), ""))]
-  list(text = paste(sentences, collapse = " "), references = refs)
+  topic_f <- factor(topics, levels = unique(topics))
+  paragraphs <- lapply(levels(topic_f), function(t) {
+    text <- paste(sentences[topics == t], collapse = " ")
+    # The run-in head already says "Software." / "Surface figures."
+    if (startsWith(text, paste0(t, ": "))) {
+      text <- substring(text, nchar(t) + 3L)
+    }
+    list(topic = t, text = text)
+  })
+  list(text = paste(sentences, collapse = " "), paragraphs = paragraphs,
+       references = refs)
 }
 
 .montage_report_reference_text <- function(r) {
@@ -2834,7 +3066,17 @@ montage_report_formatters <- function(manifest = NULL,
     "<div class=\"nm-methods-head\"><span class=\"nm-methods-note\">Generated from the report's settings; ",
     "edit freely.</span><button type=\"button\" class=\"nm-fig-action nm-methods-copy\" ",
     "data-nm-copy-target=\"nm-methods-copy\">Copy methods</button></div>",
-    "<div data-nm-copy-text id=\"nm-methods-copy\"><p class=\"nm-methods-text\">", esc(m$text), "</p>",
+    "<div data-nm-copy-text id=\"nm-methods-copy\">",
+    # One paragraph per topic with a run-in head; the copy is still the
+    # whole text, in order.
+    if (length(m$paragraphs) > 1L) {
+      paste0(vapply(m$paragraphs, function(pg) {
+        paste0("<p class=\"nm-methods-text\"><span class=\"nm-runin\">", esc(pg$topic),
+               ".</span> ", esc(pg$text), "</p>")
+      }, ""), collapse = "")
+    } else {
+      paste0("<p class=\"nm-methods-text\">", esc(m$text), "</p>")
+    },
     ref_html, "</div></div>\n\n",
     sep = ""
   )

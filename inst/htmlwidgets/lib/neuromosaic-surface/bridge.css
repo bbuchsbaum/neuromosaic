@@ -474,5 +474,11 @@
 }
 .nm-sv-stage:focus-visible { outline: 2px solid var(--nm-sv-accent); outline-offset: 2px; }
 
+/* Screen-reader-only text (also defined by the report stylesheet). */
+.nm-view-router .nm-sr-only {
+  clip: rect(0, 0, 0, 0); clip-path: inset(50%); height: 1px; overflow: hidden;
+  position: absolute; white-space: nowrap; width: 1px;
+}
+
 /* The surface-type switch sits before the views and leads the toolbar. */
 .nm-sv-surfaces .nm-sv-surface { font-weight: 500; }
