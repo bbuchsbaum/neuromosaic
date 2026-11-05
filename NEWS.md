@@ -28,5 +28,6 @@
 * Captions no longer mention clusters on unthresholded maps or print internal
   palette identities, legends never repeat units ("z (z)"), and colour caps
   keep a meaningful second decimal (4.25, not 4.2).
-* Requires the surfview 3.2.0 runtime bundled by neurosurf 0.1.0.9001 and
-  neuroatlas 0.2.0.9001; older versions fall back to the previous displays.
+* Requires the surfview 3.2.0 runtime bundled by neurosurf 0.1.0.9002 (whose
+  dependency label, recorded in report provenance, names that version) and
+  neuroatlas 0.2.0.9001.

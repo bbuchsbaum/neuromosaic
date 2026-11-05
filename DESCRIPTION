@@ -31,7 +31,7 @@ Imports:
     methods,
     neuroatlas (>= 0.2.0.9001),
     neuroim2 (>= 0.19.0.9000),
-    neurosurf (>= 0.1.0.9001),
+    neurosurf (>= 0.1.0.9002),
     rlang,
     scales,
     scico,
@@ -65,7 +65,7 @@ Remotes:
     bbuchsbaum/fmrigds,
     bbuchsbaum/neuroatlas@v0.2.0.9001,
     bbuchsbaum/neuroim2,
-    bbuchsbaum/neurosurf@v0.1.0.9001,
+    bbuchsbaum/neurosurf@v0.1.0.9002,
     bbuchsbaum/neurotabs
 VignetteBuilder: knitr
 Config/testthat/edition: 3
