@@ -65,7 +65,7 @@ Remotes:
     bbuchsbaum/fmrigds,
     bbuchsbaum/neuroatlas,
     bbuchsbaum/neuroim2,
-    bbuchsbaum/neurosurf@b8bb05d01dcf7360141850ad56b173d7df2f8079,
+    bbuchsbaum/neurosurf@798483c9e09515c04c1d201c38a0439507736358,
     bbuchsbaum/neurotabs
 VignetteBuilder: knitr
 Config/testthat/edition: 3
