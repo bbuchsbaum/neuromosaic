@@ -2302,6 +2302,9 @@ render_montage_report <- function(manifest,
   # surface_args are already in payload; this version prevents a new release
   # from reusing pixels produced under an older default contract.
   payload$.surface_contract_version <- 6L
+  # neurosurf draws the static strips: a new release (renderer, anatomy
+  # style, runtime) must not reuse pixels drawn by the previous one.
+  payload$.neurosurf_version <- as.character(utils::packageVersion("neurosurf"))
   substr(rlang::hash(payload), 1, 16)
 }
 
