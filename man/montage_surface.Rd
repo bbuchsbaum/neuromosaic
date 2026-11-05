@@ -29,7 +29,7 @@ montage_surface(
   height = NULL,
   fallback = NULL,
   alt_text = NULL,
-  anatomy_style = c("auto", "continuous", "binary", "none"),
+  anatomy_style = c("auto", "soft", "continuous", "binary", "none"),
   anatomy_midpoint = NULL,
   anatomy_invert = NULL,
   variants = NULL,
@@ -114,7 +114,8 @@ remain present separately in the report.}
 analysis group.}
 
 \item{anatomy_style}{Folding contrast: auto selects binary for the
-freesurfer preset and continuous otherwise; none disables the underlay.}
+freesurfer preset and `"soft"` (a smooth gyral/sulcal two-tone matching
+the static figure) otherwise; none disables the underlay.}
 
 \item{anatomy_midpoint, anatomy_invert}{Anatomical dark/light boundary and
 polarity passed to [neurosurf::normalize_surface_anatomy()].}

@@ -1664,11 +1664,10 @@
     if (typeof viewer.requestRender === "function") viewer.requestRender();
   }
 
-  // Sulcal shading as in the static strip, whose cortex runs from grey 0.72
-  // (sulci) to 0.90 (gyri) in sRGB. surfview treats curvature greys as linear
-  // light, so the same greys are 0.48-0.79 here (brightness 0.635 +/- 0.155);
-  // the stock preset (0.57-0.89 linear) renders nearly flat once encoded.
-  var REPORT_CURVATURE = { brightness: 0.76, contrast: 0.18, smoothness: 0.2 };
+  // Display greys 0.66 (sulci) to 0.90 (gyri), the static figure's soft
+  // two-tone. surfview >= 3 maps curvature straight to display (sRGB) grey:
+  // brightness is the midpoint and contrast the sulcus-to-gyrus span.
+  var REPORT_CURVATURE = { brightness: 0.78, contrast: 0.24, smoothness: 0.2 };
 
   // Every preset gets the report's curvature greys and overlay lighting: the
   // stock presets render the folding nearly flat under an overlay, and lit

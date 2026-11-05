@@ -43,7 +43,8 @@
 #'   with one value per vertex. By default anatomy is resolved from the atlas
 #'   or matching white geometry, as in the static renderer.
 #' @param anatomy_style Folding contrast: auto selects binary for the
-#'   freesurfer preset and continuous otherwise; none disables the underlay.
+#'   freesurfer preset and `"soft"` (a smooth gyral/sulcal two-tone matching
+#'   the static figure) otherwise; none disables the underlay.
 #' @param anatomy_midpoint,anatomy_invert Anatomical dark/light boundary and
 #'   polarity passed to [neurosurf::normalize_surface_anatomy()].
 #' @param projection Whether volumetric manifest rows should be projected
@@ -130,7 +131,7 @@ montage_surface <- function(geometry = NULL,
                             height = NULL,
                             fallback = NULL,
                             alt_text = NULL,
-                            anatomy_style = c("auto", "continuous", "binary", "none"),
+                            anatomy_style = c("auto", "soft", "continuous", "binary", "none"),
                             anatomy_midpoint = NULL,
                             anatomy_invert = NULL,
                             variants = NULL,
@@ -1510,8 +1511,12 @@ montage_surface <- function(geometry = NULL,
   if (style == "none") return(list(curvature = NULL, provenance = list(style = "none")))
   if (style == "auto") {
     style <- surface_args$anatomy_style %||%
-      if (surface$preset == "freesurfer") "binary" else "continuous"
+      if (surface$preset == "freesurfer") "binary" else "soft"
     if (style == "publication") style <- "continuous"
+  }
+  if (identical(style, "soft") &&
+      !"soft" %in% eval(formals(neurosurf::normalize_surface_anatomy)$style)) {
+    style <- "continuous"
   }
   metric <- surface$curvature %||% surface_args$anatomy_metric
   if (!is.null(metric)) {

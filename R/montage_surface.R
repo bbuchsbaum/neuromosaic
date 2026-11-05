@@ -49,8 +49,12 @@
 #' @param anatomy_metric_source Provenance label for an explicit anatomy metric.
 #' @param appearance Publication shading or FreeSurfer-style cortical contrast
 #'   for vertex overlays. The latter defaults to opaque heat colors.
-#' @param anatomy_style Continuous or binary folding contrast. NULL uses the
-#'   appearance default. These options apply to the CPU vertex renderer.
+#' @param anatomy_style Folding contrast for the CPU vertex renderer:
+#'   `"soft"` (the publication default; a smooth gyral/sulcal two-tone that
+#'   matches the interactive surface), `"continuous"`, `"binary"` (the
+#'   FreeSurfer default) or the legacy `"publication"` shading. `NULL` uses the
+#'   appearance default; `"soft"` falls back to `"publication"` with a
+#'   neurosurf that lacks it.
 #' @param anatomy_midpoint,anatomy_invert Anatomical boundary and polarity;
 #'   see [neurosurf::normalize_surface_anatomy()].
 #' @param medial_wall Medial-wall display policy.
@@ -199,9 +203,13 @@ surf_montage <- function(stat = NULL,
   on.exit(.nm_font_env$force_plain <- old_plain, add = TRUE)
   appearance <- match.arg(appearance)
   if (is.null(anatomy_style)) {
-    anatomy_style <- if (appearance == "freesurfer") "binary" else "publication"
+    anatomy_style <- if (appearance == "freesurfer") "binary" else "soft"
   }
-  anatomy_style <- match.arg(anatomy_style, c("publication", "continuous", "binary"))
+  anatomy_style <- match.arg(anatomy_style, c("soft", "publication", "continuous", "binary"))
+  if (identical(anatomy_style, "soft") &&
+      !"soft" %in% eval(formals(neurosurf::render_surface_rgba)$anatomy_style)) {
+    anatomy_style <- "publication"
+  }
   if (appearance == "freesurfer") {
     if (missing(overlay_alpha)) overlay_alpha <- 1
     if (missing(overlay_palette)) overlay_palette <- neurosurf::surface_heat_colors(signed)
@@ -541,7 +549,15 @@ surf_montage <- function(stat = NULL,
         anatomy_style = anatomy_style,
         anatomy_midpoint = anatomy_midpoint,
         anatomy_invert = anatomy_invert,
-        anatomy_range = if (appearance == "freesurfer") c(0.25, 0.75) else c(0.72, 0.90),
+        # Display greys for sulci and gyri. The soft two-tone spans the same
+        # 0.66-0.90 the interactive surface draws (bridge REPORT_CURVATURE).
+        anatomy_range = if (appearance == "freesurfer") {
+          c(0.25, 0.75)
+        } else if (identical(anatomy_style, "soft")) {
+          c(0.66, 0.90)
+        } else {
+          c(0.72, 0.90)
+        },
         overlay_alpha_ramp = if (appearance == "freesurfer" || nm_palette) {
           0
         } else {

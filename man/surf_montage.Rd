@@ -185,8 +185,12 @@ separate from the panel `title`. `NULL` defaults to `"Statistic"`.}
 \item{appearance}{Publication shading or FreeSurfer-style cortical contrast
 for vertex overlays. The latter defaults to opaque heat colors.}
 
-\item{anatomy_style}{Continuous or binary folding contrast. NULL uses the
-appearance default. These options apply to the CPU vertex renderer.}
+\item{anatomy_style}{Folding contrast for the CPU vertex renderer:
+`"soft"` (the publication default; a smooth gyral/sulcal two-tone that
+matches the interactive surface), `"continuous"`, `"binary"` (the
+FreeSurfer default) or the legacy `"publication"` shading. `NULL` uses the
+appearance default; `"soft"` falls back to `"publication"` with a
+neurosurf that lacks it.}
 
 \item{anatomy_midpoint, anatomy_invert}{Anatomical boundary and polarity;
 see [neurosurf::normalize_surface_anatomy()].}
