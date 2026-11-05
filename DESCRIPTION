@@ -29,9 +29,9 @@ Imports:
     jsonlite,
     knitr,
     methods,
-    neuroatlas (>= 0.1.0.9006),
+    neuroatlas (>= 0.2.0.9001),
     neuroim2 (>= 0.19.0.9000),
-    neurosurf (>= 0.1.0),
+    neurosurf (>= 0.1.0.9001),
     rlang,
     scales,
     scico,
@@ -63,9 +63,9 @@ Suggests:
     xml2
 Remotes:
     bbuchsbaum/fmrigds,
-    bbuchsbaum/neuroatlas,
+    bbuchsbaum/neuroatlas@v0.2.0.9001,
     bbuchsbaum/neuroim2,
-    bbuchsbaum/neurosurf@b8bb05d01dcf7360141850ad56b173d7df2f8079,
+    bbuchsbaum/neurosurf@v0.1.0.9001,
     bbuchsbaum/neurotabs
 VignetteBuilder: knitr
 Config/testthat/edition: 3
