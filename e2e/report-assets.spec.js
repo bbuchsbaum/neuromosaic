@@ -91,7 +91,7 @@ test("a staged surface bundle carries its runtime and typed arrays", async ({ pa
   await page.goto(origin + "report-assets/relocated-surface/interactive-surface-bundle.html");
   expect(runtimeRequests).toHaveLength(0);
   const host = page.locator('[data-nm-surface-analysis="surface-interactive"]');
-  const router = host.locator('xpath=preceding-sibling::*[@data-nm-view-router][1]');
+  const router = host.locator('xpath=preceding-sibling::*[descendant-or-self::*[@data-nm-view-router]][1]/descendant-or-self::*[@data-nm-view-router]');
   await router.getByRole("radio", { name: "3D surface", exact: true }).check();
   await expect(host).toHaveAttribute("data-nm-surface-ready", "true", { timeout: 20000 });
   await expect(host.locator(".nm-surface-widget canvas")).toBeVisible();

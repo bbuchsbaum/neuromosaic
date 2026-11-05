@@ -780,6 +780,10 @@ document.addEventListener('DOMContentLoaded', function () {
     window.scrollBy({ top: delta, behavior: reduceMotion() ? 'auto' : 'smooth' });
   };
   var apply = function (id, view, fromUser) {
+    // Only a routed analysis takes a view: on a page without a router the
+    // viewer's own show/hide button is the reader's way back in, and
+    // data-nm-view would hide it.
+    if (!routerFor(id)) return;
     var art = articleFor(id);
     if (!art) return;
     var previous = art.getAttribute('data-nm-view');

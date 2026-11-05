@@ -234,6 +234,51 @@
     return out;
   }
 
+  // Opacity multiplier for `value` under a magnitude-opacity spec
+  // {low, high ("range" or number), gamma, floor}; mirrors surfview's
+  // DataLayer magnitudeOpacity so slices and surface fade identically.
+  // Per sign: start = max(low, threshold edge), end = colour-range end;
+  // 0 below start, else floor' + (1 - floor') * t^gamma, floor' = floor
+  // only when start > 0.
+  function magnitudeAlpha(value, spec, range, threshold) {
+    var v = Number(value);
+    if (!spec || !Number.isFinite(v)) return spec ? 0 : 1;
+    var positive = v >= 0;
+    var m = Math.abs(v);
+    var t = Array.isArray(threshold) ? threshold.map(Number) : [0, 0];
+    var edge = t[1] > t[0] ? Math.max(0, positive ? t[1] : -t[0]) : 0;
+    var start = Math.max(Number(spec.low) || 0, edge);
+    if (m < start || m === 0) return 0;
+    var end;
+    if (spec.high === undefined || spec.high === null || spec.high === "range") {
+      var side = positive ? Number(range[1]) : -Number(range[0]);
+      end = side > 0 ? side : Math.max(Math.abs(Number(range[0])), Math.abs(Number(range[1])));
+    } else {
+      end = Number(spec.high);
+    }
+    if (!(end > start)) return 1;
+    var floor = start > 0 ? (Number(spec.floor) || 0) : 0;
+    var gamma = Number(spec.gamma) > 0 ? Number(spec.gamma) : 1;
+    return floor + (1 - floor) * Math.pow(Math.min(1, (m - start) / (end - start)), gamma);
+  }
+
+  // RGBA stops sampled over `range` with magnitude-graded alpha. `colorAt`
+  // returns the unmasked [r, g, b(, a)] colour for a value (0..1 channels).
+  function gradedStops(colorAt, spec, range, threshold, count) {
+    var n = Math.max(2, Math.floor(Number(count) || 256));
+    var lo = Number(range[0]), hi = Number(range[1]);
+    var out = new Array(n);
+    for (var i = 0; i < n; i += 1) {
+      // Each stop covers [lo + i w, lo + (i + 1) w); sample its centre so the
+      // nearest-stop lookup assigns every value the alpha of its own bin.
+      var v = lo + (hi - lo) * (i + 0.5) / n;
+      var c = colorAt(v) || [0, 0, 0, 1];
+      var a = c.length > 3 ? Number(c[3]) : 1;
+      out[i] = [Number(c[0]), Number(c[1]), Number(c[2]), a * magnitudeAlpha(v, spec, range, threshold)];
+    }
+    return out;
+  }
+
   // Classify raw/displayed voxels by support, live threshold and extent.
   function readoutState(shownValue, rawValue, threshold, minClusterSize) {
     var shown = shownValue === null || shownValue === undefined ? NaN : Number(shownValue);
@@ -362,6 +407,8 @@
   }
 
   return {
+    magnitudeAlpha: magnitudeAlpha,
+    gradedStops: gradedStops,
     reportNumber: reportNumber,
     readoutState: readoutState,
     wheelAction: wheelAction,

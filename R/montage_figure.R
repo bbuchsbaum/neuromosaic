@@ -334,7 +334,15 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
 # Tick label: whole numbers stay whole, otherwise one decimal.
 .nm_format_tick <- function(x) {
   vapply(x, function(v) {
-    digits <- if (abs(v - round(v)) < 0.05) 0L else 1L
+    # Three significant digits, as the interactive viewers print values
+    # (reportNumber): 17.85 -> 17.9, 4.25 stays 4.25, 0.004 is not 0. Only
+    # the decimals that value needs are shown (2.50 -> 2.5, 20 -> 20).
+    if (!is.finite(v) || v == 0) return(.nm_format_signed(v, digits = 0L, plus = FALSE))
+    sv <- signif(v, 3)
+    digits <- 0L
+    while (digits < 6L && abs(round(sv, digits) - sv) > 1e-9 * max(1, abs(sv))) {
+      digits <- digits + 1L
+    }
     .nm_format_signed(v, digits = digits, plus = FALSE)
   }, character(1))
 }
@@ -535,7 +543,8 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
 # so edges never fade into the sub-threshold band.
 .nm_composite_slice <- function(bg_img, stat_img, window, palette, limits,
                                 threshold, tail, continuous, f = 4L,
-                                alpha = 0.95, layers = FALSE, out = NULL) {
+                                alpha = 0.95, layers = FALSE, out = NULL,
+                                magnitude_opacity = NULL) {
   # `out` = c(rows, cols) composites straight at the shipped tile size (the
   # report figures do), so nothing resamples the tile afterwards.
   out <- as.integer(out %||% round(dim(bg_img) * f))
@@ -615,6 +624,18 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
       ov_value[take] <- val[take]
       best_cover[take] <- cov[take]
     }
+  }
+  if (!is.null(magnitude_opacity)) {
+    # Fade by |value| with the same rule the interactive views apply.
+    fade <- is.finite(ov_value) & ov_alpha > 0
+    mask <- if (continuous) c(0, 0) else switch(
+      tail, positive = c(-Inf, threshold), negative = c(-threshold, Inf),
+      c(-threshold, threshold)
+    )
+    mask[!is.finite(mask)] <- 0
+    ov_alpha[fade] <- ov_alpha[fade] * .montage_magnitude_alpha(
+      ov_value[fade], magnitude_opacity, limits, mask
+    )
   }
   show <- ov_alpha > 0
   if (any(show)) {
@@ -733,7 +754,8 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
                                 fontsize = 11, theme = .nm_figure_theme(),
                                 scale = 1, note_below = FALSE,
                                 title_above = FALSE,
-                                ink = NULL, muted = NULL) {
+                                ink = NULL, muted = NULL,
+                                magnitude_opacity = NULL) {
   fontsize <- fontsize * scale
   ink <- ink %||% theme$ink
   muted <- muted %||% theme$note %||% theme$muted
@@ -759,9 +781,20 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
   bar_h <- bp(11)
   bar_y <- grid::unit(1, "npc") - 0.5 * bar_h
   children <- list()
+  # With a magnitude fade the key paints each value as the figure does: its
+  # colour blended toward the neutral gap tone by its opacity.
+  fade_to <- if (!is.null(magnitude_opacity)) {
+    grDevices::col2rgb(theme$gap_fill %||% "#E2E2DE")[, 1L] / 255
+  }
   for (vals in segs) {
     rgb <- .nm_value_rgb(vals, palette, limits, thr)
-    cols <- grDevices::rgb(rgb[, 1L], rgb[, 2L], rgb[, 3L])
+    if (!is.null(fade_to)) {
+      w <- .montage_magnitude_alpha(vals, magnitude_opacity, limits,
+                                    if (thr > 0) c(-thr, thr) else c(0, 0))
+      rgb <- rgb * w + matrix(fade_to, nrow(rgb), 3L, byrow = TRUE) * (1 - w)
+    }
+    cols <- grDevices::rgb(pmin(pmax(rgb[, 1L], 0), 1), pmin(pmax(rgb[, 2L], 0), 1),
+                           pmin(pmax(rgb[, 3L], 0), 1))
     x0 <- xs(min(vals))
     w <- xs(max(vals)) - x0
     children[[length(children) + 1L]] <- grid::rasterGrob(
@@ -966,7 +999,8 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
                               width_px = 1760,
                               res = 144,
                               alpha = 0.95,
-                              peak_labels = NULL) {
+                              peak_labels = NULL,
+                              magnitude_opacity = NULL) {
   space <- neuroim2::space(background)
   frame <- .nm_axis_frame(space)
   bg_arr <- as.array(background)
@@ -1014,7 +1048,7 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
     sources = sources,
     render = list(window = window, palette = palette, limits = limits,
                   threshold = threshold, tail = tail, continuous = continuous,
-                  alpha = alpha),
+                  alpha = alpha, magnitude_opacity = magnitude_opacity),
     tile_cache = new.env(parent = emptyenv()),
     labels = vapply(slices, `[[`, character(1), "label"),
     aspect = aspect,
@@ -1028,7 +1062,7 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
         min(finite_stat) < limits[[1L]] - 1e-9,
       over_high = length(finite_stat) > 0 &&
         max(finite_stat) > limits[[2L]] + 1e-9,
-      title = legend_text, note = note
+      title = legend_text, note = note, magnitude_opacity = magnitude_opacity
     )
   )
   spec <- .nm_volume_layout(parts, ncol = ncol, width_px = width_px,
@@ -1247,6 +1281,7 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
     key_args$tail, key_args$continuous,
     over_low = key_args$over_low, over_high = key_args$over_high,
     title = key_args$title, note = key_args$note, fontsize = fs,
+    magnitude_opacity = key_args$magnitude_opacity,
     theme = th, note_below = TRUE, title_above = geo$title_above
   )
   key_top <- height_px - key_h + block$above
@@ -1279,7 +1314,8 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
   src <- parts$sources[[i]]
   tile <- .nm_composite_slice(
     src$bg, src$stat, rd$window, rd$palette, rd$limits, rd$threshold,
-    rd$tail, rd$continuous, alpha = rd$alpha, out = out
+    rd$tail, rd$continuous, alpha = rd$alpha, out = out,
+    magnitude_opacity = rd$magnitude_opacity
   )
   if (is.environment(cache)) cache[[key]] <- tile
   tile

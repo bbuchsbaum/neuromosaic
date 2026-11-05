@@ -112,7 +112,9 @@ test("map switching preserves map-local exploration and exact report resets", as
     "interactive_se"
   );
   await expect(palette).toHaveValue("Inferno");
-  await expect(host.getByText("Threshold", { exact: true })).toHaveCount(0);
+  // Unthresholded maps offer a threshold control that starts at zero.
+  await expect(host.getByText("Threshold", { exact: true })).toBeVisible();
+  await expect(host.getByRole("textbox", { name: "Threshold high" })).toHaveValue("0");
   await expect(host.getByText("Range", { exact: true })).toBeVisible();
   await expect(host.locator("[data-nm-volume-readout]")).toContainText(
     "Standard error"

@@ -70,3 +70,24 @@ test("non-finite and contradictory display states fail clearly", () => {
   assert.throws(() => display.resolve(spec({ tail: "upper" }), [-1, 1], maps),
     /Threshold tail/);
 });
+
+test("magnitude opacity matches the shared surface rule", () => {
+  const d = require("../../inst/htmlwidgets/lib/neuromosaic-volume/display.js");
+  const ramp = { low: 0, high: "range", gamma: 1, floor: 0.6 };
+  // Unthresholded: linear from zero to the range end, per sign.
+  assert.equal(d.magnitudeAlpha(0, ramp, [-4, 4], [0, 0]), 0);
+  assert.ok(Math.abs(d.magnitudeAlpha(2, ramp, [-4, 4], [0, 0]) - 0.5) < 1e-12);
+  assert.ok(Math.abs(d.magnitudeAlpha(-1, ramp, [-4, 4], [0, 0]) - 0.25) < 1e-12);
+  // Thresholded: floor at the edge, hidden below it.
+  assert.equal(d.magnitudeAlpha(1.5, ramp, [-4, 4], [-1, 2]), 0);
+  assert.ok(Math.abs(d.magnitudeAlpha(3, ramp, [-4, 4], [-1, 2]) - 0.8) < 1e-12);
+  // Knee and exponent (soft mode).
+  const soft = { low: 1, high: 3, gamma: 2, floor: 0 };
+  assert.equal(d.magnitudeAlpha(0.9, soft, [-5, 5], [0, 0]), 0);
+  assert.ok(Math.abs(d.magnitudeAlpha(2, soft, [-5, 5], [0, 0]) - 0.25) < 1e-12);
+  // No spec leaves colours untouched.
+  assert.equal(d.magnitudeAlpha(2, null, [-4, 4], [0, 0]), 1);
+  const stops = d.gradedStops(() => [1, 0, 0, 1], ramp, [-4, 4], [0, 0], 8);
+  assert.equal(stops.length, 8);
+  assert.ok(stops[0][3] > stops[3][3] && stops[7][3] > stops[4][3]);
+});

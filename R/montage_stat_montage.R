@@ -246,6 +246,13 @@ stat_montage <- function(bg,
     values[!spec$display_mask | !is.finite(values)] <- 0
   }
   note <- .stat_montage_figure_note(spec, legend)
+  cap <- max(abs(as.numeric(spec$limits)))
+  magnitude_opacity <- .montage_magnitude_opacity(
+    spec$alpha_mode,
+    threshold = if (continuous) 0 else spec$threshold,
+    cap = cap,
+    magnitudes = values
+  )
   .nm_volume_figure(
     background = spec$background,
     stat_values = values,
@@ -261,7 +268,8 @@ stat_montage <- function(bg,
     note = note,
     ncol = ncol,
     alpha = max(spec$alpha, 0.92),
-    peak_labels = peak_labels
+    peak_labels = peak_labels,
+    magnitude_opacity = magnitude_opacity
   )
 }
 

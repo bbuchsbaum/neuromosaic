@@ -133,6 +133,7 @@
 /* View switcher: a toolbar row under the canvas ----------------------------- */
 .nm-sv-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -149,7 +150,8 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.nm-sv-views {
+.nm-sv-views,
+.nm-sv-surfaces {
   display: flex;
   flex: 0 0 auto;
   gap: 2px;
@@ -163,7 +165,8 @@
   scrollbar-width: none;
 }
 .nm-sv-views::-webkit-scrollbar { display: none; }
-.nm-sv-view {
+.nm-sv-view,
+.nm-sv-surface {
   flex: none;
   height: 26px;
   padding: 0 10px;
@@ -175,7 +178,8 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.nm-sv-view:hover { background: var(--nm-sv-hover); color: var(--nm-sv-ink); }
+.nm-sv-view:hover, .nm-sv-surface:hover { background: var(--nm-sv-hover); color: var(--nm-sv-ink); }
+.nm-sv-surface[aria-pressed="true"],
 .nm-sv-view[aria-pressed="true"] { background: var(--nm-sv-raised); color: var(--nm-sv-ink); box-shadow: 0 1px 2px rgba(28, 34, 38, 0.14); font-weight: 600; }
 .nm-sv-view-sep { flex: none; width: 1px; margin: 5px 3px; background: var(--nm-sv-rule-strong); }
 
@@ -344,6 +348,7 @@
 
 /* Threshold modes ----------------------------------------------------------- */
 .nm-sv-sym { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; color: var(--nm-sv-ink-2); }
+.nm-sv-sym .nm-sv-threshold-slider { grid-column: 1 / -1; width: 100%; margin: 2px 0 0; accent-color: var(--nm-sv-accent); }
 .nm-sv-threshold[data-nm-surface-threshold-mode="symmetric"] .nm-sv-asym { display: none; }
 .nm-sv-threshold[data-nm-surface-threshold-mode="asymmetric"] .nm-sv-sym { display: none; }
 .nm-sv-mode-toggle { font-size: 11.5px; font-weight: 550; }
@@ -474,3 +479,6 @@
   clip: rect(0, 0, 0, 0); clip-path: inset(50%); height: 1px; overflow: hidden;
   position: absolute; white-space: nowrap; width: 1px;
 }
+
+/* The surface-type switch sits before the views and leads the toolbar. */
+.nm-sv-surfaces .nm-sv-surface { font-weight: 500; }

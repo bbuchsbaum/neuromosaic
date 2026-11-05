@@ -402,6 +402,90 @@
     api.ColorMap.presetMaps[REPORT_PALETTE] = colors.slice();
   }
 
+  // Fade the overlay by |value| (display.magnitude_opacity): rebuild the
+  // layer's colour map as RGBA stops whose alpha follows the live threshold
+  // and range. The ungraded colours are sampled from the reader's current
+  // colour map, so every palette choice fades the same way.
+  function syncMagnitudeOpacity(state) {
+    var map = currentMap(state);
+    var layer = overlayVolLayer(state);
+    var spec = map && map.display && map.display.magnitude_opacity;
+    if (!layer || !spec || !layer.colorMap) return;
+    var api = root.neuroimjs;
+    var range = layer.getRange().map(Number);
+    var threshold = layer.getThreshold().map(Number);
+    var current = layer.colorMap;
+    var base = current.__nmBase || current;
+    var key = thresholdKey(threshold) + "|" + thresholdKey(range) + "|" +
+      (base.name || "") + "|" + (state.paletteKey || "");
+    if (current.__nmGraded === key) return;
+    // An unmasked twin of the reader's colour map over the live range.
+    var sampler = new api.ColorMap(base.colors.slice(), {
+      range: range, threshold: [0, 0], name: base.name || "Custom"
+    });
+    var stops = root.NeuroMosaicVolumeDisplay.gradedStops(function (v) {
+      return sampler.getColor(v);
+    }, spec, range, threshold, 256);
+    var graded = new api.ColorMap(stops, {
+      range: range, threshold: threshold, name: base.name || "Custom"
+    });
+    graded.__nmBase = base;
+    graded.__nmGraded = key;
+    state.viewer.updateLayer(OVERLAY_LAYER_ID, { colormap: graded });
+  }
+
+  // Page-level display sync: one threshold and colour range per map across
+  // the slice viewer and the cortical surface. Reader edits are published to
+  // a shared store and a "nm-display-sync" event; each viewer applies them
+  // live, or when it next shows that map.
+  var SYNC_EVENT = "nm-display-sync";
+
+  function syncStore() {
+    root.__nmDisplaySync = root.__nmDisplaySync || {};
+    return root.__nmDisplaySync;
+  }
+
+  function syncKey(analysisId, mapId) {
+    return String(analysisId) + "\u0000" + String(mapId);
+  }
+
+  function publishDisplay(state) {
+    var layer = overlayVolLayer(state);
+    if (!layer || !state.currentMapId || state.applyingSync) return;
+    var entry = {
+      threshold: layer.getThreshold().map(Number),
+      range: layer.getRange().map(Number)
+    };
+    var key = syncKey(state.analysis.analysis_id, state.currentMapId);
+    var previous = syncStore()[key];
+    if (previous && samePair(previous.threshold, entry.threshold) &&
+        samePair(previous.range, entry.range)) return;
+    syncStore()[key] = entry;
+    document.dispatchEvent(new CustomEvent(SYNC_EVENT, {
+      detail: { analysisId: state.analysis.analysis_id, mapId: state.currentMapId,
+        threshold: entry.threshold, range: entry.range, source: "volume" }
+    }));
+  }
+
+  function applySyncedDisplay(state) {
+    var entry = state.currentMapId &&
+      syncStore()[syncKey(state.analysis.analysis_id, state.currentMapId)];
+    var layer = overlayVolLayer(state);
+    if (!entry || !layer || !state.controls) return;
+    if (samePair(layer.getThreshold().map(Number), entry.threshold) &&
+        samePair(layer.getRange().map(Number), entry.range)) return;
+    var current = copyControlState(state.controls.getState(OVERLAY_LAYER_ID));
+    current.threshold = entry.threshold.slice();
+    current.range = entry.range.slice();
+    state.applyingSync = true;
+    try {
+      state.controls.applyState(current);
+      applyExtent(state);
+    } finally {
+      state.applyingSync = false;
+    }
+  }
+
   function syncReportPalette(state, apply) {
     var map = currentMap(state);
     var layer = overlayVolLayer(state);
@@ -418,6 +502,11 @@
     if (state.controls && typeof state.controls.requestUpdate === "function") {
       state.controls.requestUpdate();
     }
+  }
+
+  function syncDisplay(state) {
+    syncReportPalette(state, true);
+    syncMagnitudeOpacity(state);
   }
 
   function mapDisplay(map, volume) {
@@ -729,7 +818,7 @@
         colormap: layer.colorMap
       });
     }
-    syncReportPalette(state, true);
+    syncDisplay(state);
     updateLegend(state);
     updateReadout(state);
   }
@@ -777,7 +866,9 @@
     var visible = [];
     if (requested.indexOf("threshold") >= 0) {
       visible.push("range");
-      if (map.display.mode === "thresholded") visible.push("threshold");
+      // Unthresholded maps get the threshold control too, starting at zero,
+      // so readers can hide weak values without leaving the viewer.
+      visible.push("threshold");
     }
     if (requested.indexOf("palette") >= 0) visible.push("colormap");
     if (requested.indexOf("opacity") >= 0) visible.push("opacity");
@@ -986,13 +1077,22 @@
     var line = state.clusterLine;
     if (!line) return;
     line.replaceChildren();
+    // Unthresholded maps make no cluster claim: without a reader threshold
+    // the line stays empty, and a reader threshold names a display region.
+    var map = currentMap(state);
+    var continuous = map && map.display && map.display.mode === "continuous";
+    var layer = overlayVolLayer(state);
+    var cut = layer ? layer.getThreshold().map(Number) : [0, 0];
+    if (continuous && !(cut[1] > cut[0])) return;
     var c = clusterAt(state, voxelOf(state, coord));
     if (!c) {
-      line.appendChild(el("span", "nm-volume-cluster-empty", "No suprathreshold cluster at the cursor"));
+      line.appendChild(el("span", "nm-volume-cluster-empty", continuous
+        ? "Below the display threshold at the cursor"
+        : "No suprathreshold cluster at the cursor"));
       return;
     }
     var fmtInt = function (n) { return Math.round(n).toLocaleString("en-US"); };
-    line.appendChild(el("span", "nm-volume-cluster-key", "Cluster"));
+    line.appendChild(el("span", "nm-volume-cluster-key", continuous ? "Connected values above the display threshold (descriptive)" : "Cluster"));
     line.appendChild(document.createTextNode(" "));
     var record = clusterRecord(state, c);
     if (record) {
@@ -1005,8 +1105,12 @@
       line.appendChild(name);
       line.appendChild(document.createTextNode(" "));
     }
-    line.appendChild(el("span", "nm-volume-cluster-size",
-      fmtInt(c.voxels) + " voxels \u00b7 " + fmtInt(c.mm3) + " mm\u00b3"));
+    // A display threshold on an unthresholded map defines no tested region,
+    // so its extent is not reported (only the way to its peak).
+    if (!continuous) {
+      line.appendChild(el("span", "nm-volume-cluster-size",
+        fmtInt(c.voxels) + " voxels \u00b7 " + fmtInt(c.mm3) + " mm\u00b3"));
+    }
     line.appendChild(document.createTextNode(" "));
     var atPeak = voxelOf(state, coord).join() === voxelOf(state, c.peakWorld).join();
     var peakText = formatPeak(c.peak, record);
@@ -1335,9 +1439,13 @@
     var values = [];
     for (var i = 0; i <= n; i += 1) values.push(lo + (span * i) / n);
     var colors = layer.colorMap.getColors(values);
+    // With a magnitude fade the bar shows each value as the slices paint it:
+    // the stop's opacity lets the neutral bar ground show through.
+    var fades = Boolean(map.display && map.display.magnitude_opacity);
     colors.forEach(function (c, i) {
+      var a = fades && c.length > 3 ? Math.max(0, Math.min(1, Number(c[3]))) : 1;
       stops.push("rgb(" + Math.round(c[0] * 255) + " " + Math.round(c[1] * 255) + " " +
-        Math.round(c[2] * 255) + ") " + ((i / n) * 100).toFixed(2) + "%");
+        Math.round(c[2] * 255) + " / " + a.toFixed(3) + ") " + ((i / n) * 100).toFixed(2) + "%");
     });
     var bar = state.legendBar;
     bar.style.setProperty("--nm-scale-gradient", "linear-gradient(to right, " + stops.join(", ") + ")");
@@ -1783,6 +1891,7 @@
       state.controls.selectLayer(OVERLAY_LAYER_ID);
       await state.controls.updateComplete;
       state.currentMapId = mapId;
+      syncMagnitudeOpacity(state);
       var defaults = state.controls.setDefaultsFromCurrent(OVERLAY_LAYER_ID);
       state.reportDefaults.set(mapId, copyControlState(defaults));
       var saved = state.mapStates.get(mapId);
@@ -1790,6 +1899,7 @@
         state.controls.applyState(saved);
         applyExtent(state);
       }
+      applySyncedDisplay(state);
       state.mapSelect.value = mapId;
       state.host.dataset.nmVolumeMap = mapId;
       updateLauncherTarget(state.host, map);
@@ -1958,6 +2068,7 @@
     });
     state.mapSelect.value = initialMap.map_id;
     state.currentMapId = initialMap.map_id;
+    syncMagnitudeOpacity(state);
     updateLauncherTarget(host, initialMap);
     state.reportDefaults.set(
       initialMap.map_id, copyControlState(initialDefaults)
@@ -1977,11 +2088,23 @@
         syncReportPalette(state, true);
         updateLegend(state);
       }
+      // Range, colour-map and threshold edits all regrade the fade at once,
+      // so dragging the threshold slider updates the transparency live.
+      syncMagnitudeOpacity(state);
       scheduleExtent(state);
+      publishDisplay(state);
     };
     state.controls.addEventListener(
       "layer-control-change", state.onControlChange
     );
+    state.onDisplaySync = function (event) {
+      var d = event.detail || {};
+      if (d.source === "volume" || d.analysisId !== state.analysis.analysis_id ||
+          d.mapId !== state.currentMapId) return;
+      applySyncedDisplay(state);
+    };
+    document.addEventListener(SYNC_EVENT, state.onDisplaySync);
+    applySyncedDisplay(state);
     state.onMapSelectChange = function () {
       selectMap(state, state.mapSelect.value).then(function () {
         if (state.currentMapId === state.mapSelect.value) {
@@ -2190,6 +2313,49 @@
     };
     panel.onRangeLowInput = rangeInput("low", panel.onRangeLowInput);
     panel.onRangeHighInput = rangeInput("high", panel.onRangeHighInput);
+    // A diverging map authored symmetric about zero keeps its colour range
+    // symmetric: moving either end moves the other, so white stays at zero
+    // and both signs fade alike.
+    var symmetricRange = function () {
+      var map = currentMap(state);
+      var d = map && map.display;
+      var lim = d && Array.isArray(d.limits) ? d.limits.map(Number) : null;
+      return Boolean(d && d.scale === "diverging" && lim &&
+        lim[0] < 0 && lim[1] > 0 && Math.abs(lim[0] + lim[1]) < 1e-9 * lim[1]);
+    };
+    var mirror = function (pair, before) {
+      var m = Math.abs(pair[0] - before[0]) > Math.abs(pair[1] - before[1]) ?
+        Math.abs(pair[0]) : Math.abs(pair[1]);
+      return m > 0 ? [-m, m] : before.slice();
+    };
+    var onRangeUpdate = panel.onRangeUpdate;
+    panel.onRangeUpdate = function (event) {
+      var detail = event && event.detail;
+      if (symmetricRange() && detail) {
+        var pair = Array.isArray(detail.values) ? detail.values.map(Number) :
+          [Number(detail.low), Number(detail.high)];
+        if (pair.every(Number.isFinite)) {
+          var next = mirror(pair, panel.range.map(Number));
+          event = { detail: { values: next, low: next[0], high: next[1] } };
+        }
+      }
+      return onRangeUpdate.call(panel, event);
+    };
+    var symmetricField = function (which, handler) {
+      return function (event) {
+        var before = panel.range.map(Number);
+        handler.call(panel, event);
+        if (!symmetricRange()) return;
+        var now = panel.range.map(Number);
+        if (samePair(now, before)) return;
+        var m = Math.abs(now[which === "low" ? 0 : 1]);
+        if (!(m > 0)) return;
+        panel.range = [-m, m];
+        panel.applyRange();
+      };
+    };
+    panel.onRangeLowInput = symmetricField("low", panel.onRangeLowInput);
+    panel.onRangeHighInput = symmetricField("high", panel.onRangeHighInput);
     var onThresholdUpdate = panel.onThresholdUpdate;
     panel.onThresholdUpdate = function (event) {
       var before = panel.threshold.slice();
@@ -2696,6 +2862,9 @@
       }
       if (state.onSliceWheel && state.viewerElement) {
         state.viewerElement.removeEventListener("wheel", state.onSliceWheel, { capture: true });
+      }
+      if (state.onDisplaySync) {
+        document.removeEventListener(SYNC_EVENT, state.onDisplaySync);
       }
       if (state.controls && state.onControlChange) {
         state.controls.removeEventListener(

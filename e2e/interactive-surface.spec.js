@@ -46,7 +46,7 @@ async function openDisplaySettings(host) {
 
 async function activateSurface(host) {
   const router = host.locator(
-    'xpath=preceding-sibling::*[@data-nm-view-router][1]'
+    'xpath=preceding-sibling::*[descendant-or-self::*[@data-nm-view-router]][1]/descendant-or-self::*[@data-nm-view-router]'
   );
   await router.getByRole("radio", { name: "3D surface", exact: true }).check();
   await expect(host).toHaveAttribute("data-nm-surface-ready", "true", {
@@ -102,7 +102,7 @@ test("the static surface remains authoritative until the reader opts in", async 
     "Choose 3D surface above to load this view."
   );
   const router = host.locator(
-    'xpath=preceding-sibling::*[@data-nm-view-router][1]'
+    'xpath=preceding-sibling::*[descendant-or-self::*[@data-nm-view-router]][1]/descendant-or-self::*[@data-nm-view-router]'
   );
   await expect(router.getByRole("radio", { name: "Static" })).toBeChecked();
   await expect(router.getByRole("radio", {
@@ -367,7 +367,7 @@ test("corrupt surface payloads fail visibly without displacing static figures", 
   await page.locator('script[id^="nm-surface-asset-values-"]').first()
     .evaluate((node) => { node.textContent = "AAAA"; });
   const router = host.locator(
-    'xpath=preceding-sibling::*[@data-nm-view-router][1]'
+    'xpath=preceding-sibling::*[descendant-or-self::*[@data-nm-view-router]][1]/descendant-or-self::*[@data-nm-view-router]'
   );
   await router.getByRole("radio", { name: "3D surface", exact: true }).check();
   // A failed viewer hands the map back to Static; the router says why.

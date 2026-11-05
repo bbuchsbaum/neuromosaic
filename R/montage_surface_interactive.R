@@ -43,7 +43,8 @@
 #'   with one value per vertex. By default anatomy is resolved from the atlas
 #'   or matching white geometry, as in the static renderer.
 #' @param anatomy_style Folding contrast: auto selects binary for the
-#'   freesurfer preset and continuous otherwise; none disables the underlay.
+#'   freesurfer preset and `"soft"` (a smooth gyral/sulcal two-tone matching
+#'   the static figure) otherwise; none disables the underlay.
 #' @param anatomy_midpoint,anatomy_invert Anatomical dark/light boundary and
 #'   polarity passed to [neurosurf::normalize_surface_anatomy()].
 #' @param projection Whether volumetric manifest rows should be projected
@@ -94,6 +95,14 @@
 #'   remain present separately in the report.
 #' @param alt_text Optional alternative text. When omitted it is generated per
 #'   analysis group.
+#' @param variants Optional alternative embeddings of the displayed meshes that
+#'   the reader can switch between, named by surface type, e.g.
+#'   `list(pial = neuroatlas::schaefer_surf(400, 17, surf = "pial"), white =
+#'   ...)`. Each entry is a surface atlas or a `left`/`right` list of
+#'   `SurfaceGeometry`, `SurfaceSet` or n x 3 coordinate matrices in the
+#'   displayed surface's vertex order. Values and curvature are shared.
+#' @param variant Name of the displayed embedding when `variants` is given
+#'   (default `"inflated"`).
 #'
 #' @return A validated `montage_surface` value object.
 #' @export
@@ -123,9 +132,11 @@ montage_surface <- function(geometry = NULL,
                             height = NULL,
                             fallback = NULL,
                             alt_text = NULL,
-                            anatomy_style = c("auto", "continuous", "binary", "none"),
+                            anatomy_style = c("auto", "soft", "continuous", "binary", "none"),
                             anatomy_midpoint = NULL,
-                            anatomy_invert = NULL) {
+                            anatomy_invert = NULL,
+                            variants = NULL,
+                            variant = "inflated") {
   anatomy_style <- match.arg(anatomy_style)
   layout <- match.arg(layout)
   view <- match.arg(view)
@@ -201,9 +212,25 @@ montage_surface <- function(geometry = NULL,
     .normalize_montage_surface_geometry(geometry, field = "geometry")
   }
 
+  if (!is.null(variants)) {
+    if (!is.list(variants) || !length(variants) || is.null(names(variants)) ||
+        any(!nzchar(names(variants))) || anyDuplicated(names(variants))) {
+      stop("'variants' must be a uniquely named list of surface embeddings.",
+           call. = FALSE)
+    }
+    .montage_surface_string(variant, "variant", required = TRUE)
+    if (variant %in% names(variants)) {
+      stop("'variant' names the displayed surface and must not repeat in ",
+           "'variants'.", call. = FALSE)
+    }
+    variants <- lapply(variants, .montage_surface_variant_pair)
+  }
+
   structure(
     list(
       geometry = geometry,
+      variants = variants,
+      variant = if (is.null(variants)) NULL else trimws(variant),
       values = values,
       curvature = curvature,
       anatomy_style = anatomy_style,
@@ -322,6 +349,35 @@ montage_surface <- function(geometry = NULL,
     neurosurf::SurfaceGeometry(vertices, faces, hemi = hemi),
     error = function(e) geometry
   )
+}
+
+# One embedding for montage_surface(variants =): a surface atlas (its lh/rh
+# geometries), or a left/right list of SurfaceGeometry, SurfaceSet or n x 3
+# coordinate matrices in the displayed surface's vertex order.
+.montage_surface_variant_pair <- function(x) {
+  if (is.list(x) && all(c("lh_atlas", "rh_atlas") %in% names(x))) {
+    x <- list(left = x$lh_atlas, right = x$rh_atlas)
+  }
+  if (!is.list(x) || is.null(names(x))) {
+    stop("Each surface variant must be a surface atlas or a left/right list.",
+         call. = FALSE)
+  }
+  names(x) <- vapply(names(x), .montage_surface_hemi, character(1),
+                     field = "variants")
+  lapply(x, function(g) {
+    if (methods::is(g, "LabeledNeuroSurface") || methods::is(g, "NeuroSurface")) {
+      g <- g@geometry
+    }
+    if (methods::is(g, "SurfaceGeometry") || methods::is(g, "SurfaceSet")) {
+      g <- neurosurf::coords(.montage_resolve_surface_geometry(g))
+    }
+    g <- as.matrix(g)
+    if (ncol(g) != 3L || !is.numeric(g)) {
+      stop("Surface variant coordinates must be n x 3 numeric matrices.",
+           call. = FALSE)
+    }
+    g
+  })
 }
 
 .montage_surface_hemi <- function(x, field = "geometry") {
@@ -520,8 +576,17 @@ montage_surface <- function(geometry = NULL,
     alt_text <- surface$alt_text %||% paste0(
       "Interactive bilateral cortical surface for ", analysis_label, "."
     )
+    variant_args <- list()
+    if (!is.null(surface$variants) &&
+        "variants" %in% names(formals(neurosurf::surface_scene))) {
+      variant_args <- list(
+        variants = lapply(surface$variants, function(pair) pair[names(geometry)]),
+        variant = surface$variant
+      )
+    }
     scene_args <- c(
       geometry,
+      variant_args,
       list(
         layers = layers,
         curvature = anatomy$curvature,
@@ -1330,7 +1395,21 @@ montage_surface <- function(geometry = NULL,
     NULL
   }
 
-  neurosurf::surface_layer(
+  alpha_mode <- metadata$alpha_mode %||%
+    .profile_row_character(row, 1L, "effective_alpha_mode")
+  magnitude_opacity <- .montage_row_magnitude_opacity(
+    row, alpha_mode,
+    threshold = if (identical(display_mode, "continuous")) 0 else threshold,
+    cap = max(abs(as.numeric(limits))),
+    fallback_values = values
+  )
+  layer_args <- list()
+  if (!is.null(magnitude_opacity) &&
+      "magnitude_opacity" %in% names(formals(neurosurf::surface_layer))) {
+    layer_args$magnitude_opacity <- magnitude_opacity
+  }
+
+  do.call(neurosurf::surface_layer, c(list(
     name = layer_id,
     values = values,
     # The report palette depends on this map's threshold and cap, so it is
@@ -1370,7 +1449,7 @@ montage_surface <- function(geometry = NULL,
     ),
     provenance = provenance,
     threshold = threshold_pair
-  )
+  ), layer_args))
 }
 
 .montage_surface_value_range <- function(values) {
@@ -1433,8 +1512,12 @@ montage_surface <- function(geometry = NULL,
   if (style == "none") return(list(curvature = NULL, provenance = list(style = "none")))
   if (style == "auto") {
     style <- surface_args$anatomy_style %||%
-      if (surface$preset == "freesurfer") "binary" else "continuous"
+      if (surface$preset == "freesurfer") "binary" else "soft"
     if (style == "publication") style <- "continuous"
+  }
+  if (identical(style, "soft") &&
+      !"soft" %in% eval(formals(neurosurf::normalize_surface_anatomy)$style)) {
+    style <- "continuous"
   }
   metric <- surface$curvature %||% surface_args$anatomy_metric
   if (!is.null(metric)) {
@@ -1835,7 +1918,13 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
       htmltools::tags$label(
         class = "nm-sv-sym",
         htmltools::tags$span(`data-nm-surface-threshold-symbol` = "", "|value| above"),
-        .montage_surface_number_input("threshold-abs", "Show values whose magnitude exceeds")
+        .montage_surface_number_input("threshold-abs", "Show values whose magnitude exceeds"),
+        htmltools::tags$input(
+          type = "range", min = "0", max = "1000", step = "1", value = "0",
+          class = "nm-sv-threshold-slider",
+          `data-nm-surface-threshold-slider` = "",
+          `aria-label` = "Threshold magnitude"
+        )
       ),
       htmltools::tags$div(
         class = "nm-sv-pair nm-sv-asym",

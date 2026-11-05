@@ -34,6 +34,7 @@ surf_montage(
   camera = c("canonical", "presentation"),
   orientation_labels = TRUE,
   overlay_alpha = 0.85,
+  magnitude_opacity = NULL,
   palette = "cork",
   overlay_palette = if (isTRUE(signed)) "nm-signed" else "lajolla",
   width = 3000,
@@ -139,6 +140,12 @@ only to `stat` maps.}
 \item{overlay_alpha}{Surface overlay alpha. The publication default leaves
 a small amount of anatomical context visible beneath the statistic.}
 
+\item{magnitude_opacity}{Optional fade by magnitude (a list with `low`,
+`high`, `gamma`, `floor`; see [neurosurf::surface_layer()]), so weak
+values recede over the anatomy with the same rule the interactive views
+use. Report renderers derive it from the map's `alpha_mode`. Ignored when
+the installed neuroatlas cannot fade overlays.}
+
 \item{palette}{Base parcel palette.}
 
 \item{overlay_palette}{Overlay palette. `"nm-signed"` (the default for
@@ -178,8 +185,12 @@ separate from the panel `title`. `NULL` defaults to `"Statistic"`.}
 \item{appearance}{Publication shading or FreeSurfer-style cortical contrast
 for vertex overlays. The latter defaults to opaque heat colors.}
 
-\item{anatomy_style}{Continuous or binary folding contrast. NULL uses the
-appearance default. These options apply to the CPU vertex renderer.}
+\item{anatomy_style}{Folding contrast for the CPU vertex renderer:
+`"soft"` (the publication default; a smooth gyral/sulcal two-tone that
+matches the interactive surface), `"continuous"`, `"binary"` (the
+FreeSurfer default) or the legacy `"publication"` shading. `NULL` uses the
+appearance default; `"soft"` falls back to `"publication"` with a
+neurosurf that lacks it.}
 
 \item{anatomy_midpoint, anatomy_invert}{Anatomical boundary and polarity;
 see [neurosurf::normalize_surface_anatomy()].}

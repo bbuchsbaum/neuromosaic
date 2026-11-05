@@ -47,7 +47,7 @@ for (const [fixture, phrase] of [
   test(`surface PNG describes the actual source in ${fixture}`, async ({ page }) => {
     await page.goto('http://127.0.0.1:4173/' + fixture);
     const host = page.locator('[data-nm-surface-analysis]').first();
-    const router = host.locator('xpath=preceding-sibling::*[@data-nm-view-router][1]');
+    const router = host.locator('xpath=preceding-sibling::*[descendant-or-self::*[@data-nm-view-router]][1]/descendant-or-self::*[@data-nm-view-router]');
     await router.getByRole('radio', { name: '3D surface', exact: true }).check();
     await expect(host).toHaveAttribute('data-nm-surface-ready', 'true', { timeout: 20000 });
     const downloadEvent = page.waitForEvent('download');
@@ -63,7 +63,7 @@ for (const [fixture, phrase] of [
 test('a pending surface edit never changes the next map after the debounce interval', async ({ page }) => {
   await page.goto('http://127.0.0.1:4173/interactive-surface-bundle.html');
   const host = page.locator('[data-nm-surface-analysis="surface-interactive"]');
-  await host.locator('xpath=preceding-sibling::*[@data-nm-view-router][1]')
+  await host.locator('xpath=preceding-sibling::*[descendant-or-self::*[@data-nm-view-router]][1]/descendant-or-self::*[@data-nm-view-router]')
     .getByRole('radio', { name: '3D surface', exact: true }).check();
   await expect(host).toHaveAttribute('data-nm-surface-ready', 'true');
   const toggle = host.getByRole('button', { name: 'Colour, range and threshold' });

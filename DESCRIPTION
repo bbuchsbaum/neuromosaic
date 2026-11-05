@@ -1,6 +1,6 @@
 Package: neuromosaic
 Title: Rich Reports and Interactive Exploration for Neuroimaging Statistical Maps
-Version: 0.2.0
+Version: 0.2.1
 Authors@R:
     person("Bradley", "Buchsbaum", , "brad.buchsbaum@gmail.com", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-1108-4866"))
@@ -29,9 +29,9 @@ Imports:
     jsonlite,
     knitr,
     methods,
-    neuroatlas (>= 0.1.0.9006),
+    neuroatlas (>= 0.2.0.9001),
     neuroim2 (>= 0.19.0.9000),
-    neurosurf (>= 0.1.0),
+    neurosurf (>= 0.1.0.9002),
     rlang,
     scales,
     scico,
@@ -63,9 +63,9 @@ Suggests:
     xml2
 Remotes:
     bbuchsbaum/fmrigds,
-    bbuchsbaum/neuroatlas,
+    bbuchsbaum/neuroatlas@v0.2.0.9001,
     bbuchsbaum/neuroim2,
-    bbuchsbaum/neurosurf@798483c9e09515c04c1d201c38a0439507736358,
+    bbuchsbaum/neurosurf@v0.1.0.9002,
     bbuchsbaum/neurotabs
 VignetteBuilder: knitr
 Config/testthat/edition: 3
