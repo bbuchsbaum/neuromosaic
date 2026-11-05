@@ -571,6 +571,7 @@ montage_peak_table <- function(stat,
       map_id = map_id,
       cerebellum_reference = cerebellum_reference
     )
+    peaks <- .montage_peak_effect_sizes(peaks, manifest, i, stat_maps)
     panels[[map_id]]$peak_table <- peaks
     if (is.null(panels[[map_id]]$table)) {
       # Parcel maps report surviving parcels by atlas name: voxel clusters of
@@ -598,6 +599,62 @@ montage_peak_table <- function(stat,
   }
 
   panels
+}
+
+# Effect size beside each peak: the analysis's estimate and standard-error
+# maps, sampled at the peak voxel when they share the statistic's grid.
+# Adds `peak_estimate` / `peak_se` (with attr "effect_labels"); unchanged when
+# the analysis has no such companions.
+.montage_peak_effect_sizes <- function(peaks, manifest, i, stat_maps) {
+  if (!is.data.frame(peaks) || nrow(peaks) == 0L ||
+      !all(c("peak_mni_x", "peak_mni_y", "peak_mni_z") %in% names(peaks)) ||
+      !all(c("analysis_id", "quantity") %in% names(manifest))) {
+    return(peaks)
+  }
+  stat <- stat_maps[[i]]
+  if (!methods::is(stat, "NeuroVol")) return(peaks)
+  same <- which(as.character(manifest$analysis_id) ==
+                  as.character(manifest$analysis_id[[i]]))
+  quantity <- as.character(manifest$quantity)
+  pick <- function(q) {
+    rows <- same[quantity[same] == q]
+    rows <- rows[vapply(rows, function(r) {
+      methods::is(stat_maps[[r]], "NeuroVol") &&
+        identical(dim(stat_maps[[r]]), dim(stat))
+    }, logical(1))]
+    if (length(rows)) rows[[1L]] else NA_integer_
+  }
+  rows <- c(estimate = pick("estimate"), se = pick("standard_error"))
+  if (all(is.na(rows))) return(peaks)
+  coords <- cbind(peaks$peak_mni_x, peaks$peak_mni_y, peaks$peak_mni_z)
+  grid <- tryCatch(neuroim2::coord_to_grid(neuroim2::space(stat), coords),
+                   error = function(e) NULL)
+  if (is.null(grid)) return(peaks)
+  grid <- round(as.matrix(grid))
+  inside <- apply(grid, 1L, function(g) all(g >= 1L & g <= dim(stat)[1:3]))
+  sample_at <- function(r) {
+    out <- rep(NA_real_, nrow(grid))
+    if (is.na(r)) return(out)
+    arr <- as.array(stat_maps[[r]])
+    out[inside] <- arr[grid[inside, , drop = FALSE]]
+    out
+  }
+  unit_of <- function(r) {
+    if (is.na(r) || !"label" %in% names(manifest)) return("")
+    m <- regmatches(manifest$label[[r]], regexpr("\\([^()]+\\)$", manifest$label[[r]]))
+    if (length(m)) paste0(" ", m) else ""
+  }
+  labels <- c()
+  if (!is.na(rows[["estimate"]])) {
+    peaks$peak_estimate <- sample_at(rows[["estimate"]])
+    labels[["peak_estimate"]] <- paste0("Estimate", unit_of(rows[["estimate"]]))
+  }
+  if (!is.na(rows[["se"]])) {
+    peaks$peak_se <- sample_at(rows[["se"]])
+    labels[["peak_se"]] <- "SE"
+  }
+  attr(peaks, "effect_labels") <- labels
+  peaks
 }
 
 .montage_qc_summary <- function(manifest) {
@@ -635,6 +692,8 @@ montage_peak_table <- function(stat,
     data.frame(
       map_id = as.character(row$map_id[[1]]),
       label = if ("label" %in% names(row)) as.character(row$label[[1]]) else NA_character_,
+      analysis = as.character(.montage_first_row_value(
+        row, c("analysis_label", "analysis_id")) %||% NA_character_),
       effective_n = effective_n,
       source_n = source_n,
       dropped_n = dropped_n,

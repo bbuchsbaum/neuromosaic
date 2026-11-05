@@ -33,7 +33,8 @@ stat_montage(
   units = NULL,
   min_cluster_size = NULL,
   connectivity = c("18-connect", "26-connect", "6-connect"),
-  figure = c("report", "classic")
+  figure = c("report", "classic"),
+  peak_labels = NULL
 )
 }
 \arguments{
@@ -118,6 +119,13 @@ threshold-saturated palette, opaque suprathreshold colour (at least 0.92
 opacity), and a compact horizontal colour key with the hidden
 sub-threshold band hatched. `"classic"` keeps the
 `neuroim2::plot_overlay()` montage.}
+
+\item{peak_labels}{Optional data frame of cluster peaks to tag on the
+report figure, with columns `label` (e.g. `"P1"`) and `x`, `y`, `z`
+(world millimetres). Each tag is drawn beside its peak on the slice
+nearest to it, when that slice lies within half a slice step. The report
+passes each thresholded map's cluster table, so the figure and the table
+share one vocabulary. Ignored by `figure = "classic"`.}
 }
 \value{
 A `stat_montage_result` list containing the plot object/list and

@@ -64,7 +64,7 @@ test_that("uniform QC is stated as supplied metadata, not a check the report ran
     qc_line = "N = 486 for all 2 maps \u00b7 QC: ok (as supplied)"
   ), collapse = "")
   expect_match(html, "<span class=\"nm-fact-qc\">N = 486 for all 2 maps</span>", fixed = TRUE)
-  expect_match(html, "<span class=\"nm-fact-qc\">QC: ok (as supplied)</span>", fixed = TRUE)
+  expect_match(html, "<span class=\"nm-fact-qc nm-fact-status\">QC: ok (as supplied)</span>", fixed = TRUE)
   src <- paste(deparse(neuromosaic:::.montage_report_qc_line), collapse = "\n")
   expect_false(grepl("QC passed", src, fixed = TRUE))
 })

@@ -75,8 +75,9 @@
 #'   coherent brain in RAS position that rotates as a whole; `"split"` rotates
 #'   each hemisphere into the chosen view and places them side by side.
 #' @param view Initial whole-brain view for the anatomical layout. The default
-#'   `"left"` (lateral left hemisphere) matches the first panel of the static
-#'   surface strip; `"oblique"` is the Overview pose set by `oblique`.
+#'   `"oblique"` is the Overview pose set by `oblique`, which by default faces
+#'   the most suprathreshold cortex, so the viewer opens on the data; `"left"`
+#'   (lateral left hemisphere) matches the first panel of the static strip.
 #' @param oblique Overview camera angle for the anatomical layout: `"auto"`
 #'   chooses, per displayed map, the oblique angle that faces the most
 #'   suprathreshold cortex; a numeric `c(azimuth, elevation)` in degrees fixes
@@ -114,7 +115,7 @@ montage_surface <- function(geometry = NULL,
                             controls = .montage_surface_control_names,
                             preset = "report",
                             layout = c("anatomical", "split"),
-                            view = c("left", "oblique", "right", "dorsal",
+                            view = c("oblique", "left", "right", "dorsal",
                                      "ventral", "anterior", "posterior",
                                      "left-medial", "right-medial"),
                             anatomy = c("sulcal_depth", "curvature"),
@@ -565,7 +566,7 @@ montage_surface <- function(geometry = NULL,
       scenes = scenes,
       preset = surface$preset,
       layout = surface$layout %||% "split",
-      view = surface$view %||% "left",
+      view = surface$view %||% "oblique",
       oblique = surface$oblique %||% "auto",
       height = surface$height,
       projection = surface$projection,
@@ -1612,7 +1613,7 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
     `data-nm-surface-compression` = surface$summary$compression,
     `data-nm-surface-preset` = group$preset,
     `data-nm-surface-layout` = surface$layout %||% "split",
-    `data-nm-surface-view` = surface$view %||% "left",
+    `data-nm-surface-view` = surface$view %||% "oblique",
     `data-nm-surface-oblique` = if (is.numeric(surface$oblique)) {
       paste(format(surface$oblique, trim = TRUE), collapse = ",")
     } else {

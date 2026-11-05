@@ -310,7 +310,17 @@ table:not(.nm-table) { display: block; max-width: 100%; overflow-x: auto; }
   font: 12px/1.6 var(--nm-mono);
 }
 .nm-report-facts > span:not(.nm-sep) { white-space: nowrap; }
-.nm-report-facts > span.nm-fact-qc { color: var(--nm-ok-ink); }
+/* QC is a status, not an accent: a small dot carries the state. */
+.nm-fact-status::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 6px 1px 0;
+  border-radius: 50%;
+  background: var(--nm-ok-ink);
+  vertical-align: middle;
+}
 
 .nm-report-labels {
   margin: 8px 0 0;
@@ -557,9 +567,12 @@ html .nm-view-router label:has(input:checked) {
 }
 html .nm-view-router label { white-space: nowrap; }
 /* With the router in the header, the viewer's own show/hide button is redundant. */
-.nm-map[data-nm-view] [data-nm-volume-toggle] { display: none; }
+.nm-map[data-nm-view] [data-nm-volume-toggle],
+.nm-analysis-group[data-nm-view] [data-nm-volume-toggle] { display: none; }
 .nm-map[data-nm-view="slices"] .nm-figure,
-.nm-map[data-nm-view="surface"] .nm-figure { display: none; }
+.nm-map[data-nm-view="surface"] .nm-figure,
+.nm-analysis-group[data-nm-view="slices"] .nm-figure,
+.nm-analysis-group[data-nm-view="surface"] .nm-figure { display: none; }
 
 /* ---- Variant selector ------------------------------------------------ */
 .nm-map-selector { display: none; margin: 4px 0 10px; }
@@ -702,6 +715,30 @@ html .nm-view-router label { white-space: nowrap; }
 }
 .nm-cell:hover { background: var(--nm-accent-soft); }
 .nm-cell:focus-visible { outline: 2px solid var(--nm-accent); outline-offset: -2px; }
+.nm-cell-stats { display: flex; flex-direction: column; align-items: flex-end; }
+.nm-cell-thumb + .nm-cell-stats {
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 2px;
+}
+.nm-cell-thumb { display: block; width: 100%; }
+.nm-cell-thumb img {
+  display: block;
+  width: 100%;
+  max-width: 230px;
+  height: auto;
+  margin-left: auto;
+}
+.nm-cell-note { color: var(--nm-muted); font-size: 11.5px; }
+.nm-cell-range {
+  color: var(--nm-ink-2);
+  font-size: 13px;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .nm-cell-n { color: var(--nm-ink); font-size: 14px; font-weight: 650; }
 .nm-cell-max { color: var(--nm-muted); font-size: 11.5px; }
 .nm-cell-empty { color: var(--nm-faint); }
@@ -880,6 +917,17 @@ html:not(.nm-js) .nm-figure img.nm-defer { display: none; }
 .nm-peak-go:focus-visible { outline: 2px solid var(--nm-accent); outline-offset: 2px; border-radius: 2px; }
 .nm-peak-hint { color: var(--nm-muted); }
 .nm-table-wrap > table { margin: 0; }
+/* Wide screens: a long cluster table keeps its column names in view, pinned
+   under the analysis's sticky title and tabs (the script measures them). */
+@media (min-width: 1001px) {
+  .nm-table-wrap:has(> .nm-cluster-table) { overflow-x: visible; }
+  .nm-cluster-table thead th {
+    position: sticky;
+    top: var(--nm-group-head-h, 0px);
+    z-index: 2;
+    background: var(--nm-page);
+  }
+}
 .nm-table tr:last-child td { border-bottom: 0; }
 
 /* ---- Status and notes ----------------------------------------------------- */
@@ -1008,6 +1056,8 @@ code.nm-hash {
 .nm-methods-note { color: var(--nm-muted); font-size: 12px; }
 .nm-methods-copy { font-size: 12.5px; }
 .nm-methods-text { margin: 0; color: var(--nm-ink-2); font-size: 14px; line-height: 1.65; }
+.nm-methods-text + .nm-methods-text { margin-top: 10px; }
+.nm-runin { color: var(--nm-ink); font-weight: 620; }
 .nm-methods-refs {
   margin: 10px 0 0;
   padding: 8px 0 0 1.4em;
@@ -1033,6 +1083,9 @@ body pre code { font: inherit; white-space: pre; }
 /* ---- Narrow screens and zoom: sidebar becomes a sticky contents bar -------- */
 @media (max-width: 1000px) {
   body { padding: 0 18px 72px; }
+  /* The sticky contents bar carries Print; the header need not repeat it. */
+  .nm-report-header .nm-print-action:not(.nm-print-minibar),
+  .nm-report-header .nm-print-sep { display: none; }
   .nm-minibar {
     position: sticky;
     top: 0;
@@ -1134,9 +1187,11 @@ body pre code { font: inherit; white-space: pre; }
   }
   .nm-summary-table th, .nm-summary-table .nm-cell { padding-inline: 6px; }
   .nm-cell-max { font-size: 10.5px; }
-  .nm-summary .nm-table-wrap.is-clipped {
-    -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent);
-    mask-image: linear-gradient(90deg, #000 85%, transparent);
+  .nm-summary .nm-table-wrap.is-clipped,
+  .nm-map-tabs.is-clipped,
+  .nm-global-tabs.is-clipped {
+    -webkit-mask-image: linear-gradient(90deg, #000 82%, transparent);
+    mask-image: linear-gradient(90deg, #000 82%, transparent);
   }
   .nm-group-head { position: static; }
   .nm-maps-bar { flex-wrap: wrap; }
@@ -1159,7 +1214,8 @@ body pre code { font: inherit; white-space: pre; }
     grid-template-columns: 2.7em repeat(3, minmax(0, auto)) minmax(0, 1fr) auto;
     grid-template-areas:
       "id reg reg reg reg peak"
-      "id x y z hemi vox";
+      "id x y z hemi vox"
+      "id est est est est se";
     column-gap: 8px;
     padding: 8px 0;
     border-bottom: 1px solid var(--nm-rule);
@@ -1183,6 +1239,17 @@ body pre code { font: inherit; white-space: pre; }
   .nm-cluster-table .nm-col-z-mni::before { content: "z "; color: var(--nm-faint); }
   .nm-cluster-table .nm-col-n-voxels::after { content: " vox"; color: var(--nm-faint); }
   .nm-cluster-table .nm-col-sign, .nm-cluster-table .nm-col-network { display: none; }
+  /* Effect size at the peak: a third card line, labelled in place. */
+  .nm-cluster-table td[class*="nm-col-estimate"] { grid-area: est; }
+  .nm-cluster-table .nm-col-se { grid-area: se; text-align: right; }
+  .nm-cluster-table td[class*="nm-col-estimate"], .nm-cluster-table .nm-col-se {
+    color: var(--nm-ink-2);
+    font-size: 12px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .nm-cluster-table td[class*="nm-col-estimate"]::before { content: "estimate "; color: var(--nm-faint); }
+  .nm-cluster-table .nm-col-se::before { content: "SE "; color: var(--nm-faint); }
 }
 
 @media (max-width: 480px) {

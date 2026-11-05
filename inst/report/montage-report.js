@@ -740,10 +740,10 @@ document.addEventListener('DOMContentLoaded', function () {
   var routerFor = function (id) { return document.querySelector('[data-nm-view-router="' + esc(id) + '"]'); };
   var articleFor = function (id) {
     var slot = document.querySelector('[data-nm-view-slot="' + esc(id) + '"]');
-    var art = slot && slot.closest('.nm-map');
+    var art = slot && slot.closest('.nm-map, .nm-analysis-group');
     if (art) return art;
     var router = routerFor(id);
-    return router ? router.closest('.nm-map') : null;
+    return router ? router.closest('.nm-map, .nm-analysis-group') : null;
   };
   var viewerFor = function (art, id, view) {
     var sel = view === 'slices' ? '[data-nm-volume-analysis="' + esc(id) + '"]'
@@ -1289,8 +1289,58 @@ document.addEventListener('DOMContentLoaded', function () {
     reflect();
   }
 
-  // Fade the right edge of a scrolling table only while columns remain hidden.
-  document.querySelectorAll('.nm-table-wrap').forEach(function (wrap) {
+  // "Map (NIfTI)": each volume figure links the unthresholded map the
+  // interactive viewer already ships in the bundle, so a reader can check the
+  // figure against the data or deposit it. Bundle (relative) assets only.
+  (function () {
+    var refs = {};
+    document.querySelectorAll('script[id^="nm-volume-scene"]').forEach(function (node) {
+      var scene;
+      try { scene = JSON.parse(node.textContent || '{}'); } catch (err) { return; }
+      var byId = {};
+      (scene.assets || []).forEach(function (a) {
+        if (a && a.location && a.location.kind === 'relative' && a.location.ref) byId[a.asset_id] = a.location.ref;
+      });
+      (scene.analyses || []).forEach(function (an) {
+        (an.maps || []).forEach(function (m) {
+          if (m && m.map_id && byId[m.asset_id]) refs[m.map_id] = byId[m.asset_id];
+        });
+      });
+    });
+    document.querySelectorAll('figure.nm-figure-volume').forEach(function (fig) {
+      var holder = fig.closest('[data-nm-map-id]');
+      var id = holder && holder.getAttribute('data-nm-map-id');
+      var actions = fig.querySelector('.nm-fig-actions');
+      if (!id || !refs[id] || !actions || actions.querySelector('.nm-fig-nifti')) return;
+      var a = document.createElement('a');
+      a.className = 'nm-fig-action nm-fig-nifti';
+      a.href = refs[id];
+      a.setAttribute('download', id + '.nii.gz');
+      a.title = 'The unthresholded map as the interactive viewer reads it: values lossless, ' +
+        'header canonicalised (RAS), so its hash differs from the input file in Provenance.';
+      a.textContent = 'Map (NIfTI, viewer copy)';
+      var copy = actions.querySelector('.nm-fig-copy');
+      actions.insertBefore(a, copy || null);
+    });
+  })();
+
+  // Each grouped analysis publishes its sticky head's height, so a cluster
+  // table's sticky column names sit just below it.
+  var measureHeads = function () {
+    document.querySelectorAll('.nm-analysis-group').forEach(function (group) {
+      var head = group.querySelector('.nm-group-head');
+      var sticky = head && getComputedStyle(head).position === 'sticky';
+      group.style.setProperty('--nm-group-head-h',
+        sticky ? Math.ceil(head.getBoundingClientRect().height) + 'px' : '0px');
+    });
+  };
+  measureHeads();
+  window.addEventListener('resize', measureHeads);
+  window.addEventListener('load', measureHeads);
+
+  // Fade the right edge of a scrolling table or tab row only while something
+  // remains hidden, so a clipped option reads as "more this way".
+  document.querySelectorAll('.nm-table-wrap, .nm-map-tabs, .nm-global-tabs').forEach(function (wrap) {
     var check = function () {
       wrap.classList.toggle('is-clipped', wrap.scrollLeft + wrap.clientWidth < wrap.scrollWidth - 1);
     };
