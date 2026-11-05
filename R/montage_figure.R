@@ -271,7 +271,7 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
 
 # Evenly spaced slices across the central mass of the display voxels (5th to
 # 95th percentile of their positions along `along`), so near-empty edge slices
-# are never chosen. The spacing is a whole number of voxels; with 2 mm voxels
+# are never chosen; `probs = c(0, 1)` spans every displayed voxel instead. The spacing is a whole number of voxels; with 2 mm voxels
 # the labels step in even millimetres.
 .stat_montage_central_zlevels <- function(supra_arr, along, max_slices = 12L,
                                           probs = c(0.05, 0.95)) {
@@ -292,8 +292,9 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
   }
   if (length(occupied) <= max_slices) return(occupied)
   cdf <- cumsum(counts) / sum(counts)
-  lo <- which(cdf >= probs[[1L]])[[1L]]
-  hi <- which(cdf >= probs[[2L]])[[1L]]
+  full <- probs[[1L]] <= 0 && probs[[2L]] >= 1
+  lo <- if (full) occupied[[1L]] else which(cdf >= probs[[1L]])[[1L]]
+  hi <- if (full) occupied[[length(occupied)]] else which(cdf >= probs[[2L]])[[1L]]
   if (hi - lo + 1L < max_slices) {
     centre <- (lo + hi) / 2
     lo <- max(1L, floor(centre - (max_slices - 1L) / 2))
@@ -301,7 +302,18 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
     lo <- max(1L, hi - max_slices + 1L)
     return(seq.int(lo, hi))
   }
-  step <- max(1L, floor((hi - lo) / (max_slices - 1L)))
+  # Spanning the full extent, round the step up so both ends stay within
+  # half a step of a slice; a central window may round down.
+  step <- max(1L, if (full) ceiling((hi - lo) / (max_slices - 1L)) else
+    floor((hi - lo) / (max_slices - 1L)))
+  if (full) {
+    # Only as many slices as the extent needs at that step, centred on it, so
+    # the ends do not pad into empty anatomy.
+    n_used <- min(max_slices, ceiling((hi - lo) / step) + 1L)
+    start <- lo + floor(((hi - lo) - step * (n_used - 1L)) / 2)
+    start <- min(max(1L, start), n - step * (n_used - 1L))
+    return(as.integer(start + step * (seq_len(n_used) - 1L)))
+  }
   span <- step * (max_slices - 1L)
   start <- round((lo + hi) / 2 - span / 2)
   start <- min(max(1L, start), n - span)
@@ -953,7 +965,8 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
                               ncol = NULL,
                               width_px = 1760,
                               res = 144,
-                              alpha = 0.95) {
+                              alpha = 0.95,
+                              peak_labels = NULL) {
   space <- neuroim2::space(background)
   frame <- .nm_axis_frame(space)
   bg_arr <- as.array(background)
@@ -975,6 +988,16 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
   })
   crop <- .nm_figure_crop(slices)
   aspect <- diff(crop$y) / diff(crop$x)
+  # The world box each tile shows (voxel edges of the cropped centres), so
+  # peak tags can be placed in tile pixels.
+  kept <- .nm_crop_image(slices[[1L]], crop)
+  extent <- list(
+    x = c(min(kept$x) - slices[[1L]]$dx / 2, max(kept$x) + slices[[1L]]$dx / 2),
+    y = c(max(kept$y) + slices[[1L]]$dy / 2, min(kept$y) - slices[[1L]]$dy / 2)
+  )
+  tags <- .nm_peak_tags(peak_labels, zlevels, along, frame,
+                        h_world = slices[[1L]]$h_world,
+                        v_world = slices[[1L]]$v_world)
 
   # Tiles are composited by the layout at their shipped pixel size (one per
   # figure size, shared by the light and dark themes); see .nm_layout_tile().
@@ -995,6 +1018,8 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
     tile_cache = new.env(parent = emptyenv()),
     labels = vapply(slices, `[[`, character(1), "label"),
     aspect = aspect,
+    extent = extent,
+    tags = tags,
     lr = frame[[along]]$world != 1L,
     key = list(
       palette = palette, limits = limits, threshold = threshold,
@@ -1014,6 +1039,125 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
   spec$crop <- crop
   spec$parts <- parts
   spec
+}
+
+# Which tile shows each peak, and where: a peak goes on the slice nearest to
+# it along `along` when that slice is within half the slice step (or one
+# voxel, for a single slice); otherwise it is not tagged. Returns a data
+# frame (label, tile, h, v) or NULL.
+.nm_peak_tags <- function(peak_labels, zlevels, along, frame, h_world, v_world) {
+  if (!is.data.frame(peak_labels) || nrow(peak_labels) == 0L ||
+      !all(c("label", "x", "y", "z") %in% names(peak_labels)) ||
+      !length(zlevels)) {
+    return(NULL)
+  }
+  coords <- cbind(peak_labels$x, peak_labels$y, peak_labels$z)
+  ax <- frame[[along]]
+  slice_world <- .nm_axis_world(ax, zlevels)
+  half <- if (length(slice_world) > 1L) {
+    min(diff(sort(slice_world))) / 2
+  } else {
+    abs(ax$step)
+  }
+  out <- lapply(seq_len(nrow(coords)), function(r) {
+    w <- coords[r, ax$world]
+    d <- abs(slice_world - w)
+    k <- which.min(d)
+    if (!length(k) || !is.finite(d[[k]]) || d[[k]] > half + 1e-6) return(NULL)
+    data.frame(label = as.character(peak_labels$label[[r]]), tile = k,
+               h = coords[r, h_world], v = coords[r, v_world],
+               # The peak lies off the drawn slice (beyond one voxel).
+               off = d[[k]] > abs(ax$step) + 1e-6,
+               sign = if ("sign" %in% names(peak_labels)) {
+                 as.character(peak_labels$sign[[r]])
+               } else if (startsWith(as.character(peak_labels$label[[r]]), "N")) {
+                 "negative"
+               } else "positive",
+               stringsAsFactors = FALSE)
+  })
+  out <- do.call(rbind, Filter(Negate(is.null), out))
+  if (is.null(out) || !nrow(out)) NULL else out
+}
+
+# Tag grobs for one tile: a leader from the peak to its label, in the sign's
+# colour on a canvas-coloured halo so it reads over anatomy and overlay. A
+# peak off the drawn slice is tagged at reduced opacity (its blob may not
+# show here). Labels that would collide with an
+# earlier (stronger) one on the same tile are dropped; the table lists all.
+.nm_tag_grobs <- function(tags, extent, x0, y_top, tile_w, tile_h,
+                          height_px, px, fs, th, narrow) {
+  # Phone figures shrink ~2.2x on screen and their tiles are small: tags a
+  # step below the slice labels so they do not cover the brain.
+  size <- if (narrow) fs - 3 else fs + 0.5
+  char_w <- size * 2 * 0.62
+  text_h <- size * 2
+  dark <- identical(th$name, "dark")
+  # The ends of the report's signed palette, as text: dark stops on the light
+  # canvas, light stops on the dark one.
+  ink_of <- function(sign, off) {
+    col <- if (identical(sign, "negative")) {
+      if (dark) "#9CCBF5" else "#1D4E9E"
+    } else {
+      if (dark) "#FFB27A" else "#B40426"
+    }
+    if (isTRUE(off)) grDevices::adjustcolor(col, alpha.f = 0.55) else col
+  }
+  y_of <- function(v) grid::unit(1, "npc") - px(v)
+  placed <- list()
+  kids <- list()
+  lead <- 13
+  for (r in seq_len(nrow(tags))) {
+    fx <- (tags$h[[r]] - extent$x[[1L]]) / diff(extent$x)
+    fy <- (extent$y[[1L]] - tags$v[[r]]) / (extent$y[[1L]] - extent$y[[2L]])
+    if (!is.finite(fx) || !is.finite(fy) || fx < 0 || fx > 1 || fy < 0 || fy > 1) next
+    px_x <- x0 + fx * tile_w
+    px_y <- y_top + fy * tile_h
+    lab <- tags$label[[r]]
+    w <- nchar(lab) * char_w
+    # Up-right, up-left, down-right, down-left: the first that stays in the
+    # tile and clears earlier (stronger) tags wins. A tag is dropped only when
+    # all four collide; the table still lists it.
+    chosen <- NULL
+    for (dir in list(c(1, -1), c(-1, -1), c(1, 1), c(-1, 1))) {
+      lx <- px_x + dir[[1L]] * lead
+      ly <- px_y + dir[[2L]] * lead + if (dir[[2L]] > 0) text_h else 0
+      box <- c(if (dir[[1L]] > 0) lx else lx - w, ly - text_h,
+               if (dir[[1L]] > 0) lx + w else lx, ly)
+      inside <- box[[1L]] >= x0 && box[[3L]] <= x0 + tile_w &&
+        box[[2L]] >= y_top && box[[4L]] <= y_top + tile_h
+      clash <- any(vapply(placed, function(b) {
+        !(box[[3L]] < b[[1L]] || box[[1L]] > b[[3L]] || box[[4L]] < b[[2L]] || box[[2L]] > b[[4L]])
+      }, logical(1)))
+      if (inside && !clash) {
+        chosen <- list(dir = dir, lx = lx, ly = ly, box = box)
+        break
+      }
+    }
+    if (is.null(chosen)) next
+    placed[[length(placed) + 1L]] <- chosen$box
+    ink <- ink_of(tags$sign[[r]] %||% "positive", tags$off[[r]])
+    just <- c(if (chosen$dir[[1L]] > 0) "left" else "right", "bottom")
+    halo <- .nm_gp_text(size, th$canvas, medium = TRUE)
+    for (o in list(c(-2, 0), c(2, 0), c(0, -2), c(0, 2), c(-1.5, -1.5), c(1.5, 1.5),
+                   c(-1.5, 1.5), c(1.5, -1.5))) {
+      kids[[length(kids) + 1L]] <- grid::textGrob(
+        lab, x = px(chosen$lx + o[[1L]]), y = y_of(chosen$ly + o[[2L]]),
+        just = just, gp = halo)
+    }
+    # Leader from the peak to the tag's near corner, with a canvas halo.
+    ex <- chosen$lx - chosen$dir[[1L]] * 1
+    ey <- chosen$ly - if (chosen$dir[[2L]] > 0) text_h - 2 else 1
+    for (lw in c(2.6, 0.9)) {
+      kids[[length(kids) + 1L]] <- grid::segmentsGrob(
+        x0 = px(px_x + chosen$dir[[1L]] * 2), y0 = y_of(px_y + chosen$dir[[2L]] * 2),
+        x1 = px(ex), y1 = y_of(ey),
+        gp = grid::gpar(col = if (lw > 1) th$canvas else ink, lwd = lw, lineend = "round"))
+    }
+    kids[[length(kids) + 1L]] <- grid::textGrob(
+      lab, x = px(chosen$lx), y = y_of(chosen$ly), just = just,
+      gp = .nm_gp_text(size, ink, medium = TRUE))
+  }
+  kids
 }
 
 # Arrange composited tiles into a figure. `variant = "narrow"` is the phone
@@ -1075,6 +1219,12 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
       # (12 CSS px), so they read as firmly as the captions beneath.
       gp = .nm_gp_text(if (narrow) fs else fs + 1, th$label, medium = TRUE)
     )
+    tile_tags <- if (is.data.frame(parts$tags)) parts$tags[parts$tags$tile == i, , drop = FALSE]
+    if (is.data.frame(tile_tags) && nrow(tile_tags) && !is.null(parts$extent)) {
+      kids <- c(kids, .nm_tag_grobs(tile_tags, parts$extent, x0,
+                                   y_top + label_h, tile_w, tile_h,
+                                   height_px, px, fs, th, narrow))
+    }
     if (i == 1L && isTRUE(parts$lr)) {
       # Orientation (neurological: subject left on image left), set in the
       # first tile's lower corners, which the brain's outline leaves empty.

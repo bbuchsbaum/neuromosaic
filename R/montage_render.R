@@ -1273,6 +1273,8 @@ render_montage_report <- function(manifest,
       units = .montage_row_legend(manifest[i, , drop = FALSE])$units,
       min_cluster_size = extent$min_cluster_size,
       connectivity = extent$connectivity,
+      # Tag the figure with the cluster table's own IDs (P1, N1, ...).
+      peak_labels = .montage_peak_labels(panels[[map_id]]$peak_table),
       # The report's heading and variant tab already name the map, so the
       # panel carries no title of its own (volume_args can still add one).
       draw = FALSE,
@@ -1847,20 +1849,32 @@ render_montage_report <- function(manifest,
       )
       if (!is.na(primary) && primary %in% rows_used) rows_used <- primary
     }
+    # Unthresholded companions (estimate, SE) cover the whole brain and would
+    # spread the shared slices over empty cerebellum and vertex; when the set
+    # has thresholded maps, their kept voxels alone place the slices.
+    thresholded <- rows_used[vapply(rows_used, function(r) {
+      identical(manifest$effective_display_mode[[r]], "thresholded")
+    }, logical(1))]
+    if (length(thresholded)) rows_used <- thresholded
+    # Thresholded, extent-filtered voxels are the reported clusters: span all
+    # of them so every tabulated peak lies within half a step of a slice.
+    # Other maps keep the central 5th-95th percentile window.
+    full_extent <- length(thresholded) > 0L
     union <- NULL
     for (r in rows_used) {
       m <- .montage_row_kept_mask(manifest, r, stat_maps[[r]],
                                   support_masks[[r]])
       union <- if (is.null(union)) m else union | m
     }
-    z <- .stat_montage_zlevels(array(union, dim = dims), along = along)
+    z <- .stat_montage_zlevels(array(union, dim = dims), along = along,
+                               probs = if (full_extent) c(0, 1) else c(0.05, 0.95))
     shared <- rows[ok][vapply(rows[ok], function(r) {
       identical(dim(stat_maps[[r]]), dims)
     }, logical(1))]
     for (r in shared) {
       out[[r]] <- list(
         zlevels = z,
-        selection = "automatic",
+        selection = if (full_extent) "extent" else "automatic",
         scope = if (length(shared) > 1L) scope else "map",
         section = label_of(rows),
         map_ids = map_ids[shared]
@@ -1877,6 +1891,20 @@ render_montage_report <- function(manifest,
     }
   }
   out
+}
+
+# Cluster peaks as stat_montage() tags: label + world mm; NULL without a
+# voxel cluster table (parcel tables name parcels, not peaks).
+.montage_peak_labels <- function(peaks) {
+  need <- c("cluster_id", "peak_mni_x", "peak_mni_y", "peak_mni_z")
+  if (!is.data.frame(peaks) || !nrow(peaks) || !all(need %in% names(peaks))) {
+    return(NULL)
+  }
+  data.frame(label = as.character(peaks$cluster_id),
+             x = as.numeric(peaks$peak_mni_x), y = as.numeric(peaks$peak_mni_y),
+             z = as.numeric(peaks$peak_mni_z),
+             sign = if ("sign" %in% names(peaks)) as.character(peaks$sign) else NA_character_,
+             stringsAsFactors = FALSE)
 }
 
 .montage_volume_palette <- function(palette_family, scale) {
@@ -2430,6 +2458,19 @@ render_montage_report <- function(manifest,
     if (any(ok)) {
       prov$input_files <- paste(paste0(label[ok], " = ", basename(path[ok])),
                                 collapse = "; ")
+      # Content hashes let a reader check that a shared map is the one shown.
+      exists <- ok & file.exists(path)
+      if (any(exists)) {
+        sha <- vapply(path[exists], function(f) {
+          tryCatch(digest::digest(file = f, algo = "sha256"),
+                   error = function(e) NA_character_)
+        }, character(1))
+        keep <- !is.na(sha)
+        if (any(keep)) {
+          prov$input_sha256 <- paste(paste0(basename(path[exists][keep]), "=", sha[keep]),
+                                     collapse = "; ")
+        }
+      }
     }
   }
   if (!is.null(labelling)) {

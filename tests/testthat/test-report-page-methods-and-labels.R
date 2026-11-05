@@ -267,7 +267,7 @@ test_that("the Methods paragraph states inputs, threshold, cap, slices, labels a
   text <- m$text
   expect_match(text, "^Two group-level z-statistic maps \\(N = 486 each\\)")
   expect_match(text, "neuromosaic 9.9.9", fixed = TRUE)
-  expect_match(text, "a fixed voxelwise threshold of |z| ≥ 5 (two-sided)", fixed = TRUE)
+  expect_match(text, "a fixed, uncorrected voxelwise threshold of |z| ≥ 5 (two-sided)", fixed = TRUE)
   expect_match(text, "clusters smaller than 20 voxels (18-connectivity) were removed", fixed = TRUE)
   expect_match(text, "saturate at ±22.3, the 99th percentile of suprathreshold |z| pooled", fixed = TRUE)
   expect_match(text, "up to 3 axial slices", fixed = TRUE)

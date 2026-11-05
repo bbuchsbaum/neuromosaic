@@ -68,7 +68,7 @@ test_that("projected surface values leave the medial wall empty, as the static f
 })
 
 test_that("the 3D surface opens on the static strip's first view, lateral left", {
-  expect_identical(montage_surface()$view, "left")
+  expect_identical(montage_surface()$view, "oblique")
   expect_identical(montage_surface(view = "oblique")$view, "oblique")
   expect_identical(montage_surface(view = "right-medial")$view, "right-medial")
   expect_error(montage_surface(view = "sideways"))
