@@ -1283,7 +1283,8 @@ body pre code { font: inherit; white-space: pre; }
   body { padding: 0; max-width: none; font-size: 10pt; line-height: 1.45; }
   .nm-maps-bar, .nm-toc, .nm-minibar, .nm-skip, .nm-map-selector, .nm-print-action,
   .nm-view-slot, .nm-volume-interactive, .nm-surface-interactive { display: none !important; }
-  .nm-map[data-nm-view] .nm-figure { display: block !important; }
+  .nm-map[data-nm-view] .nm-figure,
+  .nm-analysis-group[data-nm-view] .nm-figure { display: block !important; }
   .nm-report-title { font-size: 24pt; }
   .section.level2 > h2 { margin-top: 18pt; break-after: avoid; }
   /* Each analysis starts a page, its heading block held with its figure. */
