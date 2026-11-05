@@ -41,10 +41,12 @@ test("the inline browser runtime remains within its reviewed size envelope", () 
   //    capture (no TypeError after dispatch), the resaturate end-bin rule
   //    (a range end inside the threshold keeps the cap colour) and failure
   //    messages that name HTTP only for a blocked fetch from disk:
-  //    1,173,886 B -> 1,175,140 B.
+  //    1,173,886 B -> 1,175,140 B;
+  //  - 1.14 MiB for magnitude-graded opacity (live with threshold and range)
+  //    and the threshold control on unthresholded maps: ~1,188,800 B.
   // In bundle mode the runtime loads only when a reader first opens Slices,
   // so first-load weight is unaffected.
-  assert.ok(total < 1.13 * 1024 * 1024, `runtime is ${total} bytes`);
+  assert.ok(total < 1.14 * 1024 * 1024, `runtime is ${total} bytes`);
 });
 
 test("the running adapter version agrees with its reproducibility manifest", () => {

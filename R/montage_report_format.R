@@ -990,7 +990,9 @@ montage_report_formatters <- function(manifest = NULL,
   }
   k <- .montage_report_pick(row, "effective_min_cluster_size", "min_cluster_size")
   conn <- .montage_report_pick(row, "effective_connectivity", "connectivity")
-  extent <- if (!(length(k) == 1L && is.na(k)) && !.montage_report_is_parcel_row(row)) {
+  # A cluster extent only qualifies a threshold; unthresholded maps have none.
+  extent <- if (!is.null(thr) && !(length(k) == 1L && is.na(k)) &&
+                !.montage_report_is_parcel_row(row)) {
     paste0("clusters of at least ", fmt(k), " voxels",
            if (!(length(conn) == 1L && is.na(conn))) paste0(" (", sub("-connect$", "-connectivity", conn), ")"))
   }

@@ -22,6 +22,13 @@
   semantics <- if (identical(palette, "nm-signed") &&
                    isTRUE(meta$signed %||% row$effective_signed[[1L]])) {
     "positive values in warm colours, negative values in cool colours"
+  } else if (length(palette) == 1L && !is.na(palette) && startsWith(palette, "custom:")) {
+    # An authored colour table: describe it, never its internal identity.
+    if (isTRUE(meta$signed %||% row$effective_signed[[1L]])) {
+      "custom diverging palette centred on zero"
+    } else {
+      "custom colour palette"
+    }
   } else if (length(palette) == 1L && !is.na(palette) && nzchar(palette)) {
     paste0(palette, " palette")
   } else if (length(palette) > 1L) {

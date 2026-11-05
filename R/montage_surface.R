@@ -62,6 +62,11 @@
 #' @param orientation_labels Draw anterior/posterior marks.
 #' @param overlay_alpha Surface overlay alpha. The publication default leaves
 #'   a small amount of anatomical context visible beneath the statistic.
+#' @param magnitude_opacity Optional fade by magnitude (a list with `low`,
+#'   `high`, `gamma`, `floor`; see [neurosurf::surface_layer()]), so weak
+#'   values recede over the anatomy with the same rule the interactive views
+#'   use. Report renderers derive it from the map's `alpha_mode`. Ignored when
+#'   the installed neuroatlas cannot fade overlays.
 #' @param palette Base parcel palette.
 #' @param overlay_palette Overlay palette. `"nm-signed"` (the default for
 #'   signed maps) is the report's threshold-saturated diverging palette; it is
@@ -144,6 +149,7 @@ surf_montage <- function(stat = NULL,
                          camera = c("canonical", "presentation"),
                          orientation_labels = TRUE,
                          overlay_alpha = 0.85,
+                         magnitude_opacity = NULL,
                          palette = "cork",
                          overlay_palette = if (isTRUE(signed)) "nm-signed" else "lajolla",
                          width = 3000,
@@ -442,6 +448,24 @@ surf_montage <- function(stat = NULL,
   montage_bg <- .nm_canvas
 
   plot_anatomy_provenance <- NULL
+  # One underlay for the figure of record and the interactive surface: without
+  # an explicit metric, use the sulcal depth montage_surface() shows by
+  # default, so both views draw the same broad gyral/sulcal pattern.
+  if (is.null(anatomy_metric) && !is.null(surfatlas)) {
+    depth <- tryCatch(
+      lapply(c(lh = "lh", rh = "rh"), function(h) {
+        neuroatlas::surface_anatomy(surfatlas, h, type = "sulcal_depth")$metric
+      }),
+      error = function(e) NULL
+    )
+    if (!is.null(depth) && all(vapply(depth, function(x) {
+      is.numeric(x) && length(x) && all(is.finite(x))
+    }, logical(1)))) {
+      anatomy_metric <- depth
+      anatomy_metric_source <- anatomy_metric_source %||%
+        "sulcal depth (matches the interactive surface)"
+    }
+  }
   plot_backend <- if (!has_vals) "cpu_barycentric" else if (parcel_cpu) {
     "cpu_deferred_parcels"
   } else {
@@ -501,6 +525,7 @@ surf_montage <- function(stat = NULL,
           max(abs(threshold), .Machine$double.eps)
         },
         overlay_alpha = overlay_alpha,
+        overlay_magnitude_opacity = magnitude_opacity,
         overlay_palette = overlay_palette,
         overlay_lim = overlay_lim,
         overlay_fun = fun,
@@ -533,6 +558,8 @@ surf_montage <- function(stat = NULL,
         plot_args$render_height <- 625L
       }
     }
+    # Older neuroatlas releases cannot fade; never send them the argument.
+    if (is.null(magnitude_opacity)) plot_args$overlay_magnitude_opacity <- NULL
     do.call(plot_fun, plot_args)
   }
   # Cap triangles mark values beyond the cap that are actually drawn: the
@@ -544,6 +571,7 @@ surf_montage <- function(stat = NULL,
   )
   cap_source <- if (is.null(drawn)) values[supra] else drawn
   key_args <- list(
+    magnitude_opacity = magnitude_opacity,
     palette = if (.nm_is_palette(palette_name)) palette_name else overlay_palette,
     limits = overlay_lim,
     threshold = if (continuous) NA_real_ else threshold,
@@ -603,6 +631,7 @@ surf_montage <- function(stat = NULL,
           threshold = key_args$threshold,
           signed = signed, tail = tail, continuous = continuous,
           title = legend$text,
+          magnitude_opacity = key_args$magnitude_opacity,
           over_low = key_args$over_low,
           over_high = key_args$over_high
         )
@@ -750,7 +779,8 @@ surf_montage <- function(stat = NULL,
 .surf_montage_draw_with_key <- function(p, res, height, palette, colours,
                                         limits, threshold, signed, tail,
                                         continuous, title, over_low = FALSE,
-                                        over_high = FALSE) {
+                                        over_high = FALSE,
+                                        magnitude_opacity = NULL) {
   key_px <- 120
   px <- function(v) grid::unit(v * 72 / res, "bigpts")
   grid::grid.newpage()
@@ -763,7 +793,7 @@ surf_montage <- function(stat = NULL,
   key <- .nm_with_device_fonts(.nm_colour_key_grob(
     key_palette, limits, threshold, signed, tail, continuous,
     over_low = over_low, over_high = over_high,
-    title = title, scale = 144 / res
+    title = title, scale = 144 / res, magnitude_opacity = magnitude_opacity
   ))
   geo <- .nm_key_geometry()
   key$vp <- grid::viewport(
@@ -965,6 +995,7 @@ surf_montage <- function(stat = NULL,
     k$palette, k$limits, k$threshold, k$signed, k$tail, k$continuous,
     over_low = k$over_low, over_high = k$over_high, title = k$title,
     note = k$note, fontsize = fs, theme = th, note_below = TRUE,
+    magnitude_opacity = k$magnitude_opacity,
     title_above = geo$title_above
   )
   key_top <- height_px - key_h + block$above

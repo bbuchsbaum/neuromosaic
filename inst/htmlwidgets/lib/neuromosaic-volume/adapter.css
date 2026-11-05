@@ -517,7 +517,9 @@
   position: relative;
   height: 10px;
   border-radius: 3px;
-  background: var(--nm-scale-gradient, #555);
+  /* Faded stops reveal a neutral ground, as faded voxels reveal anatomy. */
+  background-color: var(--nm-vv-scale-ground, #e3e3df);
+  background-image: var(--nm-scale-gradient, linear-gradient(#555, #555));
   box-shadow: inset 0 0 0 1px var(--nm-vv-hair);
 }
 

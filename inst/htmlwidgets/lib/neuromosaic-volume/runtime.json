@@ -13,18 +13,18 @@
     },
     {
       "path": "adapter.js",
-      "bytes": 117707,
-      "sha256": "c6a32f2f0d7d4b6f1f2f4df8a8dafa0b1fe7909375daf3ec21ded13152bf62fe"
+      "bytes": 125162,
+      "sha256": "3ff6fb7ac2f19657acf7caf2bc0732eeca2527ff33961502a24373c9cb3eecd7"
     },
     {
       "path": "adapter.css",
-      "bytes": 21251,
-      "sha256": "948f5b5291bd279fc7fd83c3112687fa9c35de27ee89112fe030c810ada9a939"
+      "bytes": 21413,
+      "sha256": "ed77cef80272d0fc91b3deaa85b61b3c652d025958f60511a9293e737f55237c"
     },
     {
       "path": "display.js",
-      "bytes": 14924,
-      "sha256": "9d95ccd9628268ab30a66c68f824fbebdb2a73456079f813498b0842f27d6e21"
+      "bytes": 17186,
+      "sha256": "6a5bc5c39bab7f6e2ddf1af8b31e2e87b5c98e50d25f8d863e2251e787c5cb44"
     },
     {
       "path": "geometry.js",

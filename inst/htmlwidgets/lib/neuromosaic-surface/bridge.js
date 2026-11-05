@@ -304,6 +304,7 @@
     if (!handle) return;
     try {
       handle.selectLayer(layerId);
+      applySyncedDisplay(host);
     } catch (error) {
       flashError(host, "The interactive surface could not show this map: " + error.message);
     }
@@ -450,6 +451,34 @@
     }
   }
 
+  // An explicit colour table authored in the manifest (a custom palette has
+  // no preset id the runtime can expand), as RGB stops low -> high.
+  function manifestStops(host, layer) {
+    var id = layer && (layer.id || layer.layerId);
+    var entry = id && manifestLayers(host)[id];
+    var colors = entry && entry.colorMap;
+    if (!Array.isArray(colors) || colors.length < 2) return null;
+    var stops = colors.map(function (hex) { return display.hexRgb(hex); });
+    return stops.every(Boolean) ? stops : null;
+  }
+
+  // Light cortex grey the faded key blends toward.
+  var KEY_GROUND = [226, 226, 222];
+
+  // Opacity multiplier per value for the layer's magnitude fade, evaluated by
+  // the runtime's own rule; null when the layer does not fade.
+  function keyFade(host, layer, range, mask) {
+    var entry = layer && manifestLayers(host)[layer.id];
+    var spec = entry && entry.magnitudeOpacity;
+    var api = window.surfview;
+    if (!spec || !api || typeof api.magnitudeOpacityAt !== "function" ||
+        typeof api.normalizeMagnitudeOpacity !== "function") return null;
+    var resolved;
+    try { resolved = api.normalizeMagnitudeOpacity(spec); } catch (error) { return null; }
+    var threshold = mask && mask[1] > mask[0] ? mask : [0, 0];
+    return function (value) { return api.magnitudeOpacityAt(value, resolved, range, threshold); };
+  }
+
   function channel(value) {
     var v = Number(value);
     return Math.round(Math.max(0, Math.min(1, v > 1 ? v / 255 : v)) * 255);
@@ -459,7 +488,7 @@
     var box = part(host, "legend");
     if (!box) return;
     var scalar = layer && layer.scalarMapping;
-    var stops = scalar && colorStops(scalar.colorMap.id);
+    var stops = scalar && (colorStops(scalar.colorMap.id) || manifestStops(host, layer));
     var range = scalar && display.pair(scalar.displayRange.value);
     if (!stops || !stops.length || !range || !(range[1] > range[0])) {
       box.hidden = true;
@@ -469,6 +498,7 @@
     box.hidden = false;
     host.__nmSurfaceLegendRange = range;
     var mask = display.pair(scalar.maskInterval.value);
+    var fade = keyFade(host, layer, range, mask);
     var canvas = box.querySelector("canvas");
     var width = 256;
     var height = 8;
@@ -489,9 +519,12 @@
           image.data[o + 1] = stripe ? 200 : 239;
           image.data[o + 2] = stripe ? 197 : 235;
         } else {
-          image.data[o] = channel(color[0]);
-          image.data[o + 1] = channel(color[1]);
-          image.data[o + 2] = channel(color[2]);
+          // With a magnitude fade the key shows each value as it is drawn:
+          // its colour blended over the light cortex grey by its opacity.
+          var w = fade ? fade(value) : 1;
+          image.data[o] = Math.round(w * channel(color[0]) + (1 - w) * KEY_GROUND[0]);
+          image.data[o + 1] = Math.round(w * channel(color[1]) + (1 - w) * KEY_GROUND[1]);
+          image.data[o + 2] = Math.round(w * channel(color[2]) + (1 - w) * KEY_GROUND[2]);
         }
         image.data[o + 3] = 255;
       }
@@ -676,6 +709,7 @@
       var data = dataRange(host, layerId);
       var absInput = part(host, "threshold-abs");
       if (absInput && data) absInput.max = display.formatNumber(Math.max(Math.abs(data[0]), Math.abs(data[1])));
+      syncThresholdSlider(host, mask, data);
       var fieldset = host.querySelector(".nm-sv-threshold");
       if (fieldset && !fieldset.hasAttribute("data-user-mode")) {
         setThresholdMode(host, isSymmetric(mask) ? "symmetric" : "asymmetric");
@@ -694,6 +728,35 @@
     renderMeta(host, layer);
   }
 
+  // The magnitude slider spans 0..max|value| on a square-root scale, so the
+  // range of everyday thresholds (|z| 1-4) gets most of the track while the
+  // largest peaks stay reachable.
+  function sliderToMagnitude(position, max) {
+    var t = Math.max(0, Math.min(1, Number(position) / 1000));
+    return t * t * max;
+  }
+
+  function magnitudeToSlider(value, max) {
+    if (!(max > 0)) return 0;
+    return Math.round(Math.sqrt(Math.max(0, Math.min(1, Number(value) / max))) * 1000);
+  }
+
+  function thresholdMax(host, data) {
+    if (data) return Math.max(Math.abs(data[0]), Math.abs(data[1]));
+    var range = host.__nmSurfaceLegendRange;
+    return range ? Math.max(Math.abs(range[0]), Math.abs(range[1])) : 0;
+  }
+
+  function syncThresholdSlider(host, mask, data) {
+    var slider = part(host, "threshold-slider");
+    if (!slider || document.activeElement === slider) return;
+    var max = thresholdMax(host, data);
+    slider.disabled = !(max > 0);
+    var shown = Math.max(Math.abs(mask[0]), Math.abs(mask[1]));
+    slider.value = String(magnitudeToSlider(shown, max));
+    slider.setAttribute("aria-valuetext", "|" + symbolFor(legendFor(host)) + "| \u2265 " + fmt(shown));
+  }
+
   function renderMeta(host, layer) {
     var meta = part(host, "meta");
     if (!meta || !layer || !layer.scalarMapping) return;
@@ -707,7 +770,11 @@
         ? "Shown where |" + symbol + "| \u2265 " + fmt(mask[1]) + suffix
         : "Hidden from " + fmt(mask[0]) + " to " + fmt(mask[1]) + unit;
     } else {
-      meta.textContent = "All values shown";
+      // With a magnitude fade nothing is hidden, but weak values recede.
+      var entry = manifestLayers(host)[layer.id];
+      meta.textContent = entry && entry.magnitudeOpacity
+        ? "All values shown, faded by |" + symbol + "|"
+        : "All values shown";
     }
   }
 
@@ -729,9 +796,76 @@
   }
 
   function applyScalar(host, update) {
-    return withTarget(host, function (target, address) {
+    var result = withTarget(host, function (target, address) {
       return target.updateScalarMapping(address, update);
     });
+    publishDisplay(host);
+    return result;
+  }
+
+  // Page-level display sync with the slice viewer: one threshold and colour
+  // range per map. Reader edits are published to a shared store and a
+  // "nm-display-sync" event; synced values arrive live or on the next load.
+  var SYNC_EVENT = "nm-display-sync";
+
+  function syncStore() {
+    window.__nmDisplaySync = window.__nmDisplaySync || {};
+    return window.__nmDisplaySync;
+  }
+
+  function syncKey(analysisId, mapId) {
+    return String(analysisId) + "\u0000" + String(mapId);
+  }
+
+  function samePair(a, b) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === 2 && b.length === 2 &&
+      Math.abs(a[0] - b[0]) < 1e-12 && Math.abs(a[1] - b[1]) < 1e-12;
+  }
+
+  function currentScalar(host) {
+    var handle = host.__nmSurfaceHandle;
+    var target = handle && handle.controlTarget;
+    var layer = target && layerFor(target.getSnapshot(), currentLayerId(host));
+    var scalar = layer && layer.scalarMapping;
+    return scalar ? {
+      threshold: display.pair(scalar.maskInterval.value) || [0, 0],
+      range: display.pair(scalar.displayRange.value)
+    } : null;
+  }
+
+  function publishDisplay(host) {
+    if (host.__nmApplyingSync) return;
+    var current = currentScalar(host);
+    var mapId = host.getAttribute("data-nm-surface-map");
+    var analysisId = host.getAttribute("data-nm-surface-analysis");
+    if (!current || !current.range || !mapId) return;
+    var key = syncKey(analysisId, mapId);
+    var previous = syncStore()[key];
+    if (previous && samePair(previous.threshold, current.threshold) &&
+        samePair(previous.range, current.range)) return;
+    syncStore()[key] = current;
+    document.dispatchEvent(new CustomEvent(SYNC_EVENT, {
+      detail: { analysisId: analysisId, mapId: mapId, threshold: current.threshold,
+        range: current.range, source: "surface" }
+    }));
+  }
+
+  function applySyncedDisplay(host) {
+    var mapId = host.getAttribute("data-nm-surface-map");
+    var entry = syncStore()[syncKey(host.getAttribute("data-nm-surface-analysis"), mapId)];
+    var current = currentScalar(host);
+    if (!entry || !current) return;
+    if (samePair(current.threshold, entry.threshold) && samePair(current.range, entry.range)) return;
+    host.__nmApplyingSync = true;
+    try {
+      withTarget(host, function (target, address) {
+        return target.updateScalarMapping(address, {
+          maskInterval: entry.threshold.slice(), displayRange: entry.range.slice()
+        });
+      });
+    } finally {
+      host.__nmApplyingSync = false;
+    }
   }
 
   function applyOpacity(host, value) {
@@ -816,16 +950,33 @@
         applyScalar(host, { colorMapId: palette.value });
       });
     }
-    var applyRange = function (commit) {
+    // A diverging range authored symmetric about zero stays symmetric: the
+    // edited end sets both, so white stays at zero and both signs fade alike.
+    var symmetricRange = function () {
+      var defaults = host.__nmSurfaceDisplayStore.get(currentLayerId(host));
+      var r = defaults && display.pair(defaults.displayRange);
+      return Boolean(r && r[0] < 0 && r[1] > 0 && Math.abs(r[0] + r[1]) < 1e-9 * r[1]);
+    };
+    var applyRange = function (commit, edited) {
       var value = readPair(host, "range-low", "range-high");
+      if (value && edited && symmetricRange()) {
+        var m = Math.abs(Number(part(host, edited).value));
+        if (m > 0) {
+          value = [-m, m];
+          var other = part(host, edited === "range-low" ? "range-high" : "range-low");
+          if (other && document.activeElement !== other) {
+            other.value = display.formatNumber(edited === "range-low" ? m : -m);
+          }
+        }
+      }
       if (value) applyScalar(host, { displayRange: value });
       else if (commit) reportResult(host, { ok: false, message: "enter two finite values, low first" });
     };
     ["range-low", "range-high"].forEach(function (name) {
       var input = part(host, name);
       if (!input) return;
-      input.addEventListener("input", debounced(host, "range", function () { applyRange(false); }));
-      input.addEventListener("change", committed(host, "range", applyRange));
+      input.addEventListener("input", debounced(host, "range", function () { applyRange(false, name); }));
+      input.addEventListener("change", committed(host, "range", function (commit) { applyRange(commit, name); }));
     });
     // Thresholds are clamped into the data range: a threshold above the
     // largest |value| would claim a cut no vertex can pass.
@@ -840,6 +991,19 @@
     if (abs) {
       abs.addEventListener("input", debounced(host, "abs", applyAbs));
       abs.addEventListener("change", committed(host, "abs", applyAbs));
+    }
+    var slider = part(host, "threshold-slider");
+    if (slider && abs) {
+      // Dragging applies once per frame; the number box mirrors the slider.
+      var pending = false;
+      slider.addEventListener("input", function () {
+        var max = thresholdMax(host, dataRange(host, currentLayerId(host)));
+        abs.value = display.formatNumber(sliderToMagnitude(slider.value, max));
+        slider.setAttribute("aria-valuetext", "|" + symbolFor(legendFor(host)) + "| \u2265 " + abs.value);
+        if (pending) return;
+        pending = true;
+        window.requestAnimationFrame(function () { pending = false; applyAbs(true); });
+      });
     }
     var applyMask = function (commit) {
       var low = part(host, "threshold-low");
@@ -967,6 +1131,53 @@
       buttons[next].tabIndex = 0;
       buttons[next].focus();
     });
+  }
+
+  // Surface types (inflated, pial, white, ...) when the scene ships them.
+  var SURFACE_LABELS = {
+    inflated: "Inflated", pial: "Pial", white: "White", midthickness: "Mid-thickness",
+    smoothwm: "Smoothed", veryinflated: "Very inflated", sphere: "Sphere", flat: "Flat"
+  };
+
+  function surfaceLabel(name) {
+    return SURFACE_LABELS[name] || name.charAt(0).toUpperCase() + name.slice(1).replace(/[_-]+/g, " ");
+  }
+
+  function buildSurfaceTypes(host) {
+    var handle = host.__nmSurfaceHandle;
+    var names = handle && typeof handle.getSurfaceVariants === "function" ? handle.getSurfaceVariants() : [];
+    var toolbar = host.querySelector(".nm-sv-toolbar");
+    if (!toolbar || names.length < 2 || toolbar.querySelector(".nm-sv-surfaces")) return;
+    var group = document.createElement("div");
+    group.className = "nm-sv-surfaces";
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", "Surface type");
+    var mark = function () {
+      var current = handle.getSurfaceVariant();
+      group.querySelectorAll("button").forEach(function (button) {
+        button.setAttribute("aria-pressed", button.getAttribute("data-surface") === current ? "true" : "false");
+      });
+    };
+    names.forEach(function (name) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "nm-sv-surface";
+      button.textContent = surfaceLabel(name);
+      button.title = "Show the " + surfaceLabel(name).toLowerCase() + " surface";
+      button.setAttribute("data-surface", name);
+      button.addEventListener("click", function () {
+        try {
+          handle.setSurfaceVariant(name);
+          mark();
+          announce(host, "Surface: " + surfaceLabel(name));
+        } catch (error) {
+          flashError(host, "That surface is unavailable: " + error.message);
+        }
+      });
+      group.appendChild(button);
+    });
+    mark();
+    toolbar.insertBefore(group, toolbar.firstChild);
   }
 
   function announce(host, text) {
@@ -1443,7 +1654,7 @@
 
   function tuneMaterials(host) {
     var viewer = host.__nmSurfaceHandle && host.__nmSurfaceHandle.viewer;
-    if (!viewer || !viewer.surfaces || host.getAttribute("data-nm-surface-preset") !== "report") return;
+    if (!viewer || !viewer.surfaces) return;
     surfacesOf(viewer).forEach(function (surface) {
       var material = surface && surface.mesh && surface.mesh.material;
       if (material && material.specular && typeof material.specular.setHex === "function") {
@@ -1457,12 +1668,15 @@
   // (sulci) to 0.90 (gyri) in sRGB. surfview treats curvature greys as linear
   // light, so the same greys are 0.48-0.79 here (brightness 0.635 +/- 0.155);
   // the stock preset (0.57-0.89 linear) renders nearly flat once encoded.
-  var REPORT_CURVATURE = { brightness: 0.635, contrast: 0.31, smoothness: 0.2 };
+  var REPORT_CURVATURE = { brightness: 0.76, contrast: 0.18, smoothness: 0.2 };
 
+  // Every preset gets the report's curvature greys and overlay lighting: the
+  // stock presets render the folding nearly flat under an overlay, and lit
+  // overlays drift away from their colour key.
   function reportStyle(name) {
-    if (name !== "report" || typeof window.surfview.resolveStylePreset !== "function") return null;
+    if (typeof window.surfview.resolveStylePreset !== "function") return null;
     try {
-      var style = window.surfview.resolveStylePreset("report");
+      var style = window.surfview.resolveStylePreset(name || "report");
       Object.keys(REPORT_LIGHTING).forEach(function (key) { style.lighting[key] = REPORT_LIGHTING[key]; });
       if (style.curvature) {
         Object.keys(REPORT_CURVATURE).forEach(function (key) { style.curvature[key] = REPORT_CURVATURE[key]; });
@@ -1524,6 +1738,15 @@
         if (!token.cancelled) host.__nmSurfaceParcels = lookup;
       });
       buildViews(host);
+      buildSurfaceTypes(host);
+      host.__nmOnDisplaySync = function (event) {
+        var d = event.detail || {};
+        if (d.source === "surface" || d.analysisId !== host.getAttribute("data-nm-surface-analysis") ||
+            d.mapId !== host.getAttribute("data-nm-surface-map")) return;
+        applySyncedDisplay(host);
+      };
+      document.addEventListener(SYNC_EVENT, host.__nmOnDisplaySync);
+      applySyncedDisplay(host);
       host.__nmSurfaceView = initialView(host);
       markView(host, host.__nmSurfaceView);
       var target = handle.controlTarget;
@@ -1635,6 +1858,8 @@
       var subscription = host.__nmSurfaceSubscription;
       if (subscription && typeof subscription.unsubscribe === "function") subscription.unsubscribe();
       host.__nmSurfaceSubscription = null;
+      if (host.__nmOnDisplaySync) document.removeEventListener(SYNC_EVENT, host.__nmOnDisplaySync);
+      host.__nmOnDisplaySync = null;
       if (host.__nmSurfaceResize) host.__nmSurfaceResize.disconnect();
       host.__nmSurfaceResize = null;
       var widget = host.querySelector(".surfwidget");

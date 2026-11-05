@@ -34,6 +34,7 @@ surf_montage(
   camera = c("canonical", "presentation"),
   orientation_labels = TRUE,
   overlay_alpha = 0.85,
+  magnitude_opacity = NULL,
   palette = "cork",
   overlay_palette = if (isTRUE(signed)) "nm-signed" else "lajolla",
   width = 3000,
@@ -138,6 +139,12 @@ only to `stat` maps.}
 
 \item{overlay_alpha}{Surface overlay alpha. The publication default leaves
 a small amount of anatomical context visible beneath the statistic.}
+
+\item{magnitude_opacity}{Optional fade by magnitude (a list with `low`,
+`high`, `gamma`, `floor`; see [neurosurf::surface_layer()]), so weak
+values recede over the anatomy with the same rule the interactive views
+use. Report renderers derive it from the map's `alpha_mode`. Ignored when
+the installed neuroatlas cannot fade overlays.}
 
 \item{palette}{Base parcel palette.}
 

@@ -337,6 +337,15 @@
         as.numeric(metadata$alpha)
       },
       alpha_mode = metadata$alpha_mode,
+      magnitude_opacity = .montage_row_magnitude_opacity(
+        row, metadata$alpha_mode,
+        threshold = if (identical(metadata$display_mode, "continuous")) {
+          0
+        } else {
+          as.numeric(metadata$threshold)
+        },
+        cap = max(abs(as.numeric(metadata$limits)))
+      ),
       support = if (metadata$support %in% c("analysis", "primary")) {
         metadata$support
       } else {

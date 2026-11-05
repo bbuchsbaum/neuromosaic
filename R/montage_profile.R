@@ -572,8 +572,14 @@ resolve_montage_profiles <- function(manifest, profiles = NULL,
   .profile_scalar_character(legend_title, "legend_title")
   .profile_scalar_character(units, "units")
   title <- legend_title %||% "Statistic"
+  # Units repeat nothing the title already says: "z", not "z (z)"; "beta",
+  # not "beta (beta)"; "Z-statistic", not "Z-statistic (z)".
+  redundant <- !is.null(units) && (
+    identical(tolower(trimws(units)), tolower(trimws(title))) ||
+      startsWith(tolower(trimws(title)), tolower(trimws(units)))
+  )
   list(title = title, units = units,
-       text = if (is.null(units)) title else paste0(title, " (", units, ")"))
+       text = if (is.null(units) || redundant) title else paste0(title, " (", units, ")"))
 }
 
 .montage_row_legend <- function(row) {

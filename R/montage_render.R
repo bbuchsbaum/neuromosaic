@@ -1548,6 +1548,13 @@ render_montage_report <- function(manifest,
 
     base_args$output_file <- image_path
     base_args$empty <- eff_empty
+    if (is.null(base_args$magnitude_opacity)) {
+      base_args$magnitude_opacity <- .montage_row_magnitude_opacity(
+        manifest[i, , drop = FALSE], manifest$effective_alpha_mode[[i]],
+        threshold = if (continuous) 0 else eff_threshold,
+        cap = eff_cap %||% max(abs(as.numeric(base_args$limits %||% 1)))
+      )
+    }
     result <- do.call(surf_montage, base_args)
     panels[[map_id]]$surface_image <- result$image
     variants <- .montage_write_surface_variants(result$strip, result$image)

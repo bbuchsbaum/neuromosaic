@@ -31,7 +31,9 @@ montage_surface(
   alt_text = NULL,
   anatomy_style = c("auto", "continuous", "binary", "none"),
   anatomy_midpoint = NULL,
-  anatomy_invert = NULL
+  anatomy_invert = NULL,
+  variants = NULL,
+  variant = "inflated"
 )
 }
 \arguments{
@@ -116,6 +118,16 @@ freesurfer preset and continuous otherwise; none disables the underlay.}
 
 \item{anatomy_midpoint, anatomy_invert}{Anatomical dark/light boundary and
 polarity passed to [neurosurf::normalize_surface_anatomy()].}
+
+\item{variants}{Optional alternative embeddings of the displayed meshes that
+the reader can switch between, named by surface type, e.g.
+`list(pial = neuroatlas::schaefer_surf(400, 17, surf = "pial"), white =
+...)`. Each entry is a surface atlas or a `left`/`right` list of
+`SurfaceGeometry`, `SurfaceSet` or n x 3 coordinate matrices in the
+displayed surface's vertex order. Values and curvature are shared.}
+
+\item{variant}{Name of the displayed embedding when `variants` is given
+(default `"inflated"`).}
 }
 \value{
 A validated `montage_surface` value object.
