@@ -16,9 +16,31 @@
   shared per map between Slices and 3D surface.
 * `montage_surface(variants =, variant =)` adds an Inflated / Pial / White
   (or any named) surface switch to the 3D viewer.
+* Report volume figures tag each cluster's peak (P1, N1, ...) on its nearest
+  slice, in the sign's colour, so the figure and the cluster table share one
+  vocabulary; `stat_montage(peak_labels =)` exposes the same tags.
+* Cluster tables add the estimate and standard error at each peak, sampled
+  from the analysis's own estimate and SE maps.
+* Each volume figure links its unthresholded map ("Map (NIfTI, viewer
+  copy)"), and provenance records the SHA-256 of every input map file.
 
 ## Changes
 
+* Shared slice sets are placed from the thresholded maps and span every
+  reported cluster, so each tabulated peak lies within half a slice step;
+  unthresholded companions no longer spread slices over empty anatomy.
+* Results at a glance shows glass brains for thresholded maps and, for
+  unthresholded maps, their values at the analysis's peaks, by sign. QC
+  collapses to one header line (N per analysis) when every map passes.
+* Methods states each fact once, in paragraphs with run-in heads: thresholds
+  as fixed and uncorrected, the extent rule as a display filter, one colour
+  cap per quantity, and what QC "ok" means. Spec lines mark fixed thresholds
+  "uncorrected".
+* In grouped analyses the Static / Slices / 3D switch and its viewers sit
+  under the map tabs. The 3D viewer opens on the Overview pose by default
+  (`montage_surface(view = "oblique")`; was `"left"`).
+* Cached static surface figures are keyed on the installed neurosurf
+  version, so an upgrade no longer reuses figures drawn by the old renderer.
 * Static and 3D surfaces share a soft gyral/sulcal two-tone underlay (sulcal
   depth, display greys 0.66-0.90) instead of a faint linear shading; the
   static medial wall is drawn at the light gyral tone.
