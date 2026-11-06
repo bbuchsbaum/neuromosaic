@@ -148,13 +148,23 @@ test_that("VolumeScene schema exposes the versioned generic contract", {
 
   expect_s3_class(schema, "data.frame")
   expect_named(schema, c("object", "field", "required", "type", "role"))
-  expect_equal(nrow(schema), 70L)
+  expect_equal(nrow(schema), 71L)
   expect_true(all(c(
     "analysis_id", "map_id", "quantity", "initial_world_coord",
     "zlevel_bookmarks", "palette", "palette_colors", "compressed_bytes", "fingerprint"
   ) %in% schema$field))
   expect_false(any(c("cope", "varcope", "zstat", "stat_map", "recipe") %in%
                      schema$field))
+  expect_false(schema$required[schema$object == "analysis" & schema$field == "analysis_label"])
+})
+
+test_that("VolumeScene preserves an optional analysis label and rejects invalid labels", {
+  scene <- .valid_volume_scene()
+  scene$analyses[[1]]$analysis_label <- "Faces versus places"
+  out <- validate_montage_volume_scene(scene)
+  expect_identical(out$analyses[[1]]$analysis_label, "Faces versus places")
+  scene$analyses[[1]]$analysis_label <- c("Faces", "Places")
+  expect_error(validate_montage_volume_scene(scene), "analysis_label")
 })
 
 test_that("VolumeScene validates a one-map orthogonal scene", {

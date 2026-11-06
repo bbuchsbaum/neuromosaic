@@ -40,6 +40,11 @@
 .nm-surface-interactive *::after { box-sizing: border-box; }
 
 .nm-sv-frame { position: relative; }
+.nm-surface-analysis-label {
+  margin: 0 0 8px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
 /* Tall enough that the brain is never cut off, short enough that the router,
    the canvas and its view bar fit in one screen. */
 .nm-sv-stage {

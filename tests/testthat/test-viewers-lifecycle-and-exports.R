@@ -20,7 +20,11 @@ r4_interactive <- function() {
 
 test_that("each map's viewer controls carry the map's name, and the readout is not a live region", {
   host <- .montage_interactive_host_html(r4_interactive(), "faces")
-  expect_match(host, 'aria-label="Slice view controls: Faces &gt; average"', fixed = TRUE)
+  expect_match(host, 'aria-label="Slice view controls: faces \u2014 Faces &gt; average"', fixed = TRUE)
+  named <- r4_interactive()
+  named$scene$analyses[[1]]$analysis_label <- "Face localizer"
+  expect_match(.montage_interactive_host_html(named, "faces"),
+    'aria-label="Slice view controls: Face localizer \u2014 Faces &gt; average"', fixed = TRUE)
   expect_no_match(host, "Interactive map controls", fixed = TRUE)
   readout <- regmatches(host, regexpr("<p class=\"nm-volume-readout\"[^>]*>", host))
   expect_length(readout, 1L)

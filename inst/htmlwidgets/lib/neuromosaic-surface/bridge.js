@@ -270,14 +270,26 @@
   }
 
   // Maps --------------------------------------------------------------------
+  function mapContextLabel(host, label) {
+    var analysis = host.getAttribute("data-nm-surface-analysis-label") || "";
+    return analysis && analysis !== label ? analysis + " \u2014 " + label : label;
+  }
+
   function setTarget(host, mapId) {
     if (host.getAttribute("data-nm-surface-map") !== mapId) clearPendingEdits(host);
     host.setAttribute("data-nm-surface-map", mapId);
     var labels = parse(host, "data-nm-surface-labels");
     var label = labels[mapId] || mapId;
-    host.setAttribute("aria-label", "Interactive cortical surface: " + label);
+    var context = mapContextLabel(host, label);
+    host.setAttribute("aria-label", "Interactive cortical surface: " + context);
     var stage = host.querySelector(".nm-sv-stage");
-    if (stage) stage.setAttribute("aria-label", "3D surface viewer: " + label);
+    if (stage) stage.setAttribute("aria-label", "3D surface viewer: " + context);
+    var controls = part(host, "display-controls");
+    if (controls) {
+      controls.setAttribute("aria-label", "Surface display settings: " + context);
+      var heading = controls.querySelector("h4 .nm-sv-visually-hidden");
+      if (heading) heading.textContent = " \u2014 " + context;
+    }
     var title = part(host, "target");
     if (title) title.textContent = label;
     var select = part(host, "map-select");
@@ -1249,7 +1261,7 @@
     ctx.font = "600 15px " + font;
     var labels = parse(host, "data-nm-surface-labels");
     var spec = viewSpecs(host).filter(function (item) { return item.id === host.__nmSurfaceView; })[0];
-    ctx.fillText((labels[host.getAttribute("data-nm-surface-map")] || "") +
+    ctx.fillText(mapContextLabel(host, labels[host.getAttribute("data-nm-surface-map")] || "") +
       (spec ? "  \u00b7  " + spec.title : ""), PAD, PAD + 14);
     ctx.drawImage(shot, PAD, PAD + 26, cssW, cssH);
     if (KEY) {

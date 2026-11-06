@@ -1,5 +1,18 @@
 # neuromosaic 0.2.1
 
+## Bug fixes
+
+* Unknown map quantities with explicit `threshold`, `p`, or `q` settings now
+  require an explicit display mode or profile instead of silently falling back
+  to an unthresholded display. The error identifies the map and directs z/t maps
+  to `quantity = "test_statistic"` with the actual distribution (#41).
+* Singleton headings, static figure descriptions, interactive volume/surface
+  context, and exported PNG titles retain the analysis label alongside the
+  selected map variant, including after map switches (#48).
+* Continuous-only reports use descriptive map navigation instead of surviving
+  cluster counts. Continuous map captions and metadata no longer claim unused
+  threshold or minimum-cluster settings (#49).
+
 ## New features
 
 * Unthresholded maps fade by |value| in every view with one rule: static
