@@ -35,6 +35,7 @@ module.exports = async function globalSetup() {
     "interactive-volume.html",
     "interactive-volume-bundle.html",
     "interactive-volume-fine.html",
+    "interactive-volume-contrasts.html",
     "interactive-surface.html",
     "interactive-surface-bundle.html",
     "parcel-surface-visual.html",

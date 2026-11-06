@@ -44,9 +44,12 @@ test("the inline browser runtime remains within its reviewed size envelope", () 
   //    1,173,886 B -> 1,175,140 B;
   //  - 1.14 MiB for magnitude-graded opacity (live with threshold and range)
   //    and the threshold control on unthresholded maps: ~1,188,800 B.
+  //  - 1.15 MiB for "Keep settings across maps" (adapter 1.6.0): comparable
+  //    maps carry the reader's threshold, range, palette and opacity where
+  //    the new map's data admit them: 1,194,496 B -> 1,197,846 B.
   // In bundle mode the runtime loads only when a reader first opens Slices,
   // so first-load weight is unaffected.
-  assert.ok(total < 1.14 * 1024 * 1024, `runtime is ${total} bytes`);
+  assert.ok(total < 1.15 * 1024 * 1024, `runtime is ${total} bytes`);
 });
 
 test("the running adapter version agrees with its reproducibility manifest", () => {

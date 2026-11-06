@@ -792,3 +792,85 @@ test("a finer underlay is drawn on its own grid under the maps", async ({ page }
   }
   expect(errors).toEqual([]);
 });
+
+test("comparable maps keep the reader's display settings where their data admit them", async ({
+  page
+}) => {
+  await page.goto(pathToFileURL(resolve(
+    __dirname, ".artifacts", "interactive-volume-contrasts.html"
+  )).href, { waitUntil: "load" });
+  const host = page.locator('[data-nm-volume-analysis="contrasts-interactive"]');
+  await activate(page, host);
+
+  const mapSelect = host.getByRole("combobox", { name: "Map", exact: true });
+  const keep = host.getByRole("checkbox", { name: "Keep settings across maps" });
+  await expect(keep).toBeChecked();
+  const setPair = async (name, low, high) => {
+    const lo = host.getByRole("textbox", { name: name + " low" });
+    const hi = host.getByRole("textbox", { name: name + " high" });
+    await lo.fill(low);
+    await lo.press("Enter");
+    await hi.fill(high);
+    await hi.press("Enter");
+  };
+  const controls = async () => (await viewerState(host)).controls;
+  const switchTo = async (mapId) => {
+    await mapSelect.selectOption(mapId);
+    await expect.poll(async () => (await viewerState(host)).currentMapId).toBe(mapId);
+    await expect(mapSelect).toBeEnabled();
+  };
+
+  // Contrast A (values -5.25..7.75): the reader's own display.
+  await setPair("Range", "-6", "6");
+  await setPair("Threshold", "-2", "2");
+  await host.getByRole("combobox", { name: "Colormap" }).selectOption("BlueRed");
+  const opacity = host.getByLabel("Opacity value");
+  await opacity.fill("0.5");
+  await opacity.press("Enter");
+  const chosen = { threshold: [-2, 2], range: [-6, 6], colormap: "BlueRed", opacity: 0.5 };
+  await expect.poll(controls).toMatchObject(chosen);
+
+  // B (-8.4..12.4) and C (-3.3..3.5) are z maps too: everything carries.
+  await switchTo("contrast_b");
+  await expect.poll(controls).toMatchObject(chosen);
+  await expect(host).toHaveAttribute("data-nm-volume-modified", "true");
+  await expect(host.getByRole("textbox", { name: "Threshold high" })).toHaveValue("2");
+  await switchTo("contrast_c");
+  await expect.poll(controls).toMatchObject(chosen);
+
+  // A threshold of ±4 would hide all of C: C keeps its report threshold and
+  // colour range, but the palette and opacity still carry.
+  await switchTo("contrast_a");
+  await setPair("Threshold", "-4", "4");
+  await expect.poll(controls).toMatchObject({ threshold: [-4, 4] });
+  await switchTo("contrast_c");
+  const cDefaults = await host.evaluate((node) => {
+    const state = globalThis.NeuroMosaicVolumeReport.getState(node);
+    return state.reportDefaults.get("contrast_c");
+  });
+  await expect.poll(controls).toMatchObject({
+    threshold: cDefaults.threshold,
+    range: cDefaults.range,
+    colormap: "BlueRed",
+    opacity: 0.5
+  });
+
+  // An estimate is not comparable with a z map: report defaults.
+  await switchTo("contrast_estimate");
+  await expect(host).toHaveAttribute("data-nm-volume-modified", "false");
+
+  // Back on A (its own ±4), a return to B carries ±4 rather than B's older
+  // shared entry (±2).
+  await switchTo("contrast_a");
+  await expect.poll(controls).toMatchObject({ threshold: [-4, 4] });
+  await switchTo("contrast_b");
+  await expect.poll(controls).toMatchObject({ threshold: [-4, 4], range: [-6, 6] });
+
+  // Unticked, each map returns to its own last settings.
+  await switchTo("contrast_a");
+  await setPair("Threshold", "-2.5", "2.5");
+  await expect.poll(controls).toMatchObject({ threshold: [-2.5, 2.5] });
+  await keep.uncheck();
+  await switchTo("contrast_b");
+  await expect.poll(controls).toMatchObject({ threshold: [-4, 4] });
+});

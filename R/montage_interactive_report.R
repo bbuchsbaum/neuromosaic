@@ -1,7 +1,7 @@
 # Materialization and HTML emission for optional interactive volume reports.
 
 .montage_neuroimjs_version <- "0.5.0"
-.montage_neuroimjs_adapter_version <- "1.5.2"
+.montage_neuroimjs_adapter_version <- "1.6.0"
 .montage_volume_runtime_dir <- file.path(
   "htmlwidgets", "lib", "neuromosaic-volume"
 )
@@ -568,7 +568,9 @@
     paste0(
       '<label class="nm-volume-map-field" for="', safe_id, '-map">Map</label>\n',
       '<select class="nm-volume-map-select" id="', safe_id, '-map" ',
-      'data-nm-volume-map></select>\n'
+      'data-nm-volume-map></select>\n',
+      '<label class="nm-volume-keep"><input type="checkbox" ',
+      'data-nm-volume-keep checked> Keep settings across maps</label>\n'
     )
   } else {
     paste0(

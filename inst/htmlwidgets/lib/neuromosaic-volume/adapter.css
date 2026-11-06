@@ -849,6 +849,22 @@
   font-weight: 500;
 }
 
+/* Carry threshold, range and palette to comparable maps. */
+.nm-volume-keep {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: -8px;
+  color: var(--nm-vv-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nm-volume-keep input {
+  margin: 0;
+  accent-color: var(--nm-vv-accent, #2f6f73);
+}
+
 /* Readout/reset fallback when the viewer has no legend cell. */
 .nm-volume-sidebar > .nm-volume-readout {
   margin: 0;

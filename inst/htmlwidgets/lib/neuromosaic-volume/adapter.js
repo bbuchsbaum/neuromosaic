@@ -1,7 +1,7 @@
 (function (root) {
   "use strict";
 
-  var ADAPTER_VERSION = "1.5.2";
+  var ADAPTER_VERSION = "1.6.0";
   var RUNTIME_VERSION = "0.5.0";
   var OVERLAY_LAYER_ID = "neuromosaic-overlay";
   var BACKGROUND_LAYER_ID = "neuromosaic-background";
@@ -1836,6 +1836,56 @@
     setStatus(state, readyMessage(map), map.status.state);
   }
 
+  // "Keep settings across maps" (on unless the reader unticks it).
+  function keepSettings(state) {
+    return !state.keepSettings || state.keepSettings.checked;
+  }
+
+  // Maps whose settings mean the same thing: same quantity and units, same
+  // scale and display mode, and (when thresholded) the same tail.
+  function settingsCompatible(from, to) {
+    if (!from || !to || !from.display || !to.display) return false;
+    var a = from.display, b = to.display;
+    return from.quantity === to.quantity &&
+      (from.units || null) === (to.units || null) &&
+      a.scale === b.scale && a.mode === b.mode &&
+      (a.mode !== "thresholded" || a.tail === b.tail);
+  }
+
+  // The outgoing map's display, carried to `to` where its data admit it;
+  // anything inadmissible keeps `to`'s report default. Null when the maps are
+  // not comparable (the per-map memory then applies).
+  function carriedState(from, fromState, to, toExtent, defaults) {
+    if (!fromState || !settingsCompatible(from, to)) return null;
+    var lo = Number(toExtent[0]), hi = Number(toExtent[1]);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
+    var out = copyControlState(defaults);
+    out.opacity = fromState.opacity;
+    out.visible = fromState.visible;
+    var presets = root.neuroimjs.ColorMap.presetMaps || {};
+    if (Object.prototype.hasOwnProperty.call(presets, fromState.colormap)) {
+      out.colormap = fromState.colormap;
+    }
+    // One-sided tails keep the target's sentinel beyond its own data;
+    // continuous maps carry the reader's display cut as is.
+    var tail = to.display.mode === "thresholded" ? to.display.tail : "two_sided";
+    var threshold = [
+      tail === "positive" ? defaults.threshold[0] : Number(fromState.threshold[0]),
+      tail === "negative" ? defaults.threshold[1] : Number(fromState.threshold[1])
+    ];
+    // Admissible when some voxel of the new map survives it (no cut: always).
+    var thresholdOk = threshold.every(Number.isFinite) && threshold[0] <= threshold[1] &&
+      (!(threshold[0] < threshold[1]) || hi > threshold[1] || lo < threshold[0]);
+    if (thresholdOk) out.threshold = threshold;
+    var range = fromState.range.map(Number);
+    // Keep the colour range only alongside the threshold it was set with, and
+    // only if it overlaps the new map's values.
+    if (thresholdOk && range[0] < range[1] && range[0] < hi && range[1] > lo) {
+      out.range = range;
+    }
+    return out;
+  }
+
   function staticGroup(analysisId) {
     return Array.prototype.find.call(
       document.querySelectorAll("[data-nm-map-group]"),
@@ -1861,11 +1911,11 @@
     });
     if (!map) fail("Unknown map in interactive analysis: " + mapId);
     if (state.currentMapId === mapId) return state;
+    var previousMap = null, previousState = null;
     if (state.currentMapId && state.controls) {
-      state.mapStates.set(
-        state.currentMapId,
-        copyControlState(state.controls.getState(OVERLAY_LAYER_ID))
-      );
+      previousMap = currentMap(state);
+      previousState = copyControlState(state.controls.getState(OVERLAY_LAYER_ID));
+      state.mapStates.set(state.currentMapId, previousState);
     }
     state.mapSelect.disabled = true;
     state.switchingMap = true;
@@ -1894,12 +1944,18 @@
       syncMagnitudeOpacity(state);
       var defaults = state.controls.setDefaultsFromCurrent(OVERLAY_LAYER_ID);
       state.reportDefaults.set(mapId, copyControlState(defaults));
-      var saved = state.mapStates.get(mapId);
-      if (saved) {
+      var carried = keepSettings(state) ?
+        carriedState(previousMap, previousState, map, raw.getRange(), defaults) : null;
+      if (carried) state.mapStates.set(mapId, carried);
+      var saved = carried || state.mapStates.get(mapId);
+      if (saved && !sameControlState(saved, defaults)) {
         state.controls.applyState(saved);
         applyExtent(state);
       }
-      applySyncedDisplay(state);
+      // Carried settings are now this map's display: share them with the
+      // other viewers rather than restoring an older shared entry.
+      if (carried) publishDisplay(state);
+      else applySyncedDisplay(state);
       state.mapSelect.value = mapId;
       state.host.dataset.nmVolumeMap = mapId;
       updateLauncherTarget(state.host, map);
@@ -1943,6 +1999,7 @@
       mapSelect: host.querySelector("[data-nm-volume-map]"),
       readout: host.querySelector("[data-nm-volume-readout]"),
       resetPosition: host.querySelector("[data-nm-volume-reset-position]"),
+      keepSettings: host.querySelector("[data-nm-volume-keep]"),
       overlayCache: new Map(),
       mapStates: new Map(),
       reportDefaults: new Map(),

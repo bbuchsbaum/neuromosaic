@@ -204,9 +204,10 @@ fine_underlay <- neuroim2::NeuroVol(array(
 ), fine_space)
 
 render_interactive_fixture <- function(filename, assets, map_selector = "auto",
-                                       underlay = NULL) {
+                                       underlay = NULL,
+                                       manifest = interactive_manifest) {
   neuromosaic::render_montage_report(
-    interactive_manifest,
+    manifest,
     output_file = file.path(artifact_dir, filename),
     template = file.path(repo_root, "inst", "templates", "montage_report.Rmd"),
     title = "Neuromosaic interactive volume browser fixture",
@@ -248,6 +249,38 @@ render_interactive_fixture("interactive-volume-bundle.html", "bundle")
 render_interactive_fixture("interactive-volume-none.html", "embed", "none")
 render_interactive_fixture("interactive-volume-fine.html", "embed",
                            underlay = fine_underlay)
+
+# Three z contrasts with different extremes plus an estimate: comparable maps
+# share display settings when the reader switches between them.
+contrast_b_values <- z_values * 1.6
+contrast_c_values <- array(0, dim = c(12, 13, 14))
+contrast_c_values[3:6, 4:8, 5:9] <- 3.5
+contrast_c_values[8:10, 8:11, 8:12] <- -3.3
+contrast_manifest <- data.frame(
+  analysis_id = "contrasts-interactive",
+  analysis_label = "Contrast interactive analysis",
+  map_id = c("contrast_a", "contrast_b", "contrast_c", "contrast_estimate"),
+  role = c("primary", rep("auxiliary", 3L)),
+  quantity = c(rep("test_statistic", 3L), "estimate"),
+  distribution = c("z", "z", "z", NA),
+  threshold = c(3.1, 3.1, 3.1, NA),
+  selector_label = c("A", "B", "C", "Estimate"),
+  label = c("Contrast A", "Contrast B", "Contrast C", "Contrast A estimate"),
+  description = c(
+    "Primary contrast.", "Stronger contrast.",
+    "Weak contrast.", "Continuous signed estimate."
+  ),
+  display_order = seq_len(4L),
+  stringsAsFactors = FALSE
+)
+contrast_manifest$stat_map <- I(list(
+  z_volume,
+  neuroim2::NeuroVol(contrast_b_values, volume_space),
+  neuroim2::NeuroVol(contrast_c_values, volume_space),
+  estimate_volume
+))
+render_interactive_fixture("interactive-volume-contrasts.html", "embed",
+                           manifest = contrast_manifest)
 
 surface_vertices <- function(side = c("left", "right")) {
   side <- match.arg(side)
