@@ -41,6 +41,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+.nm-volume-analysis-label {
+  margin: 0 0 8px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .nm-volume-toggle {
   appearance: none;
   display: inline-flex;

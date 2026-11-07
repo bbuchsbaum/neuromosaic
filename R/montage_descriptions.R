@@ -91,7 +91,8 @@
   views <- meta$views
   hemis <- meta$hemis
   extent <- .montage_report_pick(row, "effective_min_cluster_size", "min_cluster_size")
-  projected <- identical(method$source, "volume_projection")
+  projected <- identical(method$source, "volume_projection") &&
+    !.montage_report_is_continuous(row)
   extent_text <- if (detailed && projected && length(extent) == 1L &&
                      is.finite(extent) && extent > 1) {
     paste0(" Voxels of clusters smaller than ", extent,

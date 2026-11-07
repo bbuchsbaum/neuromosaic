@@ -1635,7 +1635,7 @@
     ctx.font = "600 15px " + font;
     ctx.textBaseline = "alphabetic";
     var coord = state.viewer.getWorldCoord().map(function (v) { return signed(String(Math.round(Number(v)))); });
-    ctx.fillText((map.label || map.selector_label || "") + "  \u00b7  cursor (" + coord.join(", ") + ") mm", PAD, PAD + 14);
+    ctx.fillText(mapContextLabel(state.host, map) + "  \u00b7  cursor (" + coord.join(", ") + ") mm", PAD, PAD + 14);
     var x = PAD, top = PAD + 26;
     ctx.font = "12px " + font;
     panes.forEach(function (pane, i) {
@@ -1806,9 +1806,22 @@
     state.status.dataset.state = kind || "ready";
   }
 
+  function mapContextLabel(host, map) {
+    var analysis = host.getAttribute("data-nm-volume-analysis-label") || "";
+    var label = map.label || map.selector_label || map.map_id || "";
+    return analysis && analysis !== label ? analysis + " \u2014 " + label : label;
+  }
+
   function updateLauncherTarget(host, map) {
     var target = host.querySelector("[data-nm-volume-target]");
     if (target && map) target.textContent = map.label || map.selector_label;
+    if (map) {
+      var context = mapContextLabel(host, map);
+      var viewer = host.querySelector("[data-nm-volume-viewer]");
+      if (viewer) viewer.setAttribute("aria-label", "Orthogonal volume viewer: " + context);
+      var sidebar = host.querySelector(".nm-volume-sidebar");
+      if (sidebar) sidebar.setAttribute("aria-label", "Slice view controls: " + context);
+    }
   }
 
   function readyMessage(map) {

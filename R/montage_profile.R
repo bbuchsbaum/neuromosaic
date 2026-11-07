@@ -180,6 +180,24 @@ resolve_montage_profiles <- function(manifest, profiles = NULL,
       "automatic"
     }
   }
+  # A generic continuous fallback must not silently discard an authored
+  # threshold rule. Custom quantities need explicit display semantics here;
+  # their names alone do not establish a statistic distribution or profile.
+  explicit_display_mode <- .profile_row_character(manifest, row, "display_mode")
+  has_threshold_rule <- any(vapply(c("threshold", "p", "q"), function(field) {
+    !is.null(.profile_row_numeric(manifest, row, field))
+  }, logical(1)))
+  if (is.null(explicit_display_mode) && is.null(profile$display_mode) &&
+      has_threshold_rule) {
+    stop(
+      "Quantity '", quantity, "' has no default display mode for map_id '",
+      manifest$map_id[[row]], "', but supplies threshold, p, or q. ",
+      "For z/t maps use quantity = 'test_statistic' with the actual ",
+      "distribution. For custom quantities set display_mode explicitly ",
+      "or supply a montage_map_profile() with a display_mode.",
+      call. = FALSE
+    )
+  }
   if (is.null(profile)) {
     profile <- montage_map_profile(
       id = quantity,
@@ -191,9 +209,6 @@ resolve_montage_profiles <- function(manifest, profiles = NULL,
   finite_values <- .finite_montage_values(values)
   .validate_profile_value_domain(
     finite_values, profile$domain, quantity, manifest$map_id[[row]]
-  )
-  explicit_display_mode <- .profile_row_character(
-    manifest, row, "display_mode"
   )
   explicit_scale <- .profile_row_character(manifest, row, "scale")
   explicit_support <- .profile_row_character(manifest, row, "support")

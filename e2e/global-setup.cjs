@@ -8,9 +8,10 @@ module.exports = async function globalSetup() {
   const spaceFixtureScript = resolve(__dirname, "build-space-fixture.R");
   const fixedScalesScript = resolve(__dirname, "build-fixed-scales-fixture.R");
   const exportFixtureScript = resolve(__dirname, "build-report-assets-fixture.R");
+  const contextFixtureScript = resolve(__dirname, "build-report-context-fixture.R");
   const result = spawnSync("Rscript", [
     "-e",
-    `source(${JSON.stringify(fixtureScript)}, chdir = FALSE); source(${JSON.stringify(spaceFixtureScript)}, chdir = FALSE); source(${JSON.stringify(fixedScalesScript)}, chdir = FALSE); source(${JSON.stringify(exportFixtureScript)}, chdir = FALSE)`
+    `source(${JSON.stringify(fixtureScript)}, chdir = FALSE); source(${JSON.stringify(spaceFixtureScript)}, chdir = FALSE); source(${JSON.stringify(fixedScalesScript)}, chdir = FALSE); source(${JSON.stringify(exportFixtureScript)}, chdir = FALSE); source(${JSON.stringify(contextFixtureScript)}, chdir = FALSE)`
   ], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -29,6 +30,8 @@ module.exports = async function globalSetup() {
   require('./render-space-quarto.cjs')();
 
   for (const name of [
+    "context-singletons.html",
+    "context-grouped.html",
     "selector-auto.html",
     "selector-none.html",
     "selector-long-label.html",

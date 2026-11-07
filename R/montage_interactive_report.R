@@ -274,6 +274,7 @@
     }
     list(
       analysis_id = as.character(group$analysis_id),
+      analysis_label = as.character(group$analysis_label %||% group$analysis_id),
       primary_map_id = as.character(group$primary_map_id),
       initial_world_coord = as.numeric(initial),
       zlevel_bookmarks = as.numeric(primary$zlevel_bookmarks %||% numeric()),
@@ -556,12 +557,15 @@
     "nm-volume-", substr(.montage_md5_text(as.character(analysis_id)), 1L, 12L)
   )
   analysis <- x$scene$analyses[[match(analysis_id, ids)]]
+  analysis_label <- analysis$analysis_label %||% analysis$analysis_id
   map_ids <- vapply(analysis$maps, `[[`, character(1), "map_id")
   primary_map <- analysis$maps[[match(analysis$primary_map_id, map_ids)]]
   primary_map_label <- primary_map$label
   if (is.null(primary_map_label) || !nzchar(primary_map_label)) {
     primary_map_label <- primary_map$selector_label
   }
+  context_label <- if (identical(analysis_label, primary_map_label)) primary_map_label else
+    paste(analysis_label, primary_map_label, sep = " \u2014 ")
   # One map needs no chooser: name it as text and keep a hidden select for the
   # adapter's state.
   map_field <- if (length(analysis$maps) > 1L) {
@@ -602,10 +606,12 @@
   paste0(
     '<section class="nm-volume-interactive" data-nm-volume-host ',
     'data-nm-volume-analysis="', .montage_html_escape(analysis_id), '" ',
+    'data-nm-volume-analysis-label="', .montage_html_escape(analysis_label), '" ',
     'data-nm-volume-map="',
     .montage_html_escape(analysis$primary_map_id), '" ',
     'data-nm-volume-modified="false" ',
     'data-nm-volume-scene="', .montage_html_escape(x$scene_id), '">\n',
+    '<p class="nm-volume-analysis-label">', .montage_html_escape(analysis_label), '</p>\n',
     '<button type="button" class="nm-volume-toggle" ',
     'data-nm-volume-toggle aria-expanded="false" aria-controls="', safe_id,
     '">Explore volume interactively</button>\n',
@@ -617,9 +623,9 @@
     '<div class="nm-volume-shell" id="', safe_id,
     '" data-nm-volume-shell hidden>\n',
     '<div class="nm-volume-viewer" data-nm-volume-viewer ',
-    'aria-label="Orthogonal volume viewer"></div>\n',
+    'aria-label="Orthogonal volume viewer: ', .montage_html_escape(context_label), '"></div>\n',
     '<aside class="nm-volume-sidebar" aria-label="Slice view controls: ',
-    .montage_html_escape(primary_map_label), '">\n',
+    .montage_html_escape(context_label), '">\n',
     map_field,
     # Not a live region: the readout changes on every pointer move. Peak
     # jumps are announced once, by the report page.

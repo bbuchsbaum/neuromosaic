@@ -615,6 +615,7 @@ montage_surface <- function(geometry = NULL,
     structure(
       list(
         analysis_id = as.character(group$analysis_id),
+        analysis_label = analysis_label,
         scene = scene,
         map_to_layer = map_to_layer,
         layer_to_map = stats::setNames(group_ids, layer_ids),
@@ -1626,6 +1627,9 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
     unname(surface$controls), auto_unbox = FALSE, null = "null"
   )))
   primary_label <- labels[[group$primary_map_id]] %||% group$primary_map_id
+  analysis_label <- group$analysis_label %||% group$analysis_id
+  context_label <- if (identical(analysis_label, primary_label)) primary_label else
+    paste(analysis_label, primary_label, sep = " \u2014 ")
   safe_id <- paste0(
     "nm-surface-",
     substr(.montage_md5_text(as.character(analysis_id)), 1L, 12L)
@@ -1685,6 +1689,7 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
     class = "nm-surface-interactive",
     `data-nm-surface-host` = "",
     `data-nm-surface-analysis` = analysis_id,
+    `data-nm-surface-analysis-label` = analysis_label,
     `data-nm-surface-map` = group$primary_map_id,
     `data-nm-surface-primary-map` = group$primary_map_id,
     `data-nm-surface-map-to-layer` = map_json,
@@ -1705,7 +1710,8 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
     `data-nm-surface-ground` = "#FBFBF8",
     `data-nm-surface-bilateral` = bilateral_json,
     `data-nm-surface-modified` = "false",
-    `aria-label` = paste0("Interactive cortical surface: ", primary_label),
+    `aria-label` = paste0("Interactive cortical surface: ", context_label),
+    htmltools::tags$p(class = "nm-surface-analysis-label", analysis_label),
     htmltools::tags$div(
       class = "nm-sv-frame",
     htmltools::tags$div(
@@ -1716,7 +1722,7 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
       },
       tabindex = "0",
       role = "group",
-      `aria-label` = paste0("3D surface viewer: ", primary_label),
+      `aria-label` = paste0("3D surface viewer: ", context_label),
       `aria-describedby` = paste0(safe_id, "-help"),
       htmltools::tags$div(
         id = safe_id,
@@ -1772,7 +1778,7 @@ montage_surface_report_hooks <- function(surface = NULL, is_html = FALSE) {
       ),
       .montage_surface_control_tags(
         surface$controls, paste0(safe_id, "-display"),
-        label = primary_label
+        label = context_label
       ),
       htmltools::tags$div(
         class = "nm-sv-overlay nm-sv-legend",

@@ -903,14 +903,17 @@ montage_report_formatters <- function(manifest = NULL,
   label <- as.character(row$label[[1L]])
   analysis_label <- if ("analysis_label" %in% names(row)) as.character(row$analysis_label[[1L]]) else ""
   # The line above the title on a downloaded figure: the map's section
-  # (e.g. "Working memory (N-back)"), else its analysis when that differs.
+  # (e.g. "Working memory (N-back)") and the analysis when it differs.
   section <- if (length(layout)) .montage_report_layout_values(row, layout) else character()
   section <- section[!is.na(section) & section != label]
-  kicker <- if (length(section)) paste(section, collapse = " / ") else
-    if (nzchar(analysis_label) && !identical(analysis_label, label)) analysis_label
+  context <- if (!is.na(analysis_label) && nzchar(analysis_label) &&
+                 !identical(analysis_label, label)) analysis_label else character()
+  kicker_parts <- unique(c(section, context))
+  kicker <- if (length(kicker_parts)) paste(kicker_parts, collapse = " / ")
   stem <- .montage_report_file_stem(label)
   slices <- .montage_report_slice_text(.montage_report_volume_meta(panel)$slice_labels)
   vol_alt <- paste0(label, ": slice montage",
+                    if (length(context)) paste0(" for ", context),
                     if (nzchar(slices)) paste0(" at ", slices), ", ",
                     .montage_report_colour_text(row, .montage_report_volume_meta(panel)))
   shared <- .montage_report_slice_share(panel$slice_scope, label)
@@ -928,7 +931,8 @@ montage_report_formatters <- function(manifest = NULL,
   )
   .montage_report_emit_panel_image(
     panel$surface_image %||% panel$surface_image_path,
-    paste0(label, ": ", sub("^Cortical", "cortical", .montage_report_surface_text(row, panel))),
+    paste0(label, ": ", sub("^Cortical", "cortical", .montage_report_surface_text(row, panel)),
+           if (length(context)) paste0(" Analysis: ", context, ".")),
     is_html = is_html, empty = empty, figure_assets = figure_assets,
     caption = .montage_report_surface_text(row, panel),
     dark = panel$surface_image_dark, narrow = panel$surface_image_narrow,
@@ -987,7 +991,8 @@ montage_report_formatters <- function(manifest = NULL,
   }
   parts <- .montage_report_metadata_parts(row)
   stat <- if ("stat" %in% names(parts)) parts[["stat"]]
-  threshold <- .montage_report_pick(row, "effective_threshold", "threshold")
+  threshold <- if (.montage_report_is_continuous(row)) NA_real_ else
+    .montage_report_pick(row, "effective_threshold", "threshold")
   tail <- .montage_report_pick(row, "effective_tail", "tail")
   sym <- tolower(.montage_report_value_label(row))
   sym <- if (identical(sym, "value")) "value" else sym
@@ -1334,11 +1339,12 @@ montage_report_formatters <- function(manifest = NULL,
   quantity <- .montage_report_scalar(row, "quantity")
   distribution <- .montage_report_scalar(row, "distribution")
   profile_label <- .montage_report_scalar(row, "effective_profile_label")
-  display_mode <- .montage_report_scalar(row, "effective_display_mode")
+  display_mode <- .montage_report_pick(row, "effective_display_mode", "display_mode")
   lower <- .montage_report_scalar(row, "effective_lower")
   upper <- .montage_report_scalar(row, "effective_upper")
   units <- .montage_report_pick(row, "effective_units", "units")
-  threshold <- .montage_report_pick(row, "effective_threshold", "threshold")
+  threshold <- if (.montage_report_is_continuous(row)) NA_real_ else
+    .montage_report_pick(row, "effective_threshold", "threshold")
   tail <- .montage_report_pick(row, "effective_tail", "tail")
   connectivity <- .montage_report_pick(
     row,
@@ -1734,6 +1740,10 @@ montage_report_formatters <- function(manifest = NULL,
                                                is_html,
                                                section_notes = NULL,
                                                section_state = NULL) {
+  analysis <- .profile_row_character(manifest, i, "analysis_label")
+  if (!is.null(analysis) && !identical(analysis, as.character(label))) {
+    label <- paste(analysis, label, sep = " \u2014 ")
+  }
   if (isTRUE(is_html)) {
     if (!is.null(section_state)) {
       .montage_report_emit_html_section_notes(
@@ -1832,6 +1842,12 @@ montage_report_formatters <- function(manifest = NULL,
     length(row$parcel_values[[1L]]) > 0L
 }
 
+.montage_report_is_continuous <- function(row) {
+  identical(as.character(.montage_report_pick(
+    row, "effective_display_mode", "display_mode"
+  )), "continuous")
+}
+
 # Suprathreshold extent of one map: rendered surface parcels when available,
 # otherwise parcel values or the annotated cluster table.
 .montage_report_map_count <- function(row, panel) {
@@ -1844,6 +1860,9 @@ montage_report_formatters <- function(manifest = NULL,
   unit <- if (parcel) "parcels" else "clusters"
   n <- NA_integer_
   max_abs <- NA_real_
+  if (.montage_report_is_continuous(row)) {
+    return(list(n = n, unit = unit, max_abs = max_abs))
+  }
   if (parcel) {
     vals <- as.numeric(row$parcel_values[[1L]])
     thr <- suppressWarnings(as.numeric(
@@ -1938,6 +1957,9 @@ montage_report_formatters <- function(manifest = NULL,
                                                 figure_assets = NULL) {
   labels <- .montage_report_shared_labels(groups, manifest)
   if (is.null(labels)) return(invisible(NULL))
+  descriptive <- all(vapply(seq_len(nrow(manifest)), function(i) {
+    .montage_report_is_continuous(manifest[i, , drop = FALSE])
+  }, logical(1)))
   esc <- .montage_report_html_escape
   row_head <- if (length(layout) == 1L) {
     tools::toTitleCase(as.character(layout))
@@ -1993,7 +2015,9 @@ montage_report_formatters <- function(manifest = NULL,
       at_peaks <- if (is.na(n)) .montage_report_cell_peak_range(cell) else NULL
       thumb <- if (is.na(n)) "" else .montage_report_cell_thumb(cell$panel, paste0(
         esc(g$analysis_label %||% g$analysis_id), ": ", esc(cell$label)), figure_assets)
-      inner <- if (is.na(n)) {
+      inner <- if (descriptive) {
+        "<span class=\"nm-cell-link\">View map</span>"
+      } else if (is.na(n)) {
         if (!is.null(at_peaks)) {
           paste0("<span class=\"nm-cell-range\">", at_peaks, "</span>",
                  "<span class=\"nm-cell-max\">at the peaks</span>")
@@ -2023,8 +2047,10 @@ montage_report_formatters <- function(manifest = NULL,
   cat(
     "<div class=\"nm-summary\">",
     "<p class=\"nm-summary-note\">",
-    if (has_thumbs) "Glass brain of each thresholded map with its surviving " else "Surviving ",
-    unit, " and largest |statistic|; for unthresholded maps, the range of values at those peaks.",
+    if (descriptive) "Unthresholded descriptive maps." else paste0(
+      if (has_thumbs) "Glass brain of each thresholded map with its surviving " else "Surviving ",
+      unit, " and largest |statistic|; for unthresholded maps, the range of values at those peaks."
+    ),
     " Select a cell to open that map.</p>",
     "<div class=\"nm-table-wrap\"><table class=\"nm-table nm-summary-table\">",
     head, "<tbody>", paste(body, collapse = ""), "</tbody></table></div></div>\n\n",
@@ -2243,12 +2269,16 @@ montage_report_formatters <- function(manifest = NULL,
   )
   map_id <- as.character(manifest$map_id[[i]])
   anchor <- .montage_report_map_anchor(analysis_id, map_id)
+  analysis_label <- .profile_row_character(manifest, i, "analysis_label")
+  file_label <- if (!is.null(analysis_label) && !identical(analysis_label, label)) {
+    paste(analysis_label, label)
+  } else label
   cat("\n\n<article class=\"nm-map\" id=\"", anchor, "\" aria-labelledby=\"",
       anchor, "-title\" data-nm-map-article=\"",
       .montage_report_html_escape(analysis_id),
       # Every file saved from this map (figures, viewer exports) is named from
       # one slug, e.g. "story-gt-math_volume.png" / "story-gt-math_slices.png".
-      "\" data-nm-file-stem=\"", .montage_report_file_stem(label), "\">\n", sep = "")
+      "\" data-nm-file-stem=\"", .montage_report_file_stem(file_label), "\">\n", sep = "")
   out <- utils::capture.output(.montage_report_emit_panel_heading(
     i = i, label = label, manifest = manifest, layout = layout,
     layout_state = layout_state, is_html = TRUE

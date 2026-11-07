@@ -13,13 +13,13 @@
     },
     {
       "path": "adapter.js",
-      "bytes": 128205,
-      "sha256": "f6d963fff4c1706882f508fb20681e9e200997bb900e2be44293b94cc1c33d9d"
+      "bytes": 128852,
+      "sha256": "c69b05f4b0b38f0392ac5bbd5f9af78f20abc560c50e16fc80ef90240ba84be4"
     },
     {
       "path": "adapter.css",
-      "bytes": 21720,
-      "sha256": "95d337597a8977b24bd95595c75724eaedda69b23f0f1561cc95d1984d6abf49"
+      "bytes": 21817,
+      "sha256": "c98edfe3d483dab9943a3e86016c5b84321f45ffa7798905f7bcc7ca9f5d6956"
     },
     {
       "path": "display.js",
