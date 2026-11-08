@@ -388,15 +388,10 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
   fonts <- list(regular = "sans", medium = "sans", medium_face = 2L)
   if (requireNamespace("ragg", quietly = TRUE) &&
       requireNamespace("systemfonts", quietly = TRUE)) {
-    families <- tryCatch(
-      unique(systemfonts::system_fonts()$family),
-      error = function(e) character()
-    )
-    pick <- intersect(
-      c("Avenir Next", "Avenir", "Inter", "Segoe UI", "Helvetica Neue",
-        "Helvetica", "Arial"),
-      families
-    )
+    pick <- .nm_pick_figure_family(tryCatch(
+      systemfonts::system_fonts(),
+      error = function(e) NULL
+    ))
     if (length(pick)) {
       fonts$regular <- pick[[1L]]
       registered <- tryCatch({
@@ -411,6 +406,24 @@ nm_palette_colors <- function(limits, threshold = 0, n = 256L,
   }
   .nm_font_env$fonts <- fonts
   fonts
+}
+
+# First preferred family that has a scalable (outline) font file. On Linux,
+# fontconfig often lists X11 bitmap faces (`.pcf.gz`) under "Helvetica";
+# ragg draws those as illegible specks, so a family counts only when one of
+# its files is TrueType/OpenType. Returns character(0) when none qualifies,
+# leaving the device "sans".
+.nm_pick_figure_family <- function(fonts) {
+  if (!is.data.frame(fonts) || !all(c("family", "path") %in% names(fonts))) {
+    return(character())
+  }
+  outline <- grepl("\\.(ttf|otf|ttc|otc)$", fonts$path, ignore.case = TRUE)
+  families <- unique(fonts$family[outline])
+  intersect(
+    c("Avenir Next", "Avenir", "Inter", "Segoe UI", "Helvetica Neue",
+      "Helvetica", "Arial"),
+    families
+  )
 }
 
 # Registered system fonts only resolve on the ragg devices. Figures built for
